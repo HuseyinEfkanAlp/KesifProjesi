@@ -1,0 +1,23 @@
+import pytest
+
+from tests.fixtures.make_dxf import make_foundation_dxf, make_network_dxf, make_storey_dxf, make_unitless_mm_dxf
+
+
+@pytest.fixture(scope="session")
+def network_dxf(tmp_path_factory):
+    return make_network_dxf(tmp_path_factory.mktemp("dxf") / "ag.dxf")
+
+
+@pytest.fixture(scope="session")
+def storey_dxf(tmp_path_factory):
+    return make_storey_dxf(tmp_path_factory.mktemp("dxf") / "kat.dxf")
+
+
+@pytest.fixture(scope="session")
+def foundation_dxf(tmp_path_factory):
+    return make_foundation_dxf(tmp_path_factory.mktemp("dxf") / "temel.dxf")
+
+
+@pytest.fixture(scope="session")
+def unitless_dxf(tmp_path_factory):
+    return make_unitless_mm_dxf(tmp_path_factory.mktemp("dxf") / "mm.dxf")

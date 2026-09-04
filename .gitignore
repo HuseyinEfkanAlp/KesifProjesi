@@ -1,0 +1,14 @@
+backend/.venv/
+backend/data/
+__pycache__/
+*.pyc
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+# Büyük çizim dosyaları ve AutoCAD kilit/önbellek dosyaları (repoya girmez)
+*.dxf
+*.dwg
+*.dwl
+*.dwl2
+*.sheets.json
+!samples/**/*.dxf
