@@ -34,7 +34,7 @@ class QuantityParams:
     slab_thickness: float = 0.15      # d (m) - kiriş/kolon net yüksekliği için düşülür
     storey_count: int = 1             # bu planın temsil ettiği kat sayısı
     beam_full_height: bool = False    # True: kiriş b×h×L ve kolon alan×H (döşemeler net alan ise); False: b×(h−d)×L, alan×(H−d)
-    beam_depth: float | None = None   # kattaki baskın kiriş yüksekliği (m); kolon/perde kalıbı H − beam_depth ile hesaplanır
+    beam_depth: float | None = None   # kattaki baskın kiriş yüksekliği (m); kolon/perde kalıbı H − beam_depth; etiketsiz kirişe varsayılan h
     rebar_ratios: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_REBAR_RATIOS))
 
     @classmethod
@@ -131,10 +131,15 @@ def compute_element(el: ElementData, p: QuantityParams) -> QuantityLine:
         concrete = el.area * conc_h
         formwork = 2.0 * el.length * form_h
     elif el.etype == "beam":
-        if el.h is None or el.b is None:
+        h = el.h
+        if not h and el.b and p.beam_depth:
+            # etiketsiz kiriş: kattaki baskın kiriş yüksekliği varsayılır (kullanıcı düzeltebilir)
+            h = p.beam_depth
+            notes.append(f"Kesit etiketi yok; kattaki baskın kiriş yüksekliği ({h*100:.0f} cm) alındı")
+        if not h or el.b is None:
             notes.append("Kiriş kesiti (b/h) eksik; beton ve kalıp 0 alındı")
         else:
-            web = el.h if p.beam_full_height else max(el.h - d, 0.0)
+            web = h if p.beam_full_height else max(h - d, 0.0)
             concrete = el.b * web * el.length
             formwork = (el.b + 2.0 * web) * el.length
     elif el.etype == "slab":

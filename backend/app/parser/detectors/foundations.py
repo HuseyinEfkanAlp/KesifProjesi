@@ -26,7 +26,7 @@ def detect_foundations(drawing: Drawing, layers: list[str], labels: LabelIndex, 
                        supports: list[list] | None = None) -> list[DetectedElement]:
     elements: list[DetectedElement] = []
     zones: list[DetectedElement] = []
-    for ent in polygons_on_layers(drawing, layers, close_open=True, min_area=2.0):
+    for ent in polygons_on_layers(drawing, layers, close_open=True, min_area=2.0, snap_tol=params.raft_line_snap):
         area = polygon_area(ent.points)
         if area < 0.2:
             continue

@@ -27,7 +27,8 @@ for r in (projects.router, drawings.router, quantities.router, prices.router, re
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    from .parser.dwg import dwg_supported
+    return {"status": "ok", "dwg_support": dwg_supported()}
 
 
 # Üretimde: frontend/dist derlenmişse aynı sunucudan servis et

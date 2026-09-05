@@ -26,8 +26,10 @@ class DetectParams:
     min_column_area: float = 0.02           # m² (15x15 altı kolon değildir)
     max_column_area: float = 4.0            # m² (üstü perde/temel)
     min_slab_area: float = 1.0              # m²
-    max_slab_area: float = 400.0            # m² (üstü dış çevre yüzeyi olabilir)
+    max_slab_area: float = 400.0            # m² (üstü: birden çok döşeme etiketi içeriyorsa birleşik panel, yoksa dış çevre)
+    support_snap: float = 0.05              # m: döşeme hücreleri için kolon/perde tamponu
     raft_margin: float = 1.0                # m: radye dış sınırı çizilmemişse kolon/perde dış hattına eklenen pay
+    raft_line_snap: float = 2.5             # m: temel bölge sınır çizgilerindeki boşluklar bu kadar ise köprülenir (gerçek çizimde 2 m görüldü)
     # mimari
     wall_thickness_range: tuple[float, float] = (0.05, 0.60)   # duvar kalınlığı aralığı (paralel çizgi çifti)
     default_wall_thickness: float = 0.20
@@ -111,6 +113,18 @@ class LabelIndex:
         out.sort()
         return out
 
+    def count_named(self, polygon: list[Point], etype: str) -> int:
+        """Çokgenin içindeki, tipe ait adlı etiket sayısı (claim edilmişler dahil)."""
+        if self._tree is None or len(polygon) < 3:
+            return 0
+        poly = Polygon(polygon).buffer(0)
+        n = 0
+        for i in self._tree.query(poly):
+            lab = self.items[int(i)][1]
+            if lab.name and lab.type_hint == etype and poly.contains(self._pts[int(i)]):
+                n += 1
+        return n
+
     def find(self, polygon: list[Point], etype: str, radius: float | None = None,
              claim: bool = True, require_hint: bool = False) -> Label | None:
         """Çokgenin içindeki ya da en yakınındaki, tipe uygun etiketleri (ad + kesit/kalınlık) birleştirir."""
@@ -158,17 +172,105 @@ class LabelIndex:
 
 # ---------- Geometri yardımcıları ----------
 
+def _bridge_gaps(segs: list[LineString], tol: float) -> list[LineString]:
+    """Sarkan (başka hiçbir çizgiye değmeyen) çizgi uçlarını tol içindeki en yakın çizgiye köprüler.
+
+    Gerçek çizimlerde bölge sınırları birkaç on cm ile 1 m arası boşluklarla çizilir; polygonize bu yüzden kapanmaz.
+    - Köprü, sarkan çizginin kendi doğrultusunda uzatılarak hedef çizginin doğrusuna kadar götürülür (köşe düzgün kapanır);
+      uzatma mümkün değilse en yakın noktaya çekilir.
+    - Yan yana uzanan paralel çizgiler (kiriş / sürekli temel çift çizgisi) köprülenmez.
+    """
+    if not segs or tol <= 0:
+        return []
+    tree = STRtree(segs)
+    bridges: list[LineString] = []
+
+    def unit(seg: LineString):
+        (x1, y1), (x2, y2) = seg.coords[0], seg.coords[-1]
+        L = math.hypot(x2 - x1, y2 - y1)
+        return ((x2 - x1) / L, (y2 - y1) / L) if L > 1e-9 else (1.0, 0.0)
+
+    def side_by_side(a: LineString, b: LineString) -> bool:
+        ua, ub = unit(a), unit(b)
+        cross = abs(ua[0] * ub[1] - ua[1] * ub[0])
+        if cross > math.sin(math.radians(5)):
+            return False
+        ax0 = a.coords[0]
+        ta = sorted(((c[0] - ax0[0]) * ua[0] + (c[1] - ax0[1]) * ua[1]) for c in (a.coords[0], a.coords[-1]))
+        tb = sorted(((c[0] - ax0[0]) * ua[0] + (c[1] - ax0[1]) * ua[1]) for c in (b.coords[0], b.coords[-1]))
+        overlap = min(ta[1], tb[1]) - max(ta[0], tb[0])
+        return overlap > 0.5 * min(ta[1] - ta[0], tb[1] - tb[0])
+
+    for i, seg in enumerate(segs):
+        for end in (0, -1):
+            pt = SPoint(seg.coords[end])
+            near = [int(j) for j in tree.query(pt.buffer(tol))]
+            if any(j != i and segs[j].distance(pt) < 1e-3 for j in near):
+                continue
+            best, best_d = None, tol
+            for j in near:
+                # kendisi, zaten (öbür ucundan) bağlı olduğu komşu ve yan yana uzanan paralel çizgi aday değil
+                if j == i or segs[j].distance(seg) < 1e-3 or side_by_side(seg, segs[j]):
+                    continue
+                d = segs[j].distance(pt)
+                if d < best_d:
+                    best_d, best = d, segs[j]
+            if best is None:
+                continue
+            # uzatma: sarkan çizginin doğrusu ile hedefin doğrusunun kesişimi
+            ux, uy = unit(seg)
+            if end == 0:
+                ux, uy = -ux, -uy
+            (bx1, by1), (bx2, by2) = best.coords[0], best.coords[-1]
+            vx, vy = bx2 - bx1, by2 - by1
+            den = ux * vy - uy * vx
+            target = None
+            if abs(den) > 1e-9:
+                t = ((bx1 - pt.x) * vy - (by1 - pt.y) * vx) / den      # sarkan çizgi boyunca mesafe
+                if 0 <= t <= tol:
+                    X = SPoint(pt.x + ux * t, pt.y + uy * t)
+                    if best.distance(X) <= tol:
+                        target = X
+            if target is None:
+                target = best.interpolate(best.project(pt))
+            if target.distance(pt) > 1e-6:
+                bridges.append(LineString([pt, target]))
+            if best.distance(target) > 1e-6:            # uzatma hedefin ucunu aştıysa ucu da bağla
+                q = best.interpolate(best.project(target))
+                bridges.append(LineString([target, q]))
+    return bridges
+
+
 def polygons_on_layers(drawing: Drawing, layers: list[str], close_open: bool = False,
-                       min_area: float = 0.0) -> list[Entity]:
+                       min_area: float = 0.0, snap_tol: float = 0.0) -> list[Entity]:
     """Katmanlardaki kapalı çokgenler + çizgilerden oluşan kapalı döngüler (polygonize).
 
-    close_open: en az 4 noktalı açık polyline'lar uçları birleştirilerek çokgen sayılır (pafta sınırında
-    kesilmiş radye sınırı gibi); yalnızca geçerli (kendini kesmeyen) ve min_area üstü olanlar alınır.
+    close_open: çizgi ve açık polyline'lar birlikte ağ olarak kapatılır (L şeklinde açık polyline + kapatan çizgi
+    gibi). snap_tol: sarkan çizgi uçları bu mesafedeki en yakın çizgiye köprülenir (bölge sınırlarındaki boşluklar). Hiçbir yüzeye girmeyen en az 4 noktalı açık polyline'lar uçları birleştirilerek çokgen sayılır
+    (pafta sınırında kesilmiş radye sınırı gibi); yalnızca geçerli (kendini kesmeyen) ve min_area üstü olanlar alınır.
     """
     result: list[Entity] = [e for e in drawing.entities if e.layer in layers and e.is_closed_polygon]
     open_lines = [e for e in drawing.entities if e.layer in layers and e.kind in ("line", "polyline")]
+    loops: list[Polygon] = []
+    if open_lines and len(open_lines) < 5000:
+        segs = []
+        for e in open_lines:
+            for i in range(len(e.points) - 1):
+                segs.append(LineString([e.points[i], e.points[i + 1]]))
+        try:
+            merged = unary_union(segs + _bridge_gaps(segs, snap_tol))
+            for poly in polygonize(merged):
+                if poly.area < max(min_area, 1e-9):
+                    continue
+                pts = [(x, y) for x, y in poly.exterior.coords[:-1]]
+                if len(pts) >= 3 and not _duplicate(pts, result):
+                    result.append(Entity("polygon", open_lines[0].layer, pts, closed=True, source="LINES>LOOP"))
+                    loops.append(poly)
+        except Exception:
+            pass
     if close_open:
-        for e in list(open_lines):
+        loop_union = unary_union(loops) if loops else None
+        for e in open_lines:
             if e.kind != "polyline" or len(e.points) < 4:
                 continue
             try:
@@ -177,22 +279,11 @@ def polygons_on_layers(drawing: Drawing, layers: list[str], close_open: bool = F
                 continue
             if not poly.is_valid or poly.area < min_area or _duplicate(list(e.points), result):
                 continue
+            # polyline zaten bir yüzeyin sınırındaysa (ağ ile kapanmış) tekrar kapatılmaz
+            if loop_union is not None and LineString(e.points).buffer(1e-3).intersection(loop_union.boundary).length > 0.5 * LineString(e.points).length:
+                continue
             result.append(Entity("polygon", e.layer, list(e.points), closed=True, handle=e.handle,
                                  source="POLYLINE>CLOSED", block=e.block))
-            open_lines.remove(e)
-    if open_lines and len(open_lines) < 5000:
-        segs = []
-        for e in open_lines:
-            for i in range(len(e.points) - 1):
-                segs.append(LineString([e.points[i], e.points[i + 1]]))
-        try:
-            merged = unary_union(segs)
-            for poly in polygonize(merged):
-                pts = [(x, y) for x, y in poly.exterior.coords[:-1]]
-                if len(pts) >= 3 and not _duplicate(pts, result):
-                    result.append(Entity("polygon", open_lines[0].layer, pts, closed=True, source="LINES>LOOP"))
-        except Exception:
-            pass
     return result
 
 
@@ -398,12 +489,17 @@ def _pair_from_axis(ref: ParallelPair, lo: float, hi: float, ux: float, uy: floa
     return ParallelPair(ca, cb, w, ref.layer, _rect_from_centerline(ca, cb, w), ref.handles)
 
 
-def faces_from_network(segs: list[Segment], polygons: list[list[Point]]) -> list[Polygon]:
-    """Kiriş çizgileri + kolon/perde çokgen sınırlarından kapalı yüzeyler (döşeme panelleri) üretir."""
+def faces_from_network(segs: list[Segment], polygons: list[list[Point]], snap: float = 0.05) -> list[Polygon]:
+    """Kiriş çizgileri + kolon/perde çokgen sınırlarından kapalı yüzeyler (döşeme panelleri) üretir.
+
+    snap: kolon/perde çokgenleri bu kadar (m) tamponlanır; kiriş çizgileri kolon yüzüne birkaç cm uzaktan biterse
+    hücre yine kapanır (gerçek çizimlerde yaygın; tamponsuz hücrelerin çoğu birleşip devasa yüzey olur).
+    """
     geoms = [LineString([s.a, s.b]) for s in segs]
     for pts in polygons:
         if len(pts) >= 3:
-            geoms.append(Polygon(pts).buffer(0).exterior)
+            poly = Polygon(pts).buffer(0)
+            geoms.append((poly.buffer(snap, join_style=2) if snap > 0 else poly).exterior)
     if not geoms:
         return []
     try:

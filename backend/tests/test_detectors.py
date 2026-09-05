@@ -139,3 +139,61 @@ def test_unit_guess_and_override(unitless_dxf):
     assert r.by_type("column")[0].area == pytest.approx(0.18, abs=1e-6)
     d2 = load_dxf(unitless_dxf, unit_override="cm")
     assert d2.unit == "cm" and d2.unit_detected
+
+
+def test_open_polyline_closed_via_network(tmp_path):
+    """L şeklinde açık polyline + kapatan çizgi: uçları doğrudan birleştirmek üçgen verir; ağ kapatması doğru şekli verir."""
+    import ezdxf
+    from app.parser.detectors.base import polygons_on_layers
+    from app.parser.geometry import polygon_area
+    from app.parser.loader import load_dxf
+    doc = ezdxf.new("R2010"); doc.header["$INSUNITS"] = 6
+    msp = doc.modelspace()
+    # 10x6 dikdörtgen: 3 kenar polyline (4 nokta), 4. kenar ayrı çizgi
+    msp.add_lwpolyline([(0, 0), (10, 0), (10, 6), (0, 6)], dxfattribs={"layer": "TEMEL"})
+    msp.add_line((0, 6), (0, 0), dxfattribs={"layer": "TEMEL"})
+    # pafta kenarında kesilmiş açık sınır (ağ ile kapanmaz): uçtan kapatılır
+    msp.add_lwpolyline([(20, 0), (30, 0), (30, 6), (25, 6), (20, 6)], dxfattribs={"layer": "TEMEL"})
+    # 12x8 bölge, sınır çizgileri arasında 0.8 m boşluklar (gerçek çizim): köprüleme ile kapanır
+    msp.add_line((40, 0), (51.2, 0), dxfattribs={"layer": "TEMEL"})
+    msp.add_line((52, 0.8), (52, 8), dxfattribs={"layer": "TEMEL"})
+    msp.add_line((52, 8), (40, 8), dxfattribs={"layer": "TEMEL"})
+    msp.add_line((40, 7.2), (40, 0), dxfattribs={"layer": "TEMEL"})
+    f = tmp_path / "t.dxf"; doc.saveas(f)
+    polys = polygons_on_layers(load_dxf(f), ["TEMEL"], close_open=True, min_area=2.0)
+    areas = sorted(round(polygon_area(p.points), 1) for p in polys)
+    assert areas == [60.0, 60.0], [(p.source, polygon_area(p.points)) for p in polys]
+    polys = polygons_on_layers(load_dxf(f), ["TEMEL"], close_open=True, min_area=2.0, snap_tol=1.5)
+    areas = sorted(round(polygon_area(p.points), 1) for p in polys)
+    assert areas == [60.0, 60.0, 96.0], [(p.source, polygon_area(p.points)) for p in polys]
+    assert {p.source for p in polys} == {"LINES>LOOP", "POLYLINE>CLOSED"}
+
+
+def test_slab_faces_close_with_column_gap(tmp_path):
+    """Kiriş çizgileri kolon yüzüne 3 cm uzaktan biter: tampon olmadan hücre kapanmaz, tamponla döşeme bulunur."""
+    import ezdxf
+    from app.parser.analyzer import analyze_file
+    doc = ezdxf.new("R2010"); doc.header["$INSUNITS"] = 5
+    for n in ("KOLON", "KIRIS", "YAZI"): doc.layers.add(n)
+    msp = doc.modelspace()
+    cols = [(0, 0), (600, 0), (0, 500), (600, 500)]
+    for cx, cy in cols:
+        msp.add_lwpolyline([(cx - 25, cy - 25), (cx + 25, cy - 25), (cx + 25, cy + 25), (cx - 25, cy + 25)], close=True, dxfattribs={"layer": "KOLON"})
+        msp.add_text("S1 50/50", dxfattribs={"layer": "YAZI", "height": 8}).set_placement((cx + 30, cy + 30))
+    g = 3  # cm boşluk
+    for cy in (0, 500):
+        for off in (-15, 15):
+            msp.add_line((25 + g, cy + off), (575 - g, cy + off), dxfattribs={"layer": "KIRIS"})
+        msp.add_text("K1 30/50", dxfattribs={"layer": "YAZI", "height": 6}).set_placement((300, cy - 3))
+    for cx in (0, 600):
+        for off in (-15, 15):
+            msp.add_line((cx + off, 25 + g), (cx + off, 475 - g), dxfattribs={"layer": "KIRIS"})
+        msp.add_text("K2 30/50", dxfattribs={"layer": "YAZI", "height": 6, "rotation": 90}).set_placement((cx + 3, 250))
+    msp.add_text("D1", dxfattribs={"layer": "YAZI", "height": 8}).set_placement((300, 250))
+    msp.add_text("d=12", dxfattribs={"layer": "YAZI", "height": 6}).set_placement((300, 235))
+    f = tmp_path / "gap.dxf"; doc.saveas(f)
+    r = analyze_file(str(f))
+    slabs = r.by_type("slab")
+    assert len(slabs) == 1 and slabs[0].subtype == "net"
+    assert slabs[0].area == pytest.approx(5.7 * 4.7, rel=0.03)   # kirişler arası net alan (iç yüzler 15 cm)
+    assert slabs[0].thickness == pytest.approx(0.12)

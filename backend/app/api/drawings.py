@@ -14,6 +14,7 @@ from ..db import UPLOAD_DIR, get_session
 from ..export.svg import render_svg
 from ..models import Drawing, Element, Project
 from ..parser.layer_profile import ALL_ELEMENT_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, types_for
+from ..parser.dwg import convert_dwg_to_dxf, dwg_supported
 from ..parser.loader import UNIT_SCALE, load_dxf
 from ..parser.sheets import BIG_FILE_BYTES, SheetScan, crop_sheets, scan_sheets
 from ..services import analyze_and_store, recompute_derived
@@ -104,16 +105,37 @@ async def upload_drawing(project_id: int, file: UploadFile = File(...), label: s
     """
     project = get_project(project_id, session)
     discipline = _check_discipline(discipline)
-    if not file.filename or not file.filename.lower().endswith(".dxf"):
-        raise HTTPException(400, "Yalnızca .dxf dosyaları kabul edilir. DWG dosyasını AutoCAD'de 'Farklı Kaydet' ile DXF'e çevirin.")
+    fname = file.filename or ""
+    is_dwg = fname.lower().endswith(".dwg")
+    if not (fname.lower().endswith(".dxf") or is_dwg):
+        raise HTTPException(400, "Yalnızca .dxf ya da .dwg dosyaları kabul edilir.")
+    if is_dwg and not dwg_supported():
+        raise HTTPException(400, "DWG dönüştürücü (ODA File Converter) bu sunucuda kurulu değil. DWG dosyasını AutoCAD'de "
+                                 "'Farklı Kaydet → DXF' ile çevirin ya da ODA File Converter kurun (bkz. README).")
     if unit_override and unit_override not in UNIT_SCALE:
         raise HTTPException(400, "Birim mm, cm veya m olmalı")
-    safe = _safe_name(file.filename)
+    safe = _safe_name(fname)
     token = uuid.uuid4().hex[:10]
-    src = UPLOAD_DIR / f"src_{token}_{safe}"
-    with src.open("wb") as out:
-        while chunk := await file.read(8 * 1024 * 1024):
-            out.write(chunk)
+    if is_dwg:
+        dwg_path = UPLOAD_DIR / f"src_{token}_{safe}"
+        with dwg_path.open("wb") as out:
+            while chunk := await file.read(8 * 1024 * 1024):
+                out.write(chunk)
+        safe = safe[:-4] + ".dxf"
+        src = UPLOAD_DIR / f"src_{token}_{safe}"
+        try:
+            convert_dwg_to_dxf(dwg_path, src)
+        except RuntimeError as ex:
+            raise HTTPException(400, str(ex))
+        finally:
+            dwg_path.unlink(missing_ok=True)
+        file_label = fname[:-4] + ".dxf"
+    else:
+        src = UPLOAD_DIR / f"src_{token}_{safe}"
+        with src.open("wb") as out:
+            while chunk := await file.read(8 * 1024 * 1024):
+                out.write(chunk)
+        file_label = fname
     try:
         scan = scan_sheets(src)
     except Exception as ex:
@@ -127,7 +149,7 @@ async def upload_drawing(project_id: int, file: UploadFile = File(...), label: s
         })
     dest = UPLOAD_DIR / f"{project_id}_{token[:8]}_{safe}"
     src.rename(dest)
-    d = _create_drawing(project, dest, file.filename, label or Path(file.filename).stem, storey_count,
+    d = _create_drawing(project, dest, file_label, label or Path(fname).stem, storey_count,
                         unit_override or None, session, discipline=discipline)
     return drawing_out(d, session)
 

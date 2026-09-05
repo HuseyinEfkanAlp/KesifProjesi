@@ -34,18 +34,28 @@ def detect_slabs(drawing: Drawing, layers: list[str], labels: LabelIndex, params
 
     # (b) kiriş ağından paneller
     if not elements and network_segments:
-        faces = faces_from_network(network_segments, supports or [])
+        faces = faces_from_network(network_segments, supports or [], snap=params.support_snap)
         for face in faces:
             area = face.area
-            if area < params.min_slab_area or area > params.max_slab_area:
+            if area < params.min_slab_area:
                 continue
             pts = [(x, y) for x, y in face.exterior.coords[:-1]]
             # yüzeyin içinde döşeme etiketi olmalı (kiriş gövdeleri, dış çevre vb. elenir)
             lab = labels.find(pts, "slab", radius=0.0, claim=False, require_hint=True)
             if lab is None:
                 continue
+            n_labels = 1
+            if area > params.max_slab_area:
+                # büyük yüzey: birden çok döşeme etiketi varsa kiriş çizgileri hücreleri kapatmamış demektir (birleşik panel)
+                n_labels = labels.count_named(pts, "slab")
+                if n_labels < 2:
+                    continue
             el = _make("(kiriş ağı)", pts, area, "BEAM_NETWORK", "", labels, params, hole_union)
             el.subtype = "net"
+            if n_labels >= 2:
+                el.warnings.append(f"Birleşik panel: {n_labels} döşeme etiketi tek yüzeyde (kiriş çizgileri hücreleri kapatmıyor); "
+                                   "alan içindeki kiriş gövdeleri de dahil")
+                el.confidence = min(el.confidence, 0.6)
             elements.append(el)
     return elements
 

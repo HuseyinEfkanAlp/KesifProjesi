@@ -197,14 +197,14 @@ export default function ProjectDetail() {
         <div className="panel">
           <h3>DXF çizim yükle</h3>
           <p className="muted">
-            DWG dosyasını AutoCAD'de <b>Farklı Kaydet → AutoCAD DXF</b> ile dönüştürün. Bütün paftaların yan yana durduğu tek bir
-            ruhsat projesi dosyası da yüklenebilir: paftalar otomatik bulunur, planları seçersiniz.
+            DXF ya da doğrudan DWG yükleyin (DWG için sunucuda ODA File Converter kurulu olmalı; yoksa AutoCAD'de <b>Farklı Kaydet → DXF</b>).
+            Bütün paftaların yan yana durduğu tek bir ruhsat projesi dosyası da yüklenebilir: paftalar otomatik bulunur, planları seçersiniz.
             <b> Disiplin</b> çizimin ne olduğunu söyler. <b>KSF standart çizim</b>: katmanları <code className="layer">KSF-…</code> standardıyla
             adlandırılmış her disiplinden plan (havalandırma, yangın, sıhhi, cephe, çatı, izolasyon, altyapı, peyzaj…); katman eşleme gerekmez.
             Diğer üçü standart dışı eski çizimler için sezgisel tanımadır.
           </p>
           <form className="upload" onSubmit={upload}>
-            <label className="field">Dosya<input id="dxf-input" type="file" accept=".dxf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+            <label className="field">Dosya (DXF / DWG)<input id="dxf-input" type="file" accept=".dxf,.dwg,.DXF,.DWG" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
             <label className="field">Disiplin
               <select value={discipline} onChange={(e) => setDiscipline(e.target.value as Discipline)}>{disciplineOptions}</select>
             </label>

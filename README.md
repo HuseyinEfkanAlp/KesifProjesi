@@ -197,6 +197,44 @@ Ayrıntılı not ve kırpılmış test paftaları: `samples/b_blok/README.md`.
 - Doğrulama (programın kendi metraj tablosu `TABLE4` katmanında): kolon+perde betonu bodrum %4, zemin %0,4, 1. kat %5 içinde.
   Bu projede demir yoğunluğu yüksek: kolon/perde 160-190 kg/m³, kiriş ~160 kg/m³ (proje parametrelerinden girilir).
 
+## DWG yükleme
+
+Program DXF okur. **ODA File Converter** (ücretsiz, https://www.opendesign.com/guestfiles/oda_file_converter) kuruluysa DWG doğrudan
+yüklenir: sunucu dosyayı ACAD2018 DXF'e çevirir ve devam eder (`/api/health` → `dwg_support`). Dönüştürücü aranan yerler: `KESIF_ODA_CONVERTER`
+ortam değişkeni, macOS `~/Applications/ODAFileConverter.app`, Windows `C:\Program Files\ODA\ODAFileConverter*`.
+`libredwg` (`dwg2dxf`) AutoCAD 2013+ dosyalarında katman tablosunu çözemiyor (katman adları boş kalıyor); kullanmayın.
+
+## Gerçek çizimde öğrenilenler (KIYI İstanbul A4-A5 blok, 5 DWG, 5 Eyl 2026)
+
+Aynı statik ofisin ("VM …" katmanları) 5 dosyası: temel kalıp+donatı, kolon aplikasyon, kalıp planları (4 kot), kalıp donatı, kiriş detayları.
+Birim mm yazılı, cm çizilmiş (otomatik düzeltme çalıştı). Kalıp planı paftaları: +4.15, +7.95, +10.65/+11.65, +15.65; temel üst kotu +0.52/+0.82.
+Kat yükseklikleri kot farklarından girildi: 3.55 / 3.80 / 3.70 / 4.00.
+
+Bu çizimle yapılan düzeltmeler:
+
+- **Kiriş çizgileri kolon yüzüne değmiyor** (birkaç cm boşluk): döşeme hücreleri kapanmıyor, birleşip devasa yüzey oluyor ve
+  400 m² sınırından eleniyordu. Kolon/perde çokgenleri 5 cm tamponlanıyor (`support_snap`); döşeme alanı +4.15'te 1.610 → 7.966 m².
+  Hâlâ kapanmayan büyük yüzey birden çok döşeme etiketi içeriyorsa **birleşik panel** olarak alınır (uyarı + düşük güven).
+- **Radye bölge sınırları** çizgi + açık polyline karışımı, uçlar arasında 0.7–2 m boşluk: ağ önce birlikte kapatılır, sarkan uçlar
+  2.5 m içindeki çizgiye kendi doğrultusunda uzatılarak köprülenir (`raft_line_snap`); yan yana paralel çizgiler (sürekli temel)
+  köprülenmez. Dört RD1 (70 cm) bölgesi yakalandı; aralardaki koridorlar kalan alan olarak RD2 (40 cm) etiketinden alınır.
+- **Etiketsiz kirişler** (%7–14): kattaki baskın kiriş yüksekliğiyle hesaplanır, not düşülür (eskiden 0 alınıyordu).
+- Temel paftasındaki kolon/perde izleri metraj dışı (doğru); "Parapet (20/82)" etiketleri ve `VM Parapet Tarama` henüz sayılmıyor.
+- +15.65 çatı paftasında 66 döşeme etiketi kiriş ağı olmayan bölgede: bu döşemeler bulunamıyor (elle eklenmeli).
+
+Doğrulama: ofisin kendi donatı metraj tabloları (`VM-METRAJ` katmanı, "GENEL TOPLAM") pafta bazında okunabiliyor. Temel donatısı
+635,5 t → bizim radye betonu 6.573 m³ ile **97 kg/m³**; döşeme donatısı kat bazında 59–99 kg/m³ (+7.95: 62,7 t; +11.65: 67,9 t).
+Bu projede önerilen oranlar: döşeme 75, radye 100, kolon 130, kiriş 110 kg/m³.
+
+| Grup | Adet | Beton m³ | Kalıp m² |
+|---|---|---|---|
+| Radye (RD1 7.166 m² × 0,70 + RD2 3.368 m² × 0,40) | 8 | 6.572 | 945 |
+| Kolon | 457 | 1.693 | 5.963 |
+| Perde | 23 | 74 | 433 |
+| Kiriş | 1.746 | 3.405 | 16.797 |
+| Döşeme | 1.254 | 3.319 | 22.225 |
+| **Toplam** | | **15.064** | **46.363** |
+
 ## Gerçek çizimlerle kalibrasyon
 
 Firmanın çizimleri geldiğinde:

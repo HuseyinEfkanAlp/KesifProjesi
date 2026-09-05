@@ -41,6 +41,10 @@ def test_beam_slab_wall_foundation_formulas():
     assert strip.formwork_m2 == pytest.approx(2 * 4.0 * 0.8)
     missing = compute_element(ElementData(id=6, etype="beam", b=0.25, h=None, length=4.7), p)
     assert missing.concrete_m3 == 0 and missing.notes
+    # etiketsiz kiriş, kattaki baskın kiriş yüksekliği biliniyorsa onunla hesaplanır
+    p2 = QuantityParams(storey_height=3.0, slab_thickness=0.15, beam_depth=0.45, beam_full_height=True)
+    fb = compute_element(ElementData(id=7, etype="beam", b=0.25, h=None, length=4.0), p2)
+    assert fb.concrete_m3 == pytest.approx(0.25 * 0.45 * 4.0) and "baskın" in fb.notes[0]
 
 
 def test_end_to_end_storey(storey_dxf):

@@ -103,11 +103,16 @@ def test_full_flow(client, storey_dxf, foundation_dxf):
 
 def test_rejects_non_dxf(client, tmp_path):
     pid = client.post("/api/projects", json={"name": "X"}).json()["id"]
+    bad = tmp_path / "x.step"
+    bad.write_bytes(b"not a drawing")
+    with open(bad, "rb") as f:
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("x.step", f, "application/octet-stream")})
+    assert r.status_code == 400 and "dxf" in r.json()["detail"].lower()
     bad = tmp_path / "x.dwg"
     bad.write_bytes(b"AC1032 not really")
     with open(bad, "rb") as f:
         r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("x.dwg", f, "application/octet-stream")})
-    assert r.status_code == 400 and "DXF" in r.json()["detail"]
+    assert r.status_code == 400   # dönüştürücü yoksa açıklama, varsa bozuk dosya
     bad2 = tmp_path / "y.dxf"
     bad2.write_bytes(b"garbage")
     with open(bad2, "rb") as f:
@@ -232,3 +237,26 @@ def test_standard_flow_and_catalog_api(client, standard_dxf):
     assert client.delete("/api/catalog/items/YENI_KALEM").status_code == 204
     assert client.delete("/api/catalog/items/YENI_KALEM").status_code == 404
     assert client.post("/api/catalog/reset").status_code == 200
+
+
+def test_dwg_upload_when_converter_available(client, storey_dxf, tmp_path):
+    """ODA File Converter kuruluysa DWG yükleme uçtan uca çalışır (DXF -> DWG -> yükle); yoksa test atlanır."""
+    from app.parser.dwg import find_oda_converter
+    import subprocess
+    exe = find_oda_converter()
+    if not exe:
+        pytest.skip("ODA File Converter yok")
+    src_dir = tmp_path / "in"; src_dir.mkdir(); out_dir = tmp_path / "out"; out_dir.mkdir()
+    import shutil
+    shutil.copyfile(storey_dxf, src_dir / "kat.dxf")
+    subprocess.run([exe, str(src_dir), str(out_dir), "ACAD2018", "DWG", "0", "1", "*.dxf"], capture_output=True, timeout=300)
+    dwg = out_dir / "kat.dwg"
+    assert dwg.exists()
+    assert client.get("/api/health").json()["dwg_support"] is True
+    pid = client.post("/api/projects", json={"name": "DWG"}).json()["id"]
+    with open(dwg, "rb") as f:
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("kat.DWG", f, "application/octet-stream")},
+                        data={"label": "Kat", "storey_count": "1"})
+    assert r.status_code == 201, r.text
+    d = r.json()
+    assert d["filename"].endswith(".dxf") and d["element_count"] == 8 and d["unit"] == "cm"
