@@ -1,4 +1,4 @@
-import type { CostResult, Drawing, Element, EType, PriceItem, Project, QuantityLine, QuantitySummary, UploadResult } from '../types'
+import type { Boq, CostResult, Discipline, Drawing, Element, PriceIn, PriceItem, Project, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
@@ -24,6 +24,7 @@ export interface SheetPick {
   label?: string
   storey_count?: number
   storey_height?: number | null
+  discipline?: Discipline
 }
 
 export interface DrawingPatch {
@@ -31,6 +32,7 @@ export interface DrawingPatch {
   storey_count?: number
   storey_height?: number | null
   unit_override?: string
+  discipline?: Discipline
 }
 
 export const Api = {
@@ -40,25 +42,26 @@ export const Api = {
     create: (body: Partial<Project>) => request<Project>('/api/projects', { method: 'POST', body: json(body) }),
     patch: (id: number, body: Partial<Project>) => request<Project>(`/api/projects/${id}`, { method: 'PATCH', body: json(body) }),
     remove: (id: number) => request<void>(`/api/projects/${id}`, { method: 'DELETE' }),
-    mapLayer: (id: number, layer: string, etype: EType | null) =>
+    mapLayer: (id: number, layer: string, etype: string | null) =>
       request<{ profile: Record<string, string[]> }>(`/api/projects/${id}/layer-profile/map`, { method: 'POST', body: json({ layer, etype }) }),
   },
   drawings: {
     list: (pid: number) => request<Drawing[]>(`/api/projects/${pid}/drawings`),
     get: (id: number) => request<Drawing>(`/api/drawings/${id}`),
     /** Tek paftalı dosya: doğrudan çizim döner. Çok paftalı / büyük dosya: pafta listesi döner (SheetSelection). */
-    upload: (pid: number, file: File, label: string, storeyCount: number, unitOverride: string) => {
+    upload: (pid: number, file: File, label: string, storeyCount: number, unitOverride: string, discipline: Discipline) => {
       const fd = new FormData()
       fd.append('file', file)
       fd.append('label', label)
       fd.append('storey_count', String(storeyCount))
+      fd.append('discipline', discipline)
       if (unitOverride) fd.append('unit_override', unitOverride)
       return request<UploadResult>(`/api/projects/${pid}/drawings`, { method: 'POST', body: fd })
     },
     /** Kaynak dosyadan seçilen paftaları kırpıp ayrı çizimler olarak ekler */
-    fromSource: (pid: number, token: string, sheets: SheetPick[], unitOverride: string, whole = false) =>
+    fromSource: (pid: number, token: string, sheets: SheetPick[], unitOverride: string, discipline: Discipline, whole = false) =>
       request<Drawing[]>(`/api/projects/${pid}/drawings/from-source`, {
-        method: 'POST', body: json({ token, sheets, whole, unit_override: unitOverride || null }),
+        method: 'POST', body: json({ token, sheets, whole, unit_override: unitOverride || null, discipline }),
       }),
     patch: (id: number, body: DrawingPatch) =>
       request<Drawing>(`/api/drawings/${id}`, { method: 'PATCH', body: json(body) }),
@@ -72,15 +75,14 @@ export const Api = {
     patch: (id: number, body: Partial<Element>) => request<Element>(`/api/elements/${id}`, { method: 'PATCH', body: json(body) }),
     remove: (id: number) => request<void>(`/api/elements/${id}`, { method: 'DELETE' }),
   },
-  quantities: (pid: number) =>
-    request<{ summary: QuantitySummary; lines: QuantityLine[]; params: { storey_height: number; slab_thickness: number } }>(`/api/projects/${pid}/quantities`),
+  quantities: (pid: number) => request<QuantitiesResponse>(`/api/projects/${pid}/quantities`),
   prices: {
     list: (pid: number) => request<PriceItem[]>(`/api/projects/${pid}/prices`),
-    save: (pid: number, items: { key: string; unit_price: number; name?: string }[]) =>
+    save: (pid: number, items: PriceIn[]) =>
       request<PriceItem[]>(`/api/projects/${pid}/prices`, { method: 'PUT', body: json(items) }),
   },
   cost: {
-    get: (pid: number) => request<{ summary: QuantitySummary; cost: CostResult }>(`/api/projects/${pid}/cost`),
+    get: (pid: number) => request<{ summary: QuantitySummary; boq: Boq; cost: CostResult }>(`/api/projects/${pid}/cost`),
     excelUrl: (pid: number) => `/api/projects/${pid}/cost.xlsx`,
   },
 }

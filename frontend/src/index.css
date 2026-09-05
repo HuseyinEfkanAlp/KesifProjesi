@@ -85,3 +85,17 @@ td input.wide { width: 110px; }
 .list li:last-child { border-bottom: 0; }
 .upload { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
 .mono { font-family: Consolas, monospace; font-size: 12px; }
+/* mimari / elektrik eleman rozetleri */
+.badge.wall { background: #8c564b; }
+.badge.door { background: #e377c2; }
+.badge.window { background: #17becf; }
+.badge.tray { background: #bcbd22; color: #222; }
+.badge.cable { background: #ff9896; color: #222; }
+.badge.conduit { background: #c5b0d5; color: #222; }
+.badge.fixture { background: #7f7f7f; }
+/* disiplin rozetleri */
+.badge.disc-structural { background: #1f4e78; }
+.badge.disc-architectural { background: #8c564b; }
+.badge.disc-electrical { background: #b8860b; }
+.svg-wrap polyline.el { cursor: pointer; }
+.params-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }

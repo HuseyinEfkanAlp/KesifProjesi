@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
-import { ETYPE_LABELS, type Project, type QuantityLine, type QuantitySummary } from '../types'
+import { ETYPE_LABELS, SUBTYPE_LABELS, type Boq, type Project, type QuantityLine, type QuantitySummary } from '../types'
 import ProjectNav from './ProjectNav'
 
 export default function Quantities() {
@@ -9,70 +9,119 @@ export default function Quantities() {
   const [project, setProject] = useState<Project | null>(null)
   const [summary, setSummary] = useState<QuantitySummary | null>(null)
   const [lines, setLines] = useState<QuantityLine[]>([])
+  const [boq, setBoq] = useState<Boq | null>(null)
   const [error, setError] = useState('')
+  const [showLines, setShowLines] = useState(false)
 
   useEffect(() => {
     Promise.all([Api.projects.get(pid), Api.quantities(pid)])
-      .then(([p, q]) => { setProject(p); setSummary(q.summary); setLines(q.lines) })
+      .then(([p, q]) => { setProject(p); setSummary(q.summary); setLines(q.lines); setBoq(q.boq) })
       .catch((e) => setError(e.message))
   }, [pid])
 
-  if (!project || !summary) return <p className="muted">{error || 'Yükleniyor...'}</p>
+  if (!project || !summary || !boq) return <p className="muted">{error || 'Yükleniyor...'}</p>
+  const hasStructural = summary.groups.length > 0
+  const wallH = project.params?.wall_height
 
   return (
     <>
       <ProjectNav id={pid} name={project.name} />
       {error && <div className="error">{error}</div>}
-      <div className="cards">
-        <div className="card"><div className="label">Toplam beton</div><div className="value">{fmt(summary.totals.concrete_m3)} m³</div></div>
-        <div className="card"><div className="label">Toplam kalıp</div><div className="value">{fmt(summary.totals.formwork_m2)} m²</div></div>
-        <div className="card"><div className="label">Toplam demir (oran ile)</div><div className="value">{fmt(summary.totals.rebar_kg, 0)} kg</div></div>
-      </div>
 
-      <div className="panel">
-        <h3>Eleman grubuna göre özet</h3>
-        <table>
-          <thead><tr><th>Grup</th><th className="num">Adet (kat dahil)</th><th className="num">Beton (m³)</th><th className="num">Kalıp (m²)</th><th className="num">Demir (kg)</th></tr></thead>
-          <tbody>
-            {summary.groups.map((g) => (
-              <tr key={g.key}><td><span className={`badge ${g.etype}`}>{g.label}</span></td><td className="num">{g.element_count}</td><td className="num">{fmt(g.concrete_m3, 3)}</td><td className="num">{fmt(g.formwork_m2)}</td><td className="num">{fmt(g.rebar_kg, 0)}</td></tr>
-            ))}
-            <tr className="total"><td>TOPLAM</td><td></td><td className="num">{fmt(summary.totals.concrete_m3, 3)}</td><td className="num">{fmt(summary.totals.formwork_m2)}</td><td className="num">{fmt(summary.totals.rebar_kg, 0)}</td></tr>
-          </tbody>
-        </table>
-        <p className="muted">H = {project.storey_height} m, d = {Math.round(project.slab_thickness * 100)} cm. Temel kat sayısıyla çarpılmaz. Demir = beton × kg/m³ oranı (yaklaşık; detay paftası okuma sonraki sürümde).</p>
-      </div>
+      {boq.items.length === 0 && <p className="muted">Henüz metraj yok; çizim yükleyin.</p>}
 
-      <div className="panel">
-        <h3>Eleman bazında metraj ({lines.length} satır)</h3>
-        <div style={{ overflow: 'auto' }}>
+      {boq.by_discipline.map((d) => (
+        <div className="panel" key={d.discipline}>
+          <h3><span className={`badge disc-${d.discipline}`}>{d.label}</span> keşif listesi</h3>
           <table>
-            <thead>
-              <tr><th>Çizim</th><th>Tip</th><th>Ad</th><th className="num">b (cm)</th><th className="num">h (cm)</th><th className="num">Kal. (cm)</th><th className="num">Uzunluk (m)</th><th className="num">Alan (m²)</th><th className="num">Adet</th><th className="num">Kat</th><th className="num">Beton (m³)</th><th className="num">Kalıp (m²)</th><th className="num">Demir (kg)</th><th>Not</th></tr>
-            </thead>
+            <thead><tr><th>Tür</th><th>Kalem</th><th className="num">Miktar</th><th>Birim</th><th className="num">Adet / hat</th><th>Not</th></tr></thead>
             <tbody>
-              {lines.map((l) => (
-                <tr key={l.element_id}>
-                  <td>{l.drawing_id ? <Link to={`/projects/${pid}/drawings/${l.drawing_id}`}>{l.drawing}</Link> : l.drawing}</td>
-                  <td><span className={`badge ${l.etype}`}>{ETYPE_LABELS[l.etype]}</span>{l.subtype && <span className="muted"> {l.subtype === 'raft' ? 'radye' : 'sürekli'}</span>}</td>
-                  <td>{l.name ?? '-'}</td>
-                  <td className="num">{l.b != null ? Math.round(l.b * 100) : '-'}</td>
-                  <td className="num">{l.h != null ? Math.round(l.h * 100) : '-'}</td>
-                  <td className="num">{l.thickness != null ? Math.round(l.thickness * 100) : '-'}</td>
-                  <td className="num">{l.length ? fmt(l.length) : '-'}</td>
-                  <td className="num">{l.area ? fmt(l.area, 3) : '-'}</td>
-                  <td className="num">{l.count}</td>
-                  <td className="num">×{l.multiplier}</td>
-                  <td className="num">{fmt(l.total_concrete_m3, 3)}</td>
-                  <td className="num">{fmt(l.total_formwork_m2)}</td>
-                  <td className="num">{fmt(l.total_rebar_kg, 0)}</td>
-                  <td className="muted">{[...l.notes, ...l.warnings].join('; ')}</td>
+              {d.items.map((it) => (
+                <tr key={it.key}>
+                  <td>{it.kind_label}</td>
+                  <td>{it.label}</td>
+                  <td className="num"><b>{fmt(it.quantity, it.unit === 'adet' || it.unit === 'kg' ? 0 : 2)}</b></td>
+                  <td>{it.unit}</td>
+                  <td className="num">{it.count ? fmt(it.count, 0) : '-'}</td>
+                  <td className="muted">{it.notes.join('; ')}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {d.discipline === 'architectural' && (
+            <p className="muted">
+              Duvar m² = uzunluk × duvar yüksekliği ({wallH ? `${wallH} m` : `H − d = ${(project.storey_height - project.slab_thickness).toFixed(2)} m`}) × kat sayısı − kapı/pencere boşlukları.
+              Sıva ve boya net duvar alanı × yüz sayısı ({project.params?.plaster_sides ?? 2} / {project.params?.paint_sides ?? 2}). Parametreler proje sayfasında.
+            </p>
+          )}
+          {d.discipline === 'electrical' && (
+            <p className="muted">
+              Kablo m = (hat uzunluğu + iniş payı {project.params?.cable_drop ?? 0} m) × kat sayısı × (1 + fire %{project.params?.cable_waste_pct ?? 0}).
+              Tava fire %{project.params?.tray_waste_pct ?? 0}. Kesit / boyut etiketten ya da katman adından okunur; bilinmeyenler "belirsiz" grubunda toplanır.
+            </p>
+          )}
         </div>
-      </div>
+      ))}
+
+      {hasStructural && (
+        <>
+          <div className="cards">
+            <div className="card"><div className="label">Toplam beton</div><div className="value">{fmt(summary.totals.concrete_m3)} m³</div></div>
+            <div className="card"><div className="label">Toplam kalıp</div><div className="value">{fmt(summary.totals.formwork_m2)} m²</div></div>
+            <div className="card"><div className="label">Toplam demir (oran ile)</div><div className="value">{fmt(summary.totals.rebar_kg, 0)} kg</div></div>
+          </div>
+
+          <div className="panel">
+            <h3>Statik: eleman grubuna göre özet</h3>
+            <table>
+              <thead><tr><th>Grup</th><th className="num">Adet (kat dahil)</th><th className="num">Beton (m³)</th><th className="num">Kalıp (m²)</th><th className="num">Demir (kg)</th></tr></thead>
+              <tbody>
+                {summary.groups.map((g) => (
+                  <tr key={g.key}><td><span className={`badge ${g.etype}`}>{g.label}</span></td><td className="num">{g.element_count}</td><td className="num">{fmt(g.concrete_m3, 3)}</td><td className="num">{fmt(g.formwork_m2)}</td><td className="num">{fmt(g.rebar_kg, 0)}</td></tr>
+                ))}
+                <tr className="total"><td>TOPLAM</td><td></td><td className="num">{fmt(summary.totals.concrete_m3, 3)}</td><td className="num">{fmt(summary.totals.formwork_m2)}</td><td className="num">{fmt(summary.totals.rebar_kg, 0)}</td></tr>
+              </tbody>
+            </table>
+            <p className="muted">H = {project.storey_height} m, d = {Math.round(project.slab_thickness * 100)} cm. Temel kat sayısıyla çarpılmaz. Demir = beton × kg/m³ oranı (yaklaşık; detay paftası okuma sonraki sürümde).</p>
+          </div>
+
+          <div className="panel">
+            <div className="row between">
+              <h3>Statik: eleman bazında metraj ({lines.length} satır)</h3>
+              <button className="secondary small" onClick={() => setShowLines(!showLines)}>{showLines ? 'Gizle' : 'Göster'}</button>
+            </div>
+            {showLines && (
+              <div style={{ overflow: 'auto' }}>
+                <table>
+                  <thead>
+                    <tr><th>Çizim</th><th>Tip</th><th>Ad</th><th className="num">b (cm)</th><th className="num">h (cm)</th><th className="num">Kal. (cm)</th><th className="num">Uzunluk (m)</th><th className="num">Alan (m²)</th><th className="num">Adet</th><th className="num">Kat</th><th className="num">Beton (m³)</th><th className="num">Kalıp (m²)</th><th className="num">Demir (kg)</th><th>Not</th></tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((l) => (
+                      <tr key={l.element_id}>
+                        <td>{l.drawing_id ? <Link to={`/projects/${pid}/drawings/${l.drawing_id}`}>{l.drawing}</Link> : l.drawing}</td>
+                        <td><span className={`badge ${l.etype}`}>{ETYPE_LABELS[l.etype]}</span>{l.subtype && <span className="muted"> {SUBTYPE_LABELS[l.subtype] ?? l.subtype}</span>}</td>
+                        <td>{l.name ?? '-'}</td>
+                        <td className="num">{l.b != null ? Math.round(l.b * 100) : '-'}</td>
+                        <td className="num">{l.h != null ? Math.round(l.h * 100) : '-'}</td>
+                        <td className="num">{l.thickness != null ? Math.round(l.thickness * 100) : '-'}</td>
+                        <td className="num">{l.length ? fmt(l.length) : '-'}</td>
+                        <td className="num">{l.area ? fmt(l.area, 3) : '-'}</td>
+                        <td className="num">{l.count}</td>
+                        <td className="num">×{l.multiplier}</td>
+                        <td className="num">{fmt(l.total_concrete_m3, 3)}</td>
+                        <td className="num">{fmt(l.total_formwork_m2)}</td>
+                        <td className="num">{fmt(l.total_rebar_kg, 0)}</td>
+                        <td className="muted">{[...l.notes, ...l.warnings].join('; ')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </>
   )
 }

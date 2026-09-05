@@ -1,6 +1,7 @@
 import pytest
 
-from tests.fixtures.make_dxf import make_foundation_dxf, make_network_dxf, make_storey_dxf, make_unitless_mm_dxf
+from tests.fixtures.make_dxf import (make_arch_dxf, make_elec_dxf, make_foundation_dxf, make_network_dxf, make_storey_dxf,
+                                     make_unitless_mm_dxf)
 
 
 @pytest.fixture(scope="session")
@@ -21,3 +22,13 @@ def foundation_dxf(tmp_path_factory):
 @pytest.fixture(scope="session")
 def unitless_dxf(tmp_path_factory):
     return make_unitless_mm_dxf(tmp_path_factory.mktemp("dxf") / "mm.dxf")
+
+
+@pytest.fixture(scope="session")
+def arch_dxf(tmp_path_factory):
+    return make_arch_dxf(tmp_path_factory.mktemp("dxf") / "mimari.dxf")
+
+
+@pytest.fixture(scope="session")
+def elec_dxf(tmp_path_factory):
+    return make_elec_dxf(tmp_path_factory.mktemp("dxf") / "elektrik.dxf")

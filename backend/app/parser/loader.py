@@ -15,7 +15,7 @@ from ezdxf import path as ezpath
 from ezdxf.entities import DXFEntity
 
 Point = tuple[float, float]
-Kind = Literal["polygon", "polyline", "line", "text"]
+Kind = Literal["polygon", "polyline", "line", "text", "insert"]
 
 # $INSUNITS kodları -> metreye çarpan
 INSUNITS_TO_M = {
@@ -35,7 +35,7 @@ class Entity:
     layer: str
     points: list[Point]            # metre
     closed: bool = False
-    text: str = ""                 # kind == "text" için düz metin
+    text: str = ""                 # kind == "text" için düz metin; kind == "insert" için blok adı
     height: float = 0.0            # yazı yüksekliği (metre)
     handle: str = ""
     source: str = ""               # DXF entity tipi (LWPOLYLINE, HATCH, INSERT>LINE ...)
@@ -61,6 +61,10 @@ class Drawing:
 
     def texts(self) -> list[Entity]:
         return [e for e in self.entities if e.kind == "text"]
+
+    def inserts(self) -> list[Entity]:
+        """Üst düzey blok yerleşimleri (kapı/pencere/armatür sembolleri); points = bloğun çevreleyen kutusu."""
+        return [e for e in self.entities if e.kind == "insert"]
 
     def layer_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -99,8 +103,21 @@ def _convert(entity: DXFEntity, scale: float, insert_layer: str | None, block: s
             subs = list(entity.virtual_entities())
         except Exception:
             return
+        converted: list[Entity] = []
         for sub in subs:
-            yield from _convert(sub, scale, entity.dxf.layer, entity.dxf.name)
+            converted.extend(_convert(sub, scale, entity.dxf.layer, entity.dxf.name))
+        yield from converted
+        if not block:
+            # Üst düzey blok: sembol sayımı (kapı, pencere, armatür) için tek bir "insert" kaydı; kutu = alt nesnelerin sınırı
+            ins = entity.dxf.insert
+            xs = [p[0] for e in converted if e.kind != "text" for p in e.points]
+            ys = [p[1] for e in converted if e.kind != "text" for p in e.points]
+            if xs:
+                pts = [(min(xs), min(ys)), (max(xs), min(ys)), (max(xs), max(ys)), (min(xs), max(ys))]
+            else:
+                pts = [(ins.x * scale, ins.y * scale)]
+            yield Entity("insert", layer, pts, closed=True, text=str(entity.dxf.name), handle=handle,
+                         source="INSERT", block=str(entity.dxf.name))
         return
 
     if t in ("TEXT", "MTEXT", "ATTRIB"):

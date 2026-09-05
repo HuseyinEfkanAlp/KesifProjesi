@@ -15,6 +15,15 @@ COLORS = {
     "beam": "#1f77b4",
     "slab": "#2ca02c",
     "foundation": "#ff7f0e",
+    # mimari
+    "wall": "#8c564b",
+    "door": "#e377c2",
+    "window": "#17becf",
+    # elektrik
+    "tray": "#bcbd22",
+    "cable": "#ff9896",
+    "conduit": "#c5b0d5",
+    "fixture": "#7f7f7f",
 }
 MAX_ENTITIES = 60000
 
@@ -61,7 +70,7 @@ def render_svg(drawing: Drawing, elements: list[dict], width: int = 1200) -> str
     ]
     n = 0
     for e in drawing.entities:
-        if e.kind == "text" or not visible(e.points):
+        if e.kind in ("text", "insert") or not visible(e.points):
             continue
         n += 1
         if n > MAX_ENTITIES:

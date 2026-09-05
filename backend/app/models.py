@@ -16,6 +16,8 @@ class Project(SQLModel, table=True):
     vat_rate: float = 0.0
     rebar_ratios: dict[str, float] = Field(default_factory=dict, sa_column=Column(JSON))
     layer_profile: dict[str, list[str]] = Field(default_factory=dict, sa_column=Column(JSON))
+    # Disiplin parametreleri (duvar yüksekliği, sıva/boya yüzü, kablo iniş payı, günlük çalışma saati...)
+    params: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -25,6 +27,7 @@ class Drawing(SQLModel, table=True):
     filename: str
     stored_path: str
     label: str = ""                 # "Zemin Kat", "Temel" vb.
+    discipline: str = "structural"  # structural | architectural | electrical
     storey_count: int = 1           # bu planın temsil ettiği kat sayısı
     storey_height: float | None = None   # bu katın yüksekliği (m); None -> projenin H değeri
     unit: str = "m"
@@ -66,4 +69,8 @@ class PriceItem(SQLModel, table=True):
     key: str
     name: str
     unit: str
-    unit_price: float = 0.0
+    unit_price: float = 0.0         # malzeme birim fiyatı (₺/birim)
+    labor_price: float = 0.0        # işçilik birim fiyatı (₺/birim)
+    brand: str = ""                 # tercih edilen marka / ürün
+    hours_per_unit: float = 0.0     # işçilik süresi: adam-saat / birim
+    crew_size: float = 0.0          # bu kalemde aynı anda çalışan kişi sayısı (0 = genel satırdan / 1)

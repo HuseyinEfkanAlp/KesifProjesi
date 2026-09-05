@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
-import { ETYPE_LABELS, LAYER_TYPE_LABELS, type Drawing, type Element, type EType } from '../types'
+import { DISCIPLINES, ETYPE_COLORS, ETYPE_LABELS, ETYPES_BY_DISCIPLINE, SUBTYPE_LABELS, layerTypeLabels, type Drawing, type Element, type EType } from '../types'
 
-const ETYPES = Object.keys(ETYPE_LABELS) as EType[]
+/** Tipe göre düzenlenebilir sayısal alanlar */
+const FIELDS: Record<EType, Array<'b' | 'h' | 'thickness' | 'length' | 'area'>> = {
+  column: ['b', 'h'], shear_wall: ['b', 'length'], beam: ['b', 'h', 'length'], slab: ['thickness', 'area'], foundation: ['b', 'h', 'thickness', 'length', 'area'],
+  wall: ['b', 'h', 'length'], door: ['b', 'h'], window: ['b', 'h'],
+  tray: ['b', 'h', 'length'], cable: ['length'], conduit: ['length'], fixture: [],
+}
+const SUBTYPE_HINT: Partial<Record<EType, string>> = {
+  wall: 'malzeme (ytong / tugla / bims / alcipan)', tray: 'boyut, ör. 200x60', cable: 'kesit, ör. NYY 4x16', conduit: 'çap, ör. Ø20 PVC',
+  fixture: 'kategori (armatur / priz / anahtar / data / yangin / pano)',
+}
 
 export default function Elements() {
   const { id, did } = useParams()
@@ -16,12 +25,13 @@ export default function Elements() {
   const [busy, setBusy] = useState(false)
   const [filter, setFilter] = useState<EType | ''>('')
   const svgRef = useRef<HTMLDivElement>(null)
-  const [manual, setManual] = useState({ etype: 'column' as EType, name: '', b: 0.3, h: 0.6, length: 0, thickness: 0, count: 1 })
+  const [manual, setManual] = useState({ etype: '' as EType | '', name: '', subtype: '', b: 0.3, h: 0.6, length: 0, thickness: 0, area: 0, count: 1 })
 
   const load = useCallback(async () => {
     try {
       const [d, els, s] = await Promise.all([Api.drawings.get(drawingId), Api.drawings.elements(drawingId), Api.drawings.previewSvg(drawingId)])
       setDrawing(d); setElements(els); setSvg(s)
+      setManual((m) => (m.etype ? m : { ...m, etype: ETYPES_BY_DISCIPLINE[d.discipline][0] }))
     } catch (e) { setError((e as Error).message) }
   }, [drawingId])
   useEffect(() => { load() }, [load])
@@ -49,21 +59,26 @@ export default function Elements() {
     try { await fn(); await load() } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
 
-  const mapLayer = (layer: string, etype: string) => run(() => Api.projects.mapLayer(pid, layer, (etype || null) as EType | null))
+  const mapLayer = (layer: string, etype: string) => run(() => Api.projects.mapLayer(pid, layer, etype || null))
   const patch = (el: Element, body: Partial<Element>) => run(() => Api.elements.patch(el.id, body))
   const remove = (el: Element) => { if (confirm('Eleman silinsin mi?')) run(() => Api.elements.remove(el.id)) }
   const addManual = (e: React.FormEvent) => {
     e.preventDefault()
-    const body: Partial<Element> = { etype: manual.etype, name: manual.name || null, count: manual.count }
-    if (manual.etype === 'column') Object.assign(body, { b: manual.b, h: manual.h })
-    if (manual.etype === 'shear_wall') Object.assign(body, { b: manual.b, length: manual.length })
-    if (manual.etype === 'beam') Object.assign(body, { b: manual.b, h: manual.h, length: manual.length })
-    if (manual.etype === 'slab') Object.assign(body, { area: manual.length, thickness: manual.thickness })
-    if (manual.etype === 'foundation') Object.assign(body, { subtype: 'strip', b: manual.b, h: manual.h, length: manual.length })
+    if (!manual.etype) return
+    const t = manual.etype
+    const body: Partial<Element> = { etype: t, name: manual.name || null, count: manual.count, subtype: manual.subtype || (t === 'foundation' ? 'strip' : null) }
+    for (const f of FIELDS[t]) {
+      const v = manual[f]
+      if (v) (body as Record<string, unknown>)[f] = v
+    }
     run(() => Api.drawings.addElement(drawingId, body))
   }
 
   const numCell = (el: Element, field: 'b' | 'h' | 'thickness' | 'length' | 'area', asCm: boolean) => {
+    if (!FIELDS[el.etype].includes(field)) {
+      const v = el[field]
+      return <td className="num muted">{v ? (asCm ? Math.round(v * 100) : fmt(v, field === 'area' ? 3 : 2)) : '-'}</td>
+    }
     const v = el[field]
     return (
       <td className="num">
@@ -79,13 +94,22 @@ export default function Elements() {
   }
 
   if (!drawing) return <p className="muted">{error || 'Yükleniyor...'}</p>
+  const discipline = drawing.discipline
+  const ETYPES = ETYPES_BY_DISCIPLINE[discipline]
+  const layerTypes = layerTypeLabels(discipline)
+  const isElec = discipline === 'electrical'
   const shown = elements.filter((e) => !filter || e.etype === filter)
   const counts = ETYPES.map((t) => [t, elements.filter((e) => e.etype === t).length] as const)
+  const subtypeText = (el: Element) => (el.subtype ? (SUBTYPE_LABELS[el.subtype] ?? el.subtype) : '')
+  const mt = manual.etype as EType
 
   return (
     <>
       <div className="row between">
-        <h1>{drawing.label} <span className="muted" style={{ fontSize: 14 }}>({drawing.filename}, birim: {drawing.unit})</span></h1>
+        <h1>
+          {drawing.label} <span className={`badge disc-${discipline}`}>{DISCIPLINES[discipline]}</span>
+          <span className="muted" style={{ fontSize: 14 }}> ({drawing.filename}, birim: {drawing.unit})</span>
+        </h1>
         <div className="row">
           <Link to={`/projects/${pid}`}>← Projeye dön</Link>
           <button className="secondary" disabled={busy} onClick={() => run(() => Api.drawings.reanalyze(drawingId))}>Yeniden analiz et</button>
@@ -99,12 +123,15 @@ export default function Elements() {
       <div className="grid2">
         <div className="panel">
           <h3>Plan önizleme</h3>
-          <div className="legend">{ETYPES.map((t) => <span key={t}><i style={{ background: color(t) }} />{ETYPE_LABELS[t]}</span>)}<span className="muted">— tıklayınca tabloda seçilir</span></div>
+          <div className="legend">{ETYPES.map((t) => <span key={t}><i style={{ background: ETYPE_COLORS[t] }} />{ETYPE_LABELS[t]}</span>)}<span className="muted">— tıklayınca tabloda seçilir</span></div>
           <div className="svg-wrap" ref={svgRef} dangerouslySetInnerHTML={{ __html: svg }} />
         </div>
         <div className="panel">
           <h3>Katman eşleme</h3>
-          <p className="muted">Hangi katman hangi elemanı çiziyor? Eşlenmemiş katmanlar metraja girmez. Değişiklik projedeki tüm çizimlere uygulanır.</p>
+          <p className="muted">
+            Hangi katman hangi elemanı çiziyor? Eşlenmemiş katmanlar metraja girmez. Bu çizim <b>{DISCIPLINES[discipline]}</b> disiplininde;
+            yalnızca bu disiplinin tipleri seçilebilir (disiplin proje sayfasından değiştirilir). Değişiklik projedeki tüm çizimlere uygulanır.
+          </p>
           <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
             <table>
               <thead><tr><th>Katman</th><th className="num">Nesne</th><th>Eleman tipi</th></tr></thead>
@@ -116,7 +143,7 @@ export default function Elements() {
                     <td>
                       <select value={l.etype ?? ''} disabled={busy} onChange={(e) => mapLayer(l.name, e.target.value)}>
                         <option value="">— yok sayılır —</option>
-                        {Object.entries(LAYER_TYPE_LABELS).map(([t, lbl]) => <option key={t} value={t}>{lbl}</option>)}
+                        {Object.entries(layerTypes).map(([t, lbl]) => <option key={t} value={t}>{lbl}</option>)}
                       </select>
                     </td>
                   </tr>
@@ -135,12 +162,16 @@ export default function Elements() {
             {counts.map(([t, n]) => <button key={t} className={`small ${filter === t ? '' : 'secondary'}`} onClick={() => setFilter(t)}>{ETYPE_LABELS[t]} ({n})</button>)}
           </div>
         </div>
-        <p className="muted">Boyutlar cm. Hücreyi düzenleyip dışına tıklayın; alan/çevre otomatik güncellenir. Elle düzenlenen elemanlar yeniden analizde korunur.</p>
+        <p className="muted">
+          {isElec ? 'Tava genişlik/yükseklik mm; uzunluk m.' : 'Boyutlar cm; uzunluk m.'} Hücreyi düzenleyip dışına tıklayın; alan otomatik güncellenir.
+          Elle düzenlenen elemanlar yeniden analizde korunur. {discipline === 'architectural' && 'Duvarda h boşsa proje duvar yüksekliği kullanılır; kapı/pencerede b×h boşluk alanıdır.'}
+        </p>
         <div style={{ overflow: 'auto' }}>
           <table>
             <thead>
               <tr>
-                <th>Dahil</th><th>Tip</th><th>Ad</th><th>Katman</th><th className="num">b</th><th className="num">h</th><th className="num">Kal.</th>
+                <th>Dahil</th><th>Tip</th><th>Ad</th><th>{discipline === 'structural' ? 'Alt tip' : discipline === 'architectural' ? 'Malzeme / blok' : 'Boyut / kesit / kategori'}</th><th>Katman</th>
+                <th className="num">b {isElec ? '(mm)' : '(cm)'}</th><th className="num">h {isElec ? '(mm)' : '(cm)'}</th><th className="num">Kal. (cm)</th>
                 <th className="num">Uzunluk (m)</th><th className="num">Alan (m²)</th><th className="num">Adet</th><th>Güven</th><th>Etiket / Uyarı</th><th></th>
               </tr>
             </thead>
@@ -151,18 +182,26 @@ export default function Elements() {
                   <td>
                     <select value={el.etype} onChange={(e) => patch(el, { etype: e.target.value as EType })} className="badge-select">
                       {ETYPES.map((t) => <option key={t} value={t}>{ETYPE_LABELS[t]}</option>)}
+                      {!ETYPES.includes(el.etype) && <option value={el.etype}>{ETYPE_LABELS[el.etype]}</option>}
                     </select>
-                    {el.subtype && <div className="muted">{el.subtype === 'raft' ? 'radye' : 'sürekli'}</div>}
                   </td>
-                  <td><input style={{ width: 70 }} defaultValue={el.name ?? ''} key={`${el.id}-name-${el.name}`} onBlur={(e) => e.target.value !== (el.name ?? '') && patch(el, { name: e.target.value })} /></td>
+                  <td><input style={{ width: 90 }} defaultValue={el.name ?? ''} key={`${el.id}-name-${el.name}`} onBlur={(e) => e.target.value !== (el.name ?? '') && patch(el, { name: e.target.value })} /></td>
+                  <td>
+                    {discipline === 'structural'
+                      ? <span className="muted">{subtypeText(el)}</span>
+                      : <input style={{ width: 120 }} defaultValue={el.subtype ?? ''} key={`${el.id}-sub-${el.subtype}`} title={subtypeText(el)}
+                          onBlur={(e) => e.target.value !== (el.subtype ?? '') && patch(el, { subtype: e.target.value || null })} />}
+                  </td>
                   <td className="mono">{el.layer}</td>
-                  {numCell(el, 'b', true)}
-                  {numCell(el, 'h', true)}
+                  {isElec
+                    ? <td className="num">{el.b ? Math.round(el.b * 1000) : '-'}</td>
+                    : numCell(el, 'b', true)}
+                  {isElec
+                    ? <td className="num">{el.h ? Math.round(el.h * 1000) : '-'}</td>
+                    : numCell(el, 'h', true)}
                   {numCell(el, 'thickness', true)}
                   {numCell(el, 'length', false)}
-                  {el.etype === 'slab' || (el.etype === 'foundation' && el.subtype === 'raft')
-                    ? numCell(el, 'area', false)
-                    : <td className="num">{fmt(el.area, 3)}</td>}
+                  {numCell(el, 'area', false)}
                   <td className="num"><input type="number" min={1} style={{ width: 55 }} defaultValue={el.count} key={`${el.id}-count-${el.count}`} onBlur={(e) => +e.target.value !== el.count && patch(el, { count: +e.target.value })} /></td>
                   <td>
                     {el.manual ? <span className="muted">elle</span> : (
@@ -187,19 +226,17 @@ export default function Elements() {
               {ETYPES.map((t) => <option key={t} value={t}>{ETYPE_LABELS[t]}{t === 'foundation' ? ' (sürekli)' : ''}</option>)}
             </select>
           </label>
-          <label className="field">Ad<input style={{ width: 80 }} value={manual.name} onChange={(e) => setManual({ ...manual, name: e.target.value })} /></label>
-          {manual.etype !== 'slab' && <label className="field">b (m)<input type="number" step="0.01" value={manual.b} onChange={(e) => setManual({ ...manual, b: +e.target.value })} /></label>}
-          {(manual.etype === 'column' || manual.etype === 'beam' || manual.etype === 'foundation') && <label className="field">h (m)<input type="number" step="0.01" value={manual.h} onChange={(e) => setManual({ ...manual, h: +e.target.value })} /></label>}
-          {manual.etype === 'slab' && <label className="field">Kalınlık (m)<input type="number" step="0.01" value={manual.thickness} onChange={(e) => setManual({ ...manual, thickness: +e.target.value })} /></label>}
-          {manual.etype !== 'column' && <label className="field">{manual.etype === 'slab' ? 'Alan (m²)' : 'Uzunluk (m)'}<input type="number" step="0.01" value={manual.length} onChange={(e) => setManual({ ...manual, length: +e.target.value })} /></label>}
+          <label className="field">Ad<input style={{ width: 90 }} value={manual.name} onChange={(e) => setManual({ ...manual, name: e.target.value })} /></label>
+          {mt && SUBTYPE_HINT[mt] && <label className="field">{SUBTYPE_HINT[mt]}<input style={{ width: 170 }} value={manual.subtype} onChange={(e) => setManual({ ...manual, subtype: e.target.value })} /></label>}
+          {mt && FIELDS[mt].includes('b') && <label className="field">b (m)<input type="number" step="0.01" value={manual.b} onChange={(e) => setManual({ ...manual, b: +e.target.value })} /></label>}
+          {mt && FIELDS[mt].includes('h') && <label className="field">h (m)<input type="number" step="0.01" value={manual.h} onChange={(e) => setManual({ ...manual, h: +e.target.value })} /></label>}
+          {mt && FIELDS[mt].includes('thickness') && <label className="field">Kalınlık (m)<input type="number" step="0.01" value={manual.thickness} onChange={(e) => setManual({ ...manual, thickness: +e.target.value })} /></label>}
+          {mt && FIELDS[mt].includes('length') && <label className="field">Uzunluk (m)<input type="number" step="0.01" value={manual.length} onChange={(e) => setManual({ ...manual, length: +e.target.value })} /></label>}
+          {mt && FIELDS[mt].includes('area') && <label className="field">Alan (m²)<input type="number" step="0.01" value={manual.area} onChange={(e) => setManual({ ...manual, area: +e.target.value })} /></label>}
           <label className="field">Adet<input type="number" min={1} value={manual.count} onChange={(e) => setManual({ ...manual, count: +e.target.value })} /></label>
-          <button type="submit" disabled={busy}>Ekle</button>
+          <button type="submit" disabled={busy || !manual.etype}>Ekle</button>
         </form>
       </div>
     </>
   )
-}
-
-function color(t: EType) {
-  return { column: '#d62728', shear_wall: '#9467bd', beam: '#1f77b4', slab: '#2ca02c', foundation: '#ff7f0e' }[t]
 }

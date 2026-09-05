@@ -1,7 +1,15 @@
-# Keşif — DXF Planından Metraj ve Maliyet
+# Keşif — DXF Planından Metraj, Keşif, Maliyet ve Süre
 
-AutoCAD statik kalıp planlarını (DXF) okuyup kolon / perde / kiriş / döşeme / temel elemanlarını tespit eder,
-beton (m³), kalıp (m²) ve demir (kg) metrajını çıkarır, girdiğiniz birim fiyatlarla maliyet tablosu ve Excel raporu üretir.
+AutoCAD planlarını (DXF) okuyup üç disiplinde keşif çıkarır:
+
+| Disiplin | Çizim | Tespit edilen | Keşif kalemleri |
+|---|---|---|---|
+| **Statik** | kalıp planı | kolon, perde, kiriş, döşeme, temel | beton m³, kalıp m², demir kg |
+| **Mimari** | kat planı | duvar (malzeme + kalınlık), kapı, pencere | duvar m² (Ytong / tuğla / bims / alçıpan…), sıva m², boya m², kapı adet, pencere adet, cam m² |
+| **Elektrik** | tava / aydınlatma / kuvvet planı | kablo tavası, kablo, boru, armatür / priz / anahtar | tava m (boyut bazında), kablo m (kesit bazında), boru m, armatür adet (kategori) |
+
+Girdiğiniz **malzeme** ve **işçilik** birim fiyatları, tercih ettiğiniz **marka** ve **adam-saat / birim** değerleriyle
+maliyet tablosu (malzeme + işçilik, KDV) ve **süre tahmini** (gün) üretir; Excel raporu indirir.
 
 ## Kurulum
 
@@ -18,9 +26,12 @@ cd ..\frontend
 npm install
 ```
 
+macOS / Linux'ta Python 3.12 yoksa conda ile: `conda create -y -p backend/.venv python=3.12` sonra
+`backend/.venv/bin/python -m pip install -r backend/requirements.txt`.
+
 ## Çalıştırma (geliştirme)
 
-İki ayrı terminalde, ya da tek komutla `.\start.ps1`:
+Windows: iki ayrı terminalde, ya da tek komutla `.\start.ps1`. macOS / Linux: `./start.sh`.
 
 ```powershell
 cd backend;  .\.venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
@@ -33,21 +44,27 @@ Tarayıcı: http://127.0.0.1:5173  (API dokümantasyonu: http://127.0.0.1:8000/d
 
 ## Kullanım akışı
 
-1. **Proje oluştur**: kat yüksekliği (H) ve varsayılan döşeme kalınlığı (d) gir.
-2. **DXF yükle**: AutoCAD'de DWG'yi *Farklı Kaydet → AutoCAD DXF* ile dönüştür.
+1. **Proje oluştur**: kat yüksekliği (H) ve varsayılan döşeme kalınlığı (d) gir. Proje sayfasında mimari / elektrik / süre
+   parametreleri: duvar yüksekliği (boşsa H − d), sıva ve boya yüzü sayısı, kablo iniş payı (m/hat), kablo ve tava fire %, günlük çalışma saati.
+2. **DXF yükle**: AutoCAD'de DWG'yi *Farklı Kaydet → AutoCAD DXF* ile dönüştür. Yüklerken **disiplin** seç (statik / mimari / elektrik);
+   çizim o disiplinin dedektörleriyle analiz edilir. Disiplin sonradan çizim listesinden değiştirilebilir (yeniden analiz edilir).
    - Her plan ayrı dosya olabilir, ya da **bütün paftaların yan yana durduğu tek ruhsat projesi dosyası** yüklenir:
      paftalar otomatik bulunur (çerçeve dikdörtgenleri; yoksa nesne kümeleri), listeden **kalıp planları** seçilir,
      her pafta ayrı plan olarak kırpılıp analiz edilir. 40 MB üstü dosyalar hiç bir zaman bütün olarak açılmaz.
    - "Kaç kat temsil ediyor" alanı tip kat çarpanıdır; temel elemanları hiçbir zaman çarpılmaz.
    - Her planın kendi **kat yüksekliği** girilebilir (boşsa projenin H değeri).
 3. **Elemanlar** sayfası: plan önizlemede tespit edilen elemanlar renkli görünür.
-   - **Katman eşleme**: hangi katmanın kolon/kiriş/… çizdiğini seç; eşlenmemiş katmanlar metraja girmez.
-   - Tabloda b/h/kalınlık/uzunluk/adet düzenlenebilir, eleman silinebilir, parser'ın kaçırdığı eleman elle eklenebilir.
-4. **Metraj**: grup özeti ve eleman bazlı liste.
-5. **Birim Fiyatlar**: beton ₺/m³, kalıp ₺/m², demir ₺/kg (genel + gruba özel).
-6. **Maliyet**: kalem tablosu, KDV, Excel indir.
+   - **Katman eşleme**: hangi katmanın kolon / duvar / tava / … çizdiğini seç; yalnızca çizimin disiplinine ait tipler seçilebilir.
+     Eşlenmemiş katmanlar metraja girmez.
+   - Tabloda b/h/kalınlık/uzunluk/adet ve alt tip (duvar malzemesi, kablo kesiti, tava boyutu, armatür kategorisi) düzenlenebilir,
+     eleman silinebilir, parser'ın kaçırdığı eleman elle eklenebilir.
+4. **Metraj**: disiplin bazlı **keşif listesi** (kalem, birim, miktar) + statik grup özeti ve eleman bazlı liste.
+5. **Birim Fiyatlar**: her kalem için marka, malzeme ₺/birim, işçilik ₺/birim, adam-saat/birim, ekip. Türün "genel" satırı
+   özel değer girilmeyen kalemlere uygulanır.
+6. **Maliyet**: malzeme + işçilik kalem tablosu, disiplin bazlı toplamlar, KDV, **süre** (disiplinler paralel / işler ardışık), Excel indir.
 
-`samples/` klasöründe sentetik örnek çizimler var (`ornek_kat_plani.dxf`, `ornek_temel_plani.dxf`).
+`samples/` klasöründe sentetik örnek çizimler var: `ornek_kat_plani.dxf`, `ornek_temel_plani.dxf` (statik),
+`ornek_mimari_plani.dxf` (Ytong 20 + tuğla 10 duvarlar, 2 kapı, 3 pencere), `ornek_elektrik_plani.dxf` (2 tava, 3 kablo hattı, boru, 9 armatür/priz/anahtar).
 
 ## Parser nasıl çalışır
 
@@ -71,7 +88,34 @@ Tarayıcı: http://127.0.0.1:5173  (API dokümantasyonu: http://127.0.0.1:8000/d
   Çokgen dışında kalan radye etiketleri varsa (`RD2 40cm`, sınırı çizilmemiş ince bölge) bina oturumu kolon/perde dış
   hattından 1 m dışarı alınarak tahmin edilir, çokgenler düşülür (düşük güven; alan elle düzeltilebilir).
 
-## Metraj formülleri
+### Mimari parser
+
+- **Duvar** (`detectors/walls.py`): duvar katmanındaki paralel çizgi çiftleri (aralık = kalınlık; kapı boşluklarında kesilen parçalar
+  birleştirilir) ve kapalı çokgenler / taramalar (dikdörtgense kısa kenar = kalınlık, değilse uzunluk = alan / kalınlık).
+  Malzeme katman adından (`A-DUVAR-YTONG`, `DUVAR TUGLA`) ya da yakın etiketten (`YTONG 20`, `20 cm GAZBETON`) okunur.
+- **Kapı / pencere** (`detectors/openings.py`): kapı ve pencere katmanlarındaki bloklar (INSERT) sayılır. Ölçü: yakın etiket
+  (`K1 90/210`, `P1 120/140`), yoksa blok adı (`PENCERE_120x140`, `KAPI_90`), yoksa blok kutusu; yükseklik varsayılanı kapı 210, pencere 140 cm.
+  Bloksuz çizimlerde `P3 120/140` gibi etiketler tek başına sayılır (düşük güven).
+- Keşif: duvar m² = uzunluk × duvar yüksekliği × kat sayısı − kapı/pencere boşlukları (gruplara alanlarıyla orantılı düşülür);
+  sıva ve boya = net duvar × yüz sayısı; cam = pencere genişlik × yükseklik.
+
+### Elektrik parser
+
+- **Tava / kablo / boru** (`detectors/electrical.py`): ilgili katmandaki çizgi ve polyline'lar; uç uca değen parçalar tek hat sayılır.
+  Boyut / kesit / çap önce **katman adından** (`E-TAVA-200x60`, `E-KABLO-5x6`), yoksa en yakın **etiketten** (`TAVA 200x60`, `NYY 4x16`,
+  `3x2,5 NYM`, `Ø20 PVC`) okunur; her etiket bir hatta atanır. Çift çizgi çizilen tavalarda aralık = genişlik.
+- **Armatür / priz / anahtar**: armatür katmanlarındaki bloklar sayılır; kategori blok ya da katman adından
+  (`LED_PANEL` → armatür, `PRIZ_TOPRAKLI` → priz, `ANAHTAR`, `DEDEKTOR` → yangın, `DATA`, `PANO` …).
+- Keşif: kablo m = (hat + iniş payı) × kat sayısı × (1 + fire), tava m × (1 + fire), armatür adet (kategori + blok adı bazında).
+
+### Maliyet ve süre
+
+Fiyat kalemi anahtarı `<tür>:<grup>` (`beton:column`, `duvar:ytong:20`, `kablo:nyy_4x16`, `tava:200x60`, `armatur:priz_priz_toprakli`);
+`<tür>:*` genel fiyat. Her kalem: malzeme ₺/birim, işçilik ₺/birim, marka, adam-saat/birim, ekip. Kalem tutarı = miktar × (malzeme + işçilik);
+kalem süresi = miktar × adam-saat / (ekip × günlük saat). Toplam süre iki biçimde: işler ardışık (kalemlerin toplamı) ve
+disiplinler paralel (en uzun disiplin). Adam-saat girilmeyen kalemler süreye katılmaz ve uyarı verilir.
+
+## Metraj formülleri (statik)
 
 | Eleman | Beton | Kalıp |
 |---|---|---|
@@ -136,9 +180,19 @@ Firmanın çizimleri geldiğinde:
 3. Farklı etiket formatları için `text_parser.py` regex'lerini genişlet; `tests/test_text_parser.py`'ye örnek ekle.
 4. Kiriş çizim tekniği (çift çizgi / polyline / blok) farklıysa `detectors/beams.py` heuristiklerini ayarla.
 
+## Gerçek mimari / elektrik çizimlerle kalibrasyon
+
+Mimari ve elektrik dedektörleri şimdilik sentetik çizimlerle (`tests/fixtures/make_dxf.py`) doğrulandı. Firmanın gerçek paftaları geldiğinde:
+1. Çizimi ilgili disiplinle yükle; **Katman eşleme** panelinde duvar / kapı / pencere / tava / kablo / armatür katmanlarını ata.
+2. Firma katman standardını `layer_profile.py` içindeki `DEFAULT_PROFILE`'a ekle (`wall`, `door`, `window`, `tray`, `cable`, `conduit`, `fixture`).
+3. Etiket biçimleri farklıysa `labels_ext.py` regex'lerini genişlet, `tests/test_disciplines.py`'ye örnek ekle.
+4. Blok adlarından kategori/ölçü çıkarımı için `labels_ext.py` içindeki `FIXTURE_CATEGORIES`, `opening_type_from_name`, `size_from_name`.
+
 ## Yol haritası
 
 - Detay paftalarından gerçek demir metrajı (`8Φ16`, `Φ8/15` + boy)
-- Mimari: duvar uzunluğu × kat yüksekliği − kapı/pencere → duvar / sıva / boya m²
-- Elektrik / mekanik: katman bazlı hat uzunlukları → kablo / boru m
+- Mimari: döşeme kaplaması / tavan (oda çokgenlerinden m²), süpürgelik, kapı-pencere doğrama m²
+- Elektrik: aydınlatma planı ile kuvvet planını birleştirip devre bazlı kablo boyu (armatür → pano yolu), kanal / spiral boru
+- Mekanik: boru çapı bazında hat uzunlukları, kanal m²
+- İş programı: kalem bağımlılıkları ile Gantt (şu an disiplin bazlı paralel / ardışık iki uç değer)
 - DWG doğrudan yükleme (ODA File Converter)

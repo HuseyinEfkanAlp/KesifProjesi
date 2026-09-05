@@ -5,6 +5,7 @@ from io import BytesIO
 from app.cost.pricing import PriceItem, compute_cost, default_price_items
 from app.export.excel import build_workbook
 from app.parser.analyzer import analyze_file
+from app.quantity.boq import structural_items
 from app.quantity.engine import ElementData, QuantityParams, compute_all, compute_element
 from app.quantity.summary import summarize
 
@@ -55,10 +56,11 @@ def test_end_to_end_storey(storey_dxf):
     expected_total = 4 * 0.18 * 2.85 + 0.25 * 0.35 * 10.1 + 34.98 * 0.15 + 0.5 * 2.85
     assert s["totals"]["concrete_m3"] == pytest.approx(expected_total, abs=1e-2)
 
-    prices = default_price_items(s)
+    items = structural_items(s)
+    prices = default_price_items(items)
     assert any(pi.key == "beton:column" for pi in prices)
-    cost = compute_cost(s, [PriceItem("beton:*", "Beton", "m³", 4000), PriceItem("beton:column", "Beton kolon", "m³", 4500),
-                            PriceItem("demir:*", "Demir", "kg", 30)], vat_rate=0.2)
+    cost = compute_cost(items, [PriceItem("beton:*", "Beton", "m³", 4000), PriceItem("beton:column", "Beton kolon", "m³", 4500),
+                                PriceItem("demir:*", "Demir", "kg", 30)], vat_rate=0.2)
     col_line = next(l for l in cost["lines"] if l["key"] == "beton:column")
     assert col_line["unit_price"] == 4500 and col_line["price_source"] == "özel"
     slab_line = next(l for l in cost["lines"] if l["key"] == "beton:slab")
@@ -66,7 +68,9 @@ def test_end_to_end_storey(storey_dxf):
     assert all(l["unit_price"] == 0 for l in cost["lines"] if l["kind"] == "kalip")
     assert cost["grand_total"] == pytest.approx(cost["subtotal"] * 1.2, abs=0.05)
 
-    xlsx = build_workbook({"name": "Test", "storey_height": 3.0, "slab_thickness": 0.15}, lines, s, cost)
+    xlsx = build_workbook({"name": "Test", "storey_height": 3.0, "slab_thickness": 0.15}, lines, s, cost,
+                          boq=[i.to_dict() for i in items])
     wb = load_workbook(BytesIO(xlsx))
-    assert wb.sheetnames == ["Metraj Özeti", "Eleman Metrajı", "Maliyet"]
+    assert wb.sheetnames == ["Keşif", "Statik Özet", "Eleman Metrajı", "Maliyet"]
     assert wb["Eleman Metrajı"].max_row == 1 + len(lines)
+    assert wb["Keşif"].max_row == 4 + len(items)

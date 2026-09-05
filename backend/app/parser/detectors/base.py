@@ -28,15 +28,27 @@ class DetectParams:
     min_slab_area: float = 1.0              # m²
     max_slab_area: float = 400.0            # m² (üstü dış çevre yüzeyi olabilir)
     raft_margin: float = 1.0                # m: radye dış sınırı çizilmemişse kolon/perde dış hattına eklenen pay
+    # mimari
+    wall_thickness_range: tuple[float, float] = (0.05, 0.60)   # duvar kalınlığı aralığı (paralel çizgi çifti)
+    default_wall_thickness: float = 0.20
+    min_wall_length: float = 0.30
+    min_wall_area: float = 0.05             # m² (plan alanı)
+    wall_merge_gap: float = 1.30            # kapı boşluğu: aynı hizadaki duvar parçaları birleştirilir
+    # elektrik
+    elec_label_unit_scale: float = 0.001    # etiketlerdeki sayılar mm
+    elec_label_radius: float = 0.8          # hat etiketi arama yarıçapı (m); etiket hattın hemen üstünde yazılır
+    tray_width_range: tuple[float, float] = (0.05, 0.80)
+    min_line_length: float = 0.20
+    chain_tol: float = 0.02                 # uç uca değen hat parçalarını zincirleme toleransı (m)
 
 
 @dataclass
 class DetectedElement:
-    etype: str                          # column | shear_wall | beam | slab | foundation
+    etype: str                          # column | shear_wall | beam | slab | foundation | wall | door | window | tray | cable | conduit | fixture
     layer: str
     points: list[Point]                 # çokgen sınırı (kiriş için dikdörtgen)
     name: str | None = None
-    subtype: str | None = None          # foundation: raft | strip ; slab: net (kiriş ağından türetildi)
+    subtype: str | None = None          # foundation: raft | strip ; slab: net ; wall: malzeme ; tray/cable/conduit: boyut/kesit ; fixture: kategori
     b: float | None = None              # kesit genişliği (m)
     h: float | None = None              # kesit yüksekliği (m)
     thickness: float | None = None      # döşeme/radye kalınlığı (m)

@@ -1,4 +1,4 @@
-"""Router'ların paylaştığı iş mantığı: analiz + kaydetme, proje metrajı, fiyat tohumlama."""
+"""Router'ların paylaştığı iş mantığı: analiz + kaydetme, proje metrajı / keşfi, fiyat tohumlama, maliyet."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -9,7 +9,9 @@ from .cost.pricing import PriceItem as PriceData, compute_cost, default_price_it
 from .models import Drawing, Element, PriceItem, Project
 from .parser.analyzer import analyze_file
 from .parser.detectors.base import DetectParams
-from .parser.layer_profile import LayerProfile
+from .parser.layer_profile import DEFAULT_DISCIPLINE, STRUCTURAL_TYPES, TYPE_DISCIPLINE, LayerProfile
+from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary, effective_params, electrical_items,
+                           sort_items, structural_items)
 from .quantity.engine import ElementData, QuantityLine, QuantityParams, compute_all
 from .quantity.summary import summarize
 
@@ -24,10 +26,14 @@ def detect_params(project: Project) -> DetectParams:
     return DetectParams(default_slab_thickness=project.slab_thickness)
 
 
+def project_params(project: Project) -> dict:
+    return effective_params(project.params or {})
+
+
 def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> Drawing:
     """Çizimi (yeniden) analiz eder; otomatik elemanları yeniler, elle eklenenleri korur."""
     result = analyze_file(drawing.stored_path, project_profile(project), detect_params(project),
-                          unit_override=drawing.unit_override)
+                          unit_override=drawing.unit_override, discipline=drawing.discipline or DEFAULT_DISCIPLINE)
 
     for old in session.exec(select(Element).where(Element.drawing_id == drawing.id, Element.manual == False)):  # noqa: E712
         session.delete(old)
@@ -64,6 +70,12 @@ def recompute_derived(el: Element) -> None:
     elif el.etype == "foundation" and el.subtype == "strip" and el.b and el.length:
         el.area = el.b * el.length
         el.perimeter = 2 * (el.b + el.length)
+    elif el.etype == "wall" and el.b and el.length:
+        el.area = el.b * el.length
+    elif el.etype in ("door", "window") and el.b and el.h:
+        el.area = el.b * el.h
+    elif el.etype == "tray" and el.b and el.length:
+        el.area = el.b * el.length
 
 
 def dominant_beam_depth(elements) -> float | None:
@@ -83,13 +95,19 @@ def dominant_beam_depth(elements) -> float | None:
     return pairs[-1][0]
 
 
+def _included_elements(d: Drawing, session: Session) -> list[Element]:
+    return session.exec(select(Element).where(Element.drawing_id == d.id, Element.included == True)).all()  # noqa: E712
+
+
 def project_quantities(project: Project, session: Session) -> tuple[list[QuantityLine], dict, dict]:
-    """(satırlar, özet, element_info) döndürür."""
+    """Statik metraj: (satırlar, özet, element_info) döndürür. Yalnızca statik eleman tipleri girer."""
     drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
     lines: list[QuantityLine] = []
     info: dict = {}
     for d in drawings:
-        elements = session.exec(select(Element).where(Element.drawing_id == d.id, Element.included == True)).all()  # noqa: E712
+        elements = [e for e in _included_elements(d, session) if e.etype in STRUCTURAL_TYPES]
+        if not elements:
+            continue
         net_slabs = any(e.etype == "slab" and e.subtype == "net" for e in elements)
         params = QuantityParams(storey_height=d.storey_height or project.storey_height, slab_thickness=project.slab_thickness,
                                 storey_count=d.storey_count, beam_full_height=net_slabs,
@@ -104,19 +122,51 @@ def project_quantities(project: Project, session: Session) -> tuple[list[Quantit
     return lines, summarize(lines), info
 
 
-def ensure_price_items(project: Project, summary: dict, session: Session) -> list[PriceItem]:
+def project_boq(project: Project, session: Session, summary: dict | None = None) -> list[BoqItem]:
+    """Tüm disiplinlerin keşif listesi."""
+    if summary is None:
+        _, summary, _ = project_quantities(project, session)
+    params = project_params(project)
+    drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    arch, elec = [], []
+    for d in drawings:
+        elements = _included_elements(d, session)
+        entry = {"label": d.label or d.filename, "storey_count": d.storey_count,
+                 "storey_height": d.storey_height or project.storey_height, "slab_thickness": project.slab_thickness,
+                 "elements": elements}
+        if any(TYPE_DISCIPLINE.get(e.etype) == "architectural" for e in elements):
+            arch.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "architectural"]})
+        if any(TYPE_DISCIPLINE.get(e.etype) == "electrical" for e in elements):
+            elec.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "electrical"]})
+    items = structural_items(summary) + architectural_items(arch, params) + electrical_items(elec, params)
+    return sort_items(items)
+
+
+def ensure_price_items(project: Project, items: list[BoqItem], session: Session) -> list[PriceItem]:
     existing = {p.key: p for p in session.exec(select(PriceItem).where(PriceItem.project_id == project.id))}
-    for d in default_price_items(summary):
+    for d in default_price_items(items):
         if d.key not in existing:
-            item = PriceItem(project_id=project.id, key=d.key, name=d.name, unit=d.unit, unit_price=0.0)
+            item = PriceItem(project_id=project.id, key=d.key, name=d.name, unit=d.unit)
             session.add(item)
             existing[d.key] = item
     session.commit()
-    return sorted(existing.values(), key=lambda p: (p.key.split(":")[0], "*" not in p.key, p.key))
+    order = {k: i for i, k in enumerate(KIND_ORDER)}
+    return sorted(existing.values(), key=lambda p: (order.get(p.key.split(":")[0], 99), "*" not in p.key, p.name))
 
 
-def project_cost(project: Project, session: Session) -> tuple[list[QuantityLine], dict, dict, dict]:
+def to_price_data(p: PriceItem) -> PriceData:
+    return PriceData(p.key, p.name, p.unit, p.unit_price or 0.0, p.labor_price or 0.0, p.brand or "",
+                     p.hours_per_unit or 0.0, p.crew_size or 0.0)
+
+
+def project_cost(project: Project, session: Session) -> tuple[list[QuantityLine], dict, dict, list[BoqItem], dict]:
     lines, summary, info = project_quantities(project, session)
-    items = ensure_price_items(project, summary, session)
-    cost = compute_cost(summary, [PriceData(p.key, p.name, p.unit, p.unit_price) for p in items], project.vat_rate)
-    return lines, summary, info, cost
+    items = project_boq(project, session, summary)
+    prices = ensure_price_items(project, items, session)
+    cost = compute_cost(items, [to_price_data(p) for p in prices], project.vat_rate,
+                        hours_per_day=float(project_params(project).get("work_hours_per_day") or 8.0))
+    return lines, summary, info, items, cost
+
+
+def boq_payload(items: list[BoqItem]) -> dict:
+    return boq_summary(items)

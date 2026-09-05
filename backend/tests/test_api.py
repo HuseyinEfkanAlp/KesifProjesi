@@ -113,3 +113,74 @@ def test_rejects_non_dxf(client, tmp_path):
     with open(bad2, "rb") as f:
         r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("y.dxf", f, "application/dxf")})
     assert r.status_code == 400
+
+
+def test_multi_discipline_flow(client, storey_dxf, arch_dxf, elec_dxf):
+    pid = client.post("/api/projects", json={"name": "Karma", "storey_height": 3.0, "slab_thickness": 0.15,
+                                             "params": {"wall_height": 2.8, "work_hours_per_day": 9}}).json()["id"]
+    p = client.get(f"/api/projects/{pid}").json()
+    assert p["params"]["wall_height"] == 2.8 and p["params"]["work_hours_per_day"] == 9 and p["params"]["plaster_sides"] == 2
+
+    with open(storey_dxf, "rb") as f:
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("kat.dxf", f, "application/dxf")},
+                        data={"label": "Kalıp", "storey_count": "2"})
+    assert r.status_code == 201 and r.json()["discipline"] == "structural"
+    with open(arch_dxf, "rb") as f:
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("mimari.dxf", f, "application/dxf")},
+                        data={"label": "Mimari Zemin", "storey_count": "2", "discipline": "architectural"})
+    assert r.status_code == 201, r.text
+    arch = r.json()
+    assert arch["discipline"] == "architectural"
+    # yanlış disiplinle yüklenen elektrik paftası -> disiplin değiştirilince yeniden analiz
+    with open(elec_dxf, "rb") as f:
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("elektrik.dxf", f, "application/dxf")},
+                        data={"label": "Tava planı"})
+    elec = r.json()
+    assert elec["element_count"] == 0
+    r = client.patch(f"/api/drawings/{elec['id']}", json={"discipline": "electrical"})
+    assert r.status_code == 200 and r.json()["element_count"] > 0
+    assert client.patch(f"/api/drawings/{elec['id']}", json={"discipline": "makine"}).status_code == 400
+
+    layers = client.get(f"/api/drawings/{arch['id']}/layers").json()
+    assert set(layers["element_types"]) == {"wall", "door", "window"}
+    els = client.get(f"/api/drawings/{arch['id']}/elements").json()
+    assert {e["etype"] for e in els} == {"wall", "door", "window"}
+    # elle pencere ekle
+    r = client.post(f"/api/drawings/{arch['id']}/elements", json={"etype": "window", "name": "P9", "b": 1.0, "h": 1.0, "count": 3})
+    assert r.status_code == 201 and r.json()["area"] == pytest.approx(1.0)
+
+    q = client.get(f"/api/projects/{pid}/quantities").json()
+    assert q["summary"]["groups"]                      # statik özet
+    keys = {i["key"] for i in q["boq"]["items"]}
+    assert {"beton:column", "duvar:ytong:20", "pencere:p9_100x100", "cam:*", "siva:*", "tava:200x60", "kablo:nyy_4x16",
+            "armatur:priz_priz_toprakli"} <= keys, keys
+    p9 = next(i for i in q["boq"]["items"] if i["key"] == "pencere:p9_100x100")
+    assert p9["quantity"] == 6                          # 3 adet × 2 kat
+    discs = [d["discipline"] for d in q["boq"]["by_discipline"]]
+    assert discs == ["structural", "architectural", "electrical"]
+
+    prices = client.get(f"/api/projects/{pid}/prices").json()
+    assert {"beton:*", "duvar:*", "duvar:ytong:20", "kablo:*", "tava:200x60"} <= {x["key"] for x in prices}
+    r = client.put(f"/api/projects/{pid}/prices", json=[
+        {"key": "duvar:*", "unit_price": 450, "labor_price": 250, "hours_per_unit": 0.8, "crew_size": 3, "brand": "Ytong"},
+        {"key": "kablo:*", "unit_price": 40, "labor_price": 12, "hours_per_unit": 0.04, "crew_size": 2},
+        {"key": "beton:*", "unit_price": 4000, "labor_price": 600, "hours_per_unit": 1.5, "crew_size": 6},
+        {"key": "armatur:*", "unit_price": 700, "labor_price": 120, "hours_per_unit": 0.5},
+    ])
+    assert r.status_code == 200
+    assert next(x for x in r.json() if x["key"] == "duvar:*")["brand"] == "Ytong"
+    assert client.put(f"/api/projects/{pid}/prices", json=[{"key": "makine:*", "unit_price": 1}]).status_code == 400
+
+    c = client.get(f"/api/projects/{pid}/cost").json()["cost"]
+    wall = next(l for l in c["lines"] if l["key"] == "duvar:ytong:20")
+    assert wall["brand"] == "Ytong" and wall["labor_price"] == 250 and wall["price_source"] == "genel"
+    assert wall["days"] == pytest.approx(wall["quantity"] * 0.8 / (3 * 9), abs=0.01)
+    assert c["material_subtotal"] > 0 and c["labor_subtotal"] > 0
+    assert c["duration"]["hours_per_day"] == 9 and c["duration"]["parallel_days"] <= c["duration"]["sequential_days"]
+    assert {d["discipline"] for d in c["by_discipline"]} == {"structural", "architectural", "electrical"}
+    assert "kapi:k1_90x210" in c["missing_prices"]
+
+    r = client.get(f"/api/projects/{pid}/cost.xlsx")
+    assert r.status_code == 200 and r.content[:2] == b"PK"
+    svg = client.get(f"/api/drawings/{arch['id']}/preview.svg")
+    assert svg.status_code == 200 and b"el-wall" in svg.content and b"el-window" in svg.content

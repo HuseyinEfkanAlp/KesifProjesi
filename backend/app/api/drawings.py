@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from ..db import UPLOAD_DIR, get_session
 from ..export.svg import render_svg
 from ..models import Drawing, Element, Project
-from ..parser.layer_profile import ELEMENT_TYPES
+from ..parser.layer_profile import ALL_ELEMENT_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, types_for
 from ..parser.loader import UNIT_SCALE, load_dxf
 from ..parser.sheets import BIG_FILE_BYTES, SheetScan, crop_sheets, scan_sheets
 from ..services import analyze_and_store, recompute_derived
@@ -38,8 +38,16 @@ def _safe_name(filename: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", filename)
 
 
+def _check_discipline(d: str | None) -> str:
+    d = (d or DEFAULT_DISCIPLINE).strip().lower()
+    if d not in DISCIPLINES:
+        raise HTTPException(400, f"Geçersiz disiplin: {d} (structural / architectural / electrical)")
+    return d
+
+
 def _create_drawing(project: Project, dest: Path, filename: str, label: str, storey_count: int,
-                    unit_override: str | None, session: Session, storey_height: float | None = None) -> Drawing:
+                    unit_override: str | None, session: Session, storey_height: float | None = None,
+                    discipline: str = DEFAULT_DISCIPLINE) -> Drawing:
     """Kaydedilmiş DXF için Drawing kaydı açar ve analiz eder; hata olursa dosya ve kayıt geri alınır."""
     try:
         load_dxf(dest, unit_override=unit_override)
@@ -48,7 +56,8 @@ def _create_drawing(project: Project, dest: Path, filename: str, label: str, sto
         raise HTTPException(400, f"DXF okunamadı: {ex}")
     d = Drawing(project_id=project.id, filename=filename, stored_path=str(dest),
                 label=label, storey_count=max(1, storey_count), unit_override=unit_override or None,
-                storey_height=storey_height if storey_height and storey_height > 0 else None)
+                storey_height=storey_height if storey_height and storey_height > 0 else None,
+                discipline=discipline)
     session.add(d)
     session.commit()
     session.refresh(d)
@@ -85,6 +94,7 @@ def _source_out(src: Path, scan: SheetScan) -> dict:
 @router.post("/projects/{project_id}/drawings", status_code=201)
 async def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = Form(""),
                          storey_count: int = Form(1), unit_override: str | None = Form(None),
+                         discipline: str = Form(DEFAULT_DISCIPLINE),
                          session: Session = Depends(get_session)):
     """DXF yükler. Dosya tek paftaysa hemen analiz edilir (201 + çizim).
 
@@ -93,6 +103,7 @@ async def upload_drawing(project_id: int, file: UploadFile = File(...), label: s
     /drawings/from-source ile her pafta ayrı çizim olarak kırpılıp analiz edilir.
     """
     project = get_project(project_id, session)
+    discipline = _check_discipline(discipline)
     if not file.filename or not file.filename.lower().endswith(".dxf"):
         raise HTTPException(400, "Yalnızca .dxf dosyaları kabul edilir. DWG dosyasını AutoCAD'de 'Farklı Kaydet' ile DXF'e çevirin.")
     if unit_override and unit_override not in UNIT_SCALE:
@@ -117,7 +128,7 @@ async def upload_drawing(project_id: int, file: UploadFile = File(...), label: s
     dest = UPLOAD_DIR / f"{project_id}_{token[:8]}_{safe}"
     src.rename(dest)
     d = _create_drawing(project, dest, file.filename, label or Path(file.filename).stem, storey_count,
-                        unit_override or None, session)
+                        unit_override or None, session, discipline=discipline)
     return drawing_out(d, session)
 
 
@@ -126,6 +137,7 @@ class SheetPick(BaseModel):
     label: str = ""
     storey_count: int = 1
     storey_height: float | None = None   # bu katın yüksekliği (m); boş -> proje değeri
+    discipline: str | None = None        # boş -> isteğin disiplini
 
 
 class FromSourceIn(BaseModel):
@@ -133,6 +145,7 @@ class FromSourceIn(BaseModel):
     sheets: list[SheetPick] = []
     whole: bool = False               # (küçük dosyalarda) tüm çizimi tek plan olarak ekle
     unit_override: str | None = None
+    discipline: str = DEFAULT_DISCIPLINE
 
 
 @router.get("/sources/{token}/sheets")
@@ -148,6 +161,7 @@ def drawings_from_source(project_id: int, body: FromSourceIn, session: Session =
     project = get_project(project_id, session)
     if body.unit_override and body.unit_override not in UNIT_SCALE:
         raise HTTPException(400, "Birim mm, cm veya m olmalı")
+    discipline = _check_discipline(body.discipline)
     src = _source_path(body.token)
     scan = SheetScan.load(src) or scan_sheets(src)
     orig = src.name[len(f"src_{body.token}_"):]
@@ -157,7 +171,8 @@ def drawings_from_source(project_id: int, body: FromSourceIn, session: Session =
             raise HTTPException(400, "Dosya tüm çizim olarak analiz edilemeyecek kadar büyük; pafta seçin")
         dest = UPLOAD_DIR / f"{project_id}_{uuid.uuid4().hex[:8]}_{orig}"
         shutil.copyfile(src, dest)
-        created.append(_create_drawing(project, dest, orig, Path(orig).stem, 1, body.unit_override, session))
+        created.append(_create_drawing(project, dest, orig, Path(orig).stem, 1, body.unit_override, session,
+                                       discipline=discipline))
     jobs = []
     seen: set[int] = set()
     for pick in body.sheets:
@@ -177,7 +192,8 @@ def drawings_from_source(project_id: int, body: FromSourceIn, session: Session =
                 continue
             created.append(_create_drawing(project, dest, f"{orig} › {sheet.title}", pick.label or sheet.title,
                                            pick.storey_count, body.unit_override, session,
-                                           storey_height=pick.storey_height))
+                                           storey_height=pick.storey_height,
+                                           discipline=_check_discipline(pick.discipline or discipline)))
     if not created:
         raise HTTPException(400, "Eklenecek pafta seçilmedi")
     return [drawing_out(d, session) for d in created]
@@ -199,6 +215,7 @@ class DrawingPatch(BaseModel):
     storey_count: int | None = None
     storey_height: float | None = None   # 0 / None -> proje değeri kullanılır
     unit_override: str | None = None   # "" -> otomatik
+    discipline: str | None = None      # değişirse yeniden analiz
 
 
 @router.patch("/drawings/{drawing_id}")
@@ -215,6 +232,11 @@ def update_drawing(drawing_id: int, body: DrawingPatch, session: Session = Depen
             raise HTTPException(400, "Birim mm, cm veya m olmalı")
         reanalyze = uo != d.unit_override
         d.unit_override = uo
+    if "discipline" in data:
+        disc = _check_discipline(data.pop("discipline"))
+        if disc != d.discipline:
+            reanalyze = True
+            d.discipline = disc
     for k, v in data.items():
         setattr(d, k, v)
     session.add(d)
@@ -245,9 +267,8 @@ def reanalyze(drawing_id: int, session: Session = Depends(get_session)):
 @router.get("/drawings/{drawing_id}/layers")
 def drawing_layers(drawing_id: int, session: Session = Depends(get_session)):
     d = get_drawing(drawing_id, session)
-    from ..parser.layer_profile import ALL_TYPES
-    return {"layers": d.layers, "element_types": ALL_TYPES, "unit": d.unit, "unit_detected": d.unit_detected,
-            "warnings": d.warnings}
+    return {"layers": d.layers, "element_types": types_for(d.discipline or DEFAULT_DISCIPLINE), "discipline": d.discipline,
+            "unit": d.unit, "unit_detected": d.unit_detected, "warnings": d.warnings}
 
 
 @router.get("/drawings/{drawing_id}/elements")
@@ -290,7 +311,7 @@ class ElementIn(ElementPatch):
 def add_element(drawing_id: int, body: ElementIn, session: Session = Depends(get_session)):
     """Parser'ın kaçırdığı elemanı elle ekle (ör. 6 adet S5 40/40 kolon)."""
     get_drawing(drawing_id, session)
-    if body.etype not in ELEMENT_TYPES:
+    if body.etype not in ALL_ELEMENT_TYPES:
         raise HTTPException(400, "Geçersiz eleman tipi")
     data = body.model_dump(exclude_unset=True, exclude_none=True)
     e = Element(drawing_id=drawing_id, source="MANUAL", manual=True, confidence=1.0, layer="(elle)", **data)
@@ -307,7 +328,7 @@ def update_element(element_id: int, body: ElementPatch, session: Session = Depen
     if not e:
         raise HTTPException(404, "Eleman bulunamadı")
     data = body.model_dump(exclude_unset=True)
-    if "etype" in data and data["etype"] not in ELEMENT_TYPES:
+    if "etype" in data and data["etype"] not in ALL_ELEMENT_TYPES:
         raise HTTPException(400, "Geçersiz eleman tipi")
     geometric = {"b", "h", "length", "thickness", "etype", "subtype"} & set(data)
     for k, v in data.items():

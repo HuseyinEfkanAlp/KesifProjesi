@@ -6,9 +6,10 @@ from sqlmodel import Session, select
 
 from ..db import get_session
 from ..models import Drawing, Element, PriceItem, Project
-from ..parser.layer_profile import DEFAULT_PROFILE, ALL_TYPES, LayerProfile
+from ..parser.layer_profile import ALL_TYPES, DEFAULT_PROFILE, DISCIPLINES, TYPES_BY_DISCIPLINE, LayerProfile
+from ..quantity.boq import DEFAULT_PARAMS, KIND_META
 from ..quantity.engine import DEFAULT_REBAR_RATIOS
-from ..services import analyze_and_store
+from ..services import analyze_and_store, project_params
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -20,6 +21,7 @@ class ProjectIn(BaseModel):
     slab_thickness: float = 0.15
     vat_rate: float = 0.0
     rebar_ratios: dict[str, float] | None = None
+    params: dict | None = None
 
 
 class ProjectPatch(BaseModel):
@@ -29,11 +31,28 @@ class ProjectPatch(BaseModel):
     slab_thickness: float | None = None
     vat_rate: float | None = None
     rebar_ratios: dict[str, float] | None = None
+    params: dict | None = None      # disiplin parametreleri (duvar yüksekliği, sıva yüzü, kablo iniş payı, günlük saat)
 
 
 class LayerMap(BaseModel):
     layer: str
     etype: str | None  # None -> eşlemeyi kaldır
+
+
+def _clean_params(raw: dict | None) -> dict:
+    """Yalnızca bilinen parametreleri saklar; sayısal alanlar float'a çevrilir, boş -> None."""
+    out: dict = {}
+    for k, v in (raw or {}).items():
+        if k not in DEFAULT_PARAMS:
+            continue
+        if v in ("", None):
+            out[k] = None
+        else:
+            try:
+                out[k] = float(v)
+            except (TypeError, ValueError):
+                out[k] = v
+    return out
 
 
 def get_project(project_id: int, session: Session) -> Project:
@@ -46,7 +65,8 @@ def get_project(project_id: int, session: Session) -> Project:
 def project_out(p: Project, session: Session) -> dict:
     n = len(session.exec(select(Drawing.id).where(Drawing.project_id == p.id)).all())
     return {**p.model_dump(), "drawing_count": n,
-            "rebar_ratios": {**DEFAULT_REBAR_RATIOS, **(p.rebar_ratios or {})}}
+            "rebar_ratios": {**DEFAULT_REBAR_RATIOS, **(p.rebar_ratios or {})},
+            "params": project_params(p)}
 
 
 @router.get("")
@@ -56,8 +76,8 @@ def list_projects(session: Session = Depends(get_session)):
 
 @router.post("", status_code=201)
 def create_project(body: ProjectIn, session: Session = Depends(get_session)):
-    p = Project(**body.model_dump(exclude={"rebar_ratios"}), rebar_ratios=body.rebar_ratios or {},
-                layer_profile={})   # yalnızca kullanıcı eşlemeleri saklanır; varsayılanlar kodda
+    p = Project(**body.model_dump(exclude={"rebar_ratios", "params"}), rebar_ratios=body.rebar_ratios or {},
+                params=_clean_params(body.params), layer_profile={})   # yalnızca kullanıcı eşlemeleri saklanır
     session.add(p)
     session.commit()
     session.refresh(p)
@@ -74,6 +94,8 @@ def update_project(project_id: int, body: ProjectPatch, session: Session = Depen
     p = get_project(project_id, session)
     data = body.model_dump(exclude_unset=True)
     reanalyze = "slab_thickness" in data and data["slab_thickness"] != p.slab_thickness
+    if "params" in data:
+        p.params = _clean_params({**(p.params or {}), **(data.pop("params") or {})})
     for k, v in data.items():
         setattr(p, k, v)
     session.add(p)
@@ -103,7 +125,7 @@ def read_profile(project_id: int, session: Session = Depends(get_session)):
     p = get_project(project_id, session)
     prof = LayerProfile(p.layer_profile or None)
     return {"profile": prof.effective(), "overrides": prof.to_dict(), "defaults": DEFAULT_PROFILE,
-            "element_types": ALL_TYPES}
+            "element_types": ALL_TYPES, "disciplines": DISCIPLINES, "types_by_discipline": TYPES_BY_DISCIPLINE}
 
 
 @router.put("/{project_id}/layer-profile")
@@ -132,3 +154,11 @@ def map_layer(project_id: int, body: LayerMap, session: Session = Depends(get_se
 def _reanalyze_all(p: Project, session: Session) -> None:
     for d in session.exec(select(Drawing).where(Drawing.project_id == p.id)):
         analyze_and_store(d, p, session)
+
+
+@router.get("/meta/disciplines")
+def disciplines_meta():
+    """Arayüz için: disiplinler, eleman tipleri, keşif türleri ve varsayılan parametreler."""
+    return {"disciplines": DISCIPLINES, "types_by_discipline": TYPES_BY_DISCIPLINE,
+            "kinds": {k: {"label": v[0], "unit": v[1], "discipline": v[2]} for k, v in KIND_META.items()},
+            "default_params": DEFAULT_PARAMS}

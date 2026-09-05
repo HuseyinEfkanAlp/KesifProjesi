@@ -1,4 +1,4 @@
-"""Metraj ve maliyet Excel raporu (openpyxl)."""
+"""Keşif, metraj ve maliyet Excel raporu (openpyxl)."""
 from __future__ import annotations
 
 from io import BytesIO
@@ -7,13 +7,14 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from ..parser.layer_profile import ELEMENT_TYPES
+from ..parser.layer_profile import ALL_ELEMENT_TYPES
 from ..quantity.engine import QuantityLine
 from ..quantity.summary import SUBTYPE_LABELS
 
 HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
 HEADER_FONT = Font(bold=True, color="FFFFFF")
 BOLD = Font(bold=True)
+MONEY = "#,##0.00"
 
 
 def _header(ws, row: int, headers: list[str]) -> None:
@@ -31,65 +32,98 @@ def _autosize(ws) -> None:
 
 
 def build_workbook(project: dict, lines: list[QuantityLine], summary: dict, cost: dict,
-                   element_info: dict | None = None) -> bytes:
-    """element_info: element_id -> {"drawing": str, "layer": str, "b":..., "h":..., ...} (isteğe bağlı)."""
+                   element_info: dict | None = None, boq: list[dict] | None = None) -> bytes:
+    """element_info: element_id -> {"drawing": str, "layer": str, "b":..., "h":..., ...} (isteğe bağlı).
+    boq: keşif kalemleri (tüm disiplinler)."""
     element_info = element_info or {}
+    boq = boq or []
     wb = Workbook()
 
-    # ---- Metraj Özeti ----
+    # ---- Keşif Özeti (tüm disiplinler) ----
     ws = wb.active
-    ws.title = "Metraj Özeti"
+    ws.title = "Keşif"
     ws["A1"] = f"Proje: {project.get('name', '')}"
     ws["A1"].font = Font(bold=True, size=13)
-    ws["A2"] = f"Kat yüksekliği: {project.get('storey_height', '')} m   Döşeme kalınlığı: {project.get('slab_thickness', '')} m"
-    _header(ws, 4, ["Eleman Grubu", "Adet", "Beton (m³)", "Kalıp (m²)", "Demir (kg)"])
-    r = 5
-    for g in summary["groups"]:
-        ws.append([g["label"], g["element_count"], g["concrete_m3"], g["formwork_m2"], g["rebar_kg"]])
-        r += 1
-    t = summary["totals"]
-    ws.append(["TOPLAM", "", t["concrete_m3"], t["formwork_m2"], t["rebar_kg"]])
-    for c in ws[r]:
-        c.font = BOLD
+    ws["A2"] = (f"Kat yüksekliği: {project.get('storey_height', '')} m   Döşeme kalınlığı: {project.get('slab_thickness', '')} m"
+                f"   Duvar yüksekliği: {project.get('wall_height') or 'H − d'}   Günlük çalışma: {project.get('work_hours_per_day', 8)} saat")
+    _header(ws, 4, ["Disiplin", "Tür", "Kalem", "Birim", "Miktar", "Adet / hat", "Not"])
+    for it in boq:
+        ws.append([it["discipline_label"], it["kind_label"], it["label"], it["unit"], it["quantity"], it.get("count") or "",
+                   "; ".join(it.get("notes") or [])])
     _autosize(ws)
 
-    # ---- Eleman Listesi ----
-    ws2 = wb.create_sheet("Eleman Metrajı")
-    _header(ws2, 1, ["Çizim", "Tip", "Ad", "Katman", "b (m)", "h (m)", "Kalınlık (m)", "Alan (m²)",
-                     "Uzunluk (m)", "Adet", "Kat Çarpanı", "Beton (m³)", "Kalıp (m²)", "Demir (kg)",
-                     "Toplam Beton (m³)", "Toplam Kalıp (m²)", "Toplam Demir (kg)", "Notlar"])
-    for ln in lines:
-        info = element_info.get(ln.element_id, {})
-        label = ELEMENT_TYPES.get(ln.etype, ln.etype)
-        if ln.subtype:
-            label = SUBTYPE_LABELS.get(ln.subtype, label)
-        ws2.append([
-            info.get("drawing", ""), label, ln.name or "", info.get("layer", ""),
-            info.get("b"), info.get("h"), info.get("thickness"), info.get("area"), info.get("length"),
-            ln.count, ln.multiplier, round(ln.concrete_m3, 4), round(ln.formwork_m2, 4), round(ln.rebar_kg, 2),
-            round(ln.total_concrete, 4), round(ln.total_formwork, 4), round(ln.total_rebar, 2),
-            "; ".join(ln.notes + list(info.get("warnings", []))),
-        ])
-    _autosize(ws2)
+    # ---- Statik Metraj Özeti ----
+    if summary.get("groups"):
+        ws1 = wb.create_sheet("Statik Özet")
+        _header(ws1, 1, ["Eleman Grubu", "Adet", "Beton (m³)", "Kalıp (m²)", "Demir (kg)"])
+        for g in summary["groups"]:
+            ws1.append([g["label"], g["element_count"], g["concrete_m3"], g["formwork_m2"], g["rebar_kg"]])
+        t = summary["totals"]
+        ws1.append(["TOPLAM", "", t["concrete_m3"], t["formwork_m2"], t["rebar_kg"]])
+        for c in ws1[ws1.max_row]:
+            c.font = BOLD
+        _autosize(ws1)
 
-    # ---- Maliyet ----
+    # ---- Eleman Listesi (statik) ----
+    if lines:
+        ws2 = wb.create_sheet("Eleman Metrajı")
+        _header(ws2, 1, ["Çizim", "Tip", "Ad", "Katman", "b (m)", "h (m)", "Kalınlık (m)", "Alan (m²)",
+                         "Uzunluk (m)", "Adet", "Kat Çarpanı", "Beton (m³)", "Kalıp (m²)", "Demir (kg)",
+                         "Toplam Beton (m³)", "Toplam Kalıp (m²)", "Toplam Demir (kg)", "Notlar"])
+        for ln in lines:
+            info = element_info.get(ln.element_id, {})
+            label = ALL_ELEMENT_TYPES.get(ln.etype, ln.etype)
+            if ln.subtype:
+                label = SUBTYPE_LABELS.get(ln.subtype, label)
+            ws2.append([
+                info.get("drawing", ""), label, ln.name or "", info.get("layer", ""),
+                info.get("b"), info.get("h"), info.get("thickness"), info.get("area"), info.get("length"),
+                ln.count, ln.multiplier, round(ln.concrete_m3, 4), round(ln.formwork_m2, 4), round(ln.rebar_kg, 2),
+                round(ln.total_concrete, 4), round(ln.total_formwork, 4), round(ln.total_rebar, 2),
+                "; ".join(ln.notes + list(info.get("warnings", []))),
+            ])
+        _autosize(ws2)
+
+    # ---- Maliyet ve Süre ----
     ws3 = wb.create_sheet("Maliyet")
-    _header(ws3, 1, ["Kalem", "Grup", "Birim", "Miktar", "Birim Fiyat (₺)", "Tutar (₺)", "Fiyat Kaynağı"])
+    _header(ws3, 1, ["Disiplin", "Tür", "Kalem", "Marka", "Birim", "Miktar", "Malzeme (₺/birim)", "İşçilik (₺/birim)",
+                     "Malzeme Tutarı (₺)", "İşçilik Tutarı (₺)", "Toplam (₺)", "Adam-saat/birim", "Ekip", "Süre (gün)",
+                     "Fiyat Kaynağı"])
     for l in cost["lines"]:
-        ws3.append([l["kind_label"], l["group_label"], l["unit"], l["quantity"], l["unit_price"], l["total"],
+        ws3.append([l["discipline_label"], l["kind_label"], l["group_label"], l.get("brand", ""), l["unit"], l["quantity"],
+                    l["unit_price"], l.get("labor_price", 0.0), l.get("material_total", 0.0), l.get("labor_total", 0.0),
+                    l["total"], l.get("hours_per_unit", 0.0), l.get("crew_size", 1.0), l.get("days", 0.0),
                     l["price_source"]])
     r = ws3.max_row + 2
-    ws3.cell(row=r, column=5, value="Ara Toplam").font = BOLD
-    ws3.cell(row=r, column=6, value=cost["subtotal"]).font = BOLD
+    rows = [("Malzeme ara toplam", cost.get("material_subtotal", 0.0)), ("İşçilik ara toplam", cost.get("labor_subtotal", 0.0)),
+            ("Ara Toplam", cost["subtotal"])]
     if cost.get("vat_rate"):
-        ws3.cell(row=r + 1, column=5, value=f"KDV (%{cost['vat_rate']*100:.0f})")
-        ws3.cell(row=r + 1, column=6, value=cost["vat"])
+        rows.append((f"KDV (%{cost['vat_rate']*100:.0f})", cost["vat"]))
+    rows.append(("GENEL TOPLAM", cost["grand_total"]))
+    for label, val in rows:
+        ws3.cell(row=r, column=10, value=label).font = BOLD
+        c = ws3.cell(row=r, column=11, value=val)
+        c.font = BOLD
+        c.number_format = MONEY
         r += 1
-    ws3.cell(row=r + 1, column=5, value="GENEL TOPLAM").font = BOLD
-    ws3.cell(row=r + 1, column=6, value=cost["grand_total"]).font = BOLD
-    for row in ws3.iter_rows(min_row=2, min_col=5, max_col=6):
+    dur = cost.get("duration", {})
+    r += 1
+    ws3.cell(row=r, column=10, value="Toplam adam-saat").font = BOLD
+    ws3.cell(row=r, column=11, value=dur.get("total_hours", 0.0))
+    ws3.cell(row=r + 1, column=10, value="Süre, işler ardışık (gün)").font = BOLD
+    ws3.cell(row=r + 1, column=11, value=dur.get("sequential_days", 0.0))
+    ws3.cell(row=r + 2, column=10, value="Süre, disiplinler paralel (gün)").font = BOLD
+    ws3.cell(row=r + 2, column=11, value=dur.get("parallel_days", 0.0))
+    rr = r + 4
+    _header(ws3, rr, ["Disiplin", "Malzeme (₺)", "İşçilik (₺)", "Toplam (₺)", "Adam-saat", "Süre (gün)"])
+    for d in cost.get("by_discipline", []):
+        rr += 1
+        for ci, v in enumerate([d["label"], d["material"], d["labor"], d["total"], d["hours"], d["days"]], start=1):
+            ws3.cell(row=rr, column=ci, value=v)
+    for row in ws3.iter_rows(min_row=2, min_col=7, max_col=11):
         for c in row:
-            c.number_format = "#,##0.00"
+            if isinstance(c.value, (int, float)):
+                c.number_format = MONEY
     _autosize(ws3)
 
     buf = BytesIO()

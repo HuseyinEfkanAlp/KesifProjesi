@@ -147,3 +147,108 @@ if __name__ == "__main__":
     out = Path(__file__).parent
     print(make_storey_dxf(out / "kat_plani.dxf"))
     print(make_foundation_dxf(out / "temel_plani.dxf"))
+
+
+def make_arch_dxf(path: str | Path) -> Path:
+    """Mimari kat planı (cm). Sonucu bilinen:
+      - Dış duvarlar: YTONG 20 cm, çift çizgi; 1000 x 800 cm dikdörtgen oda (dış ölçü), iç ölçü 960 x 760
+        Katman "A-DUVAR-YTONG". Alt duvarda 90 cm kapı boşluğu (parçalar birleştirilir).
+      - İç bölme: "DUVAR TUGLA" katmanı, 10 cm, x=500, y 20..780 (uzunluk 760) -> tuğla 10 cm
+      - Kapılar: 2 adet "KAPI_90" bloğu (katman KAPI) + "K1 90/210" etiketi biri, diğeri etiketsiz
+      - Pencereler: 3 adet "PENCERE" bloğu (katman PENCERE) + "P1 120/140" etiketleri (2 tanesi), bir "P2 60/60"
+    Beklenen duvar uzunlukları (merkez hattı): dış çevre 2*(990+790) = 3560 cm ≈ 35.6 m ; iç 7.6 m
+    """
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 5
+    for name in ("A-DUVAR-YTONG", "DUVAR TUGLA", "KAPI", "PENCERE", "YAZI", "MOBILYA"):
+        doc.layers.add(name)
+    msp = doc.modelspace()
+    W, H, t = 1000, 800, 20
+    # dış çift çizgi (dış ve iç hat); alt duvarda x 400..490 kapı boşluğu
+    outer = [(0, 0), (W, 0), (W, H), (0, H)]
+    inner = [(t, t), (W - t, t), (W - t, H - t), (t, H - t)]
+    for pts in (outer, inner):
+        for i in range(4):
+            a, b = pts[i], pts[(i + 1) % 4]
+            if a[1] == b[1] and a[1] in (0, t) and a[0] < b[0]:      # alt duvar: kapı boşluğu bırak
+                msp.add_line(a, (400, a[1]), dxfattribs={"layer": "A-DUVAR-YTONG"})
+                msp.add_line((490, a[1]), b, dxfattribs={"layer": "A-DUVAR-YTONG"})
+            else:
+                msp.add_line(a, b, dxfattribs={"layer": "A-DUVAR-YTONG"})
+    msp.add_text("YTONG 20", dxfattribs={"layer": "YAZI", "height": 8}).set_placement((W / 2, -30))
+    # iç bölme 10 cm, x 495..505
+    msp.add_line((495, t), (495, H - t), dxfattribs={"layer": "DUVAR TUGLA"})
+    msp.add_line((505, t), (505, H - t), dxfattribs={"layer": "DUVAR TUGLA"})
+    msp.add_text("TUGLA 10", dxfattribs={"layer": "YAZI", "height": 8}).set_placement((510, 400))
+
+    door = doc.blocks.new("KAPI_90")
+    door.add_line((0, 0), (90, 0))
+    door.add_arc((0, 0), 90, 0, 90)
+    win = doc.blocks.new("PENCERE")
+    win.add_lwpolyline([(0, 0), (120, 0), (120, 20), (0, 20)], close=True)
+    win.add_line((0, 10), (120, 10))
+
+    msp.add_blockref("KAPI_90", (400, 0), dxfattribs={"layer": "KAPI"})
+    msp.add_text("K1 90/210", dxfattribs={"layer": "YAZI", "height": 8}).set_placement((420, 40))
+    msp.add_blockref("KAPI_90", (495, 300), dxfattribs={"layer": "KAPI", "rotation": 90})  # etiketsiz
+    for x in (150, 700):
+        msp.add_blockref("PENCERE", (x, H - t), dxfattribs={"layer": "PENCERE"})
+        msp.add_text("P1 120/140", dxfattribs={"layer": "YAZI", "height": 8}).set_placement((x + 10, H + 20))
+    msp.add_blockref("PENCERE", (W - t, 300), dxfattribs={"layer": "PENCERE", "rotation": 90})
+    msp.add_text("P2 60/60", dxfattribs={"layer": "YAZI", "height": 8}).set_placement((W + 30, 310))
+    # mobilya (yok sayılmalı)
+    msp.add_lwpolyline([(100, 100), (200, 100), (200, 180), (100, 180)], close=True, dxfattribs={"layer": "MOBILYA"})
+    path = Path(path)
+    doc.saveas(path)
+    return path
+
+
+def make_elec_dxf(path: str | Path) -> Path:
+    """Elektrik tava/kuvvet planı (mm). Sonucu bilinen:
+      - Tava: "E-TAVA" katmanı, polyline (0,0)->(20000,0)->(20000,8000) = 28 m, etiket "TAVA 200x60"
+              ikinci tava çift çizgi: y=15000 ve y=15100 arasında x 0..10000 -> 100 mm genişlik, 10 m, etiket "100x50"
+      - Kablo: "E-KABLO" katmanı: 3 hat
+              L1: (0,500)->(12000,500) 12 m, etiket "NYY 4x16"
+              L2: (0,1000)->(6000,1000)->(6000,4000) 9 m, iki parça uç uca, etiket "3x2,5 NYM"
+              L3: (0,2000)->(5000,2000) 5 m, katman adından: "E-KABLO-5x6" katmanında, etiketsiz
+      - Boru: "E-BORU" katmanı (0,3000)->(4000,3000) 4 m, etiket "Ø20 PVC"
+      - Armatür: "E-ARMATUR" katmanı: 4 adet "LED_PANEL" bloğu, "E-PRIZ": 3 adet "PRIZ_TOPRAKLI", "E-ANAHTAR": 2 adet "ANAHTAR"
+    """
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 4
+    for name in ("E-TAVA", "E-KABLO", "E-KABLO-5x6", "E-BORU", "E-ARMATUR", "E-PRIZ", "E-ANAHTAR", "E-YAZI", "AKS"):
+        doc.layers.add(name)
+    msp = doc.modelspace()
+    msp.add_lwpolyline([(0, 0), (20000, 0), (20000, 8000)], dxfattribs={"layer": "E-TAVA"})
+    msp.add_text("TAVA 200x60", dxfattribs={"layer": "E-YAZI", "height": 150}).set_placement((10000, 200))
+    msp.add_line((0, 15000), (10000, 15000), dxfattribs={"layer": "E-TAVA"})
+    msp.add_line((0, 15100), (10000, 15100), dxfattribs={"layer": "E-TAVA"})
+    msp.add_text("100x50", dxfattribs={"layer": "E-YAZI", "height": 150}).set_placement((5000, 15200))
+
+    msp.add_line((0, 500), (12000, 500), dxfattribs={"layer": "E-KABLO"})
+    msp.add_text("NYY 4x16", dxfattribs={"layer": "E-YAZI", "height": 100}).set_placement((6000, 600))
+    msp.add_line((0, 1000), (6000, 1000), dxfattribs={"layer": "E-KABLO"})
+    msp.add_line((6000, 1000), (6000, 4000), dxfattribs={"layer": "E-KABLO"})
+    msp.add_text("3x2,5 NYM", dxfattribs={"layer": "E-YAZI", "height": 100}).set_placement((3000, 1100))
+    msp.add_line((0, 2000), (5000, 2000), dxfattribs={"layer": "E-KABLO-5x6"})
+
+    msp.add_line((0, 3000), (4000, 3000), dxfattribs={"layer": "E-BORU"})
+    msp.add_text("Ø20 PVC", dxfattribs={"layer": "E-YAZI", "height": 100}).set_placement((2000, 3100))
+
+    led = doc.blocks.new("LED_PANEL")
+    led.add_lwpolyline([(0, 0), (600, 0), (600, 600), (0, 600)], close=True)
+    priz = doc.blocks.new("PRIZ_TOPRAKLI")
+    priz.add_circle((0, 0), 100)
+    anahtar = doc.blocks.new("ANAHTAR")
+    anahtar.add_circle((0, 0), 80)
+    anahtar.add_line((0, 80), (150, 200))
+    for x in (2000, 6000, 10000, 14000):
+        msp.add_blockref("LED_PANEL", (x, 5000), dxfattribs={"layer": "E-ARMATUR"})
+    for x in (1000, 5000, 9000):
+        msp.add_blockref("PRIZ_TOPRAKLI", (x, 7000), dxfattribs={"layer": "E-PRIZ"})
+    for x in (3000, 7000):
+        msp.add_blockref("ANAHTAR", (x, 7500), dxfattribs={"layer": "E-ANAHTAR"})
+    msp.add_line((-1000, -1000), (25000, -1000), dxfattribs={"layer": "AKS"})
+    path = Path(path)
+    doc.saveas(path)
+    return path

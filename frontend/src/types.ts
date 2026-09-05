@@ -1,4 +1,15 @@
-export type EType = 'column' | 'shear_wall' | 'beam' | 'slab' | 'foundation'
+export type Discipline = 'structural' | 'architectural' | 'electrical'
+
+export const DISCIPLINES: Record<Discipline, string> = {
+  structural: 'Statik',
+  architectural: 'Mimari',
+  electrical: 'Elektrik',
+}
+
+export type EType =
+  | 'column' | 'shear_wall' | 'beam' | 'slab' | 'foundation'
+  | 'wall' | 'door' | 'window'
+  | 'tray' | 'cable' | 'conduit' | 'fixture'
 
 export const ETYPE_LABELS: Record<EType, string> = {
   column: 'Kolon',
@@ -6,10 +17,55 @@ export const ETYPE_LABELS: Record<EType, string> = {
   beam: 'Kiriş',
   slab: 'Döşeme',
   foundation: 'Temel',
+  wall: 'Duvar',
+  door: 'Kapı',
+  window: 'Pencere',
+  tray: 'Kablo tavası',
+  cable: 'Kablo',
+  conduit: 'Boru',
+  fixture: 'Armatür / priz / anahtar',
 }
 
-/** Katman eşlemede seçilebilen tipler: elemanlar + yardımcı tipler (döşeme boşluğu) */
-export const LAYER_TYPE_LABELS: Record<string, string> = { ...ETYPE_LABELS, hole: 'Döşeme boşluğu (şaft)' }
+export const ETYPES_BY_DISCIPLINE: Record<Discipline, EType[]> = {
+  structural: ['column', 'shear_wall', 'beam', 'slab', 'foundation'],
+  architectural: ['wall', 'door', 'window'],
+  electrical: ['tray', 'cable', 'conduit', 'fixture'],
+}
+
+/** Statik tipler (beton/kalıp/demir metrajı) */
+export const STRUCTURAL_ETYPES = ETYPES_BY_DISCIPLINE.structural
+
+/** Katman eşlemede seçilebilen tipler: disiplinin elemanları (+ statikte döşeme boşluğu) */
+export function layerTypeLabels(discipline: Discipline): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const t of ETYPES_BY_DISCIPLINE[discipline]) out[t] = ETYPE_LABELS[t]
+  if (discipline === 'structural') out.hole = 'Döşeme boşluğu (şaft)'
+  return out
+}
+
+export const ETYPE_COLORS: Record<EType, string> = {
+  column: '#d62728', shear_wall: '#9467bd', beam: '#1f77b4', slab: '#2ca02c', foundation: '#ff7f0e',
+  wall: '#8c564b', door: '#e377c2', window: '#17becf',
+  tray: '#bcbd22', cable: '#ff9896', conduit: '#c5b0d5', fixture: '#7f7f7f',
+}
+
+/** Alt tip açıklaması (statik: temel tipi; mimari: malzeme; elektrik: boyut/kesit/kategori) */
+export const SUBTYPE_LABELS: Record<string, string> = {
+  raft: 'radye', strip: 'sürekli', net: 'net alan',
+  ytong: 'Ytong / gazbeton', tugla: 'Tuğla', bims: 'Bims', alcipan: 'Alçıpan', beton: 'Betonarme', tas: 'Taş',
+  armatur: 'Aydınlatma armatürü', acil: 'Acil aydınlatma', priz: 'Priz', anahtar: 'Anahtar', buat: 'Buat', pano: 'Pano',
+  data: 'Data / telefon', yangin: 'Yangın algılama', diger: 'Diğer',
+}
+
+export interface ProjectParams {
+  wall_height: number | null
+  plaster_sides: number
+  paint_sides: number
+  cable_drop: number
+  cable_waste_pct: number
+  tray_waste_pct: number
+  work_hours_per_day: number
+}
 
 export interface Project {
   id: number
@@ -19,6 +75,7 @@ export interface Project {
   slab_thickness: number
   vat_rate: number
   rebar_ratios: Record<string, number>
+  params: ProjectParams
   drawing_count: number
   created_at: string
 }
@@ -26,7 +83,7 @@ export interface Project {
 export interface LayerInfo {
   name: string
   count: number
-  etype: EType | null
+  etype: string | null
   etype_label: string | null
 }
 
@@ -35,6 +92,7 @@ export interface Drawing {
   project_id: number
   filename: string
   label: string
+  discipline: Discipline
   storey_count: number
   storey_height: number | null
   unit: string
@@ -141,12 +199,57 @@ export interface QuantityLine {
   warnings: string[]
 }
 
+/** Keşif kalemi (tüm disiplinler) */
+export interface BoqItem {
+  key: string
+  kind: string
+  kind_label: string
+  group: string
+  label: string
+  unit: string
+  quantity: number
+  count: number
+  discipline: Discipline
+  discipline_label: string
+  notes: string[]
+  detail: Record<string, unknown>
+}
+
+export interface Boq {
+  items: BoqItem[]
+  by_discipline: { discipline: Discipline; label: string; items: BoqItem[] }[]
+  kinds: Record<string, { label: string; unit: string; discipline: Discipline }>
+}
+
+export interface QuantitiesResponse {
+  summary: QuantitySummary
+  lines: QuantityLine[]
+  boq: Boq
+  params: { storey_height: number; slab_thickness: number } & ProjectParams
+}
+
 export interface PriceItem {
   id: number
   key: string
   name: string
   unit: string
   unit_price: number
+  labor_price: number
+  brand: string
+  hours_per_unit: number
+  crew_size: number
+  kind: string
+  discipline: Discipline | ''
+  is_general: boolean
+}
+
+export interface PriceIn {
+  key: string
+  unit_price?: number
+  labor_price?: number
+  brand?: string
+  hours_per_unit?: number
+  crew_size?: number
 }
 
 export interface CostLine {
@@ -155,19 +258,35 @@ export interface CostLine {
   kind_label: string
   group: string
   group_label: string
+  discipline: Discipline
+  discipline_label: string
   unit: string
   quantity: number
+  brand: string
   unit_price: number
-  price_source: string
+  labor_price: number
+  material_total: number
+  labor_total: number
   total: number
+  price_source: string
+  labor_source: string
+  hours_per_unit: number
+  crew_size: number
+  hours: number
+  days: number
 }
 
 export interface CostResult {
   lines: CostLine[]
+  material_subtotal: number
+  labor_subtotal: number
   subtotal: number
   vat_rate: number
   vat: number
   grand_total: number
   by_kind: Record<string, number>
+  by_discipline: { discipline: Discipline; label: string; material: number; labor: number; total: number; hours: number; days: number }[]
   missing_prices: string[]
+  missing_labor: string[]
+  duration: { hours_per_day: number; total_hours: number; sequential_days: number; parallel_days: number; missing_rates: string[] }
 }

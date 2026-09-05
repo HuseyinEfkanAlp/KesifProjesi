@@ -1,4 +1,10 @@
-"""Tüm dedektörleri çalıştırır, birimi etiketlerle doğrular ve katman raporu üretir."""
+"""Tüm dedektörleri çalıştırır, birimi etiketlerle doğrular ve katman raporu üretir.
+
+Çizimin disiplinine göre farklı dedektör kümesi çalışır:
+  structural    kolon / perde / kiriş / döşeme / temel
+  architectural duvar / kapı / pencere
+  electrical    kablo tavası / kablo / boru / armatür
+"""
 from __future__ import annotations
 
 import statistics
@@ -7,11 +13,14 @@ from dataclasses import dataclass, field
 from .detectors.base import DetectParams, DetectedElement, LabelIndex, polygons_on_layers, segments_on_layers
 from .detectors.beams import detect_beams
 from .detectors.columns import detect_columns
+from .detectors.electrical import detect_electrical
 from .detectors.foundations import detect_foundations
+from .detectors.openings import detect_openings
 from .detectors.shear_walls import detect_shear_walls
 from .detectors.slabs import detect_slabs
+from .detectors.walls import detect_walls
 from .geometry import polygon_area
-from .layer_profile import ALL_TYPES, ELEMENT_TYPES, LayerProfile
+from .layer_profile import ALL_TYPES, DEFAULT_DISCIPLINE, LayerProfile, types_for
 from .loader import UNIT_SCALE, Drawing, load_dxf
 
 
@@ -31,6 +40,7 @@ class AnalysisResult:
     unit: str
     scale: float
     unit_detected: bool
+    discipline: str = DEFAULT_DISCIPLINE
     elements: list[DetectedElement] = field(default_factory=list)
     layers: list[LayerInfo] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -41,7 +51,7 @@ class AnalysisResult:
 
     def to_dict(self) -> dict:
         return {
-            "unit": self.unit, "scale": self.scale, "unit_detected": self.unit_detected,
+            "unit": self.unit, "scale": self.scale, "unit_detected": self.unit_detected, "discipline": self.discipline,
             "elements": [e.to_dict() for e in self.elements],
             "layers": [l.to_dict() for l in self.layers],
             "warnings": self.warnings, "suggested_unit": self.suggested_unit,
@@ -54,7 +64,7 @@ def check_unit_against_labels(drawing: Drawing, profile: LayerProfile, params: D
     Oran ~10 ya da ~0.1 ise $INSUNITS yanlış demektir (mm yazılmış ama cm çizilmiş gibi).
     Doğru birim adını döndürür, tutarlıysa None.
     """
-    col_layers = [l for l in drawing.layers if profile.classify(l) == "column"]
+    col_layers = [l for l in drawing.layers if profile.classify(l, "structural") == "column"]
     if not col_layers:
         return None
     labels = LabelIndex(drawing, params)
@@ -82,30 +92,9 @@ def check_unit_against_labels(drawing: Drawing, profile: LayerProfile, params: D
     return None
 
 
-def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
-                    params: DetectParams | None = None) -> AnalysisResult:
-    profile = profile or LayerProfile()
-    params = params or DetectParams()
+def _structural(drawing: Drawing, layers_by_type: dict[str, list[str]], params: DetectParams,
+                result: AnalysisResult) -> list[DetectedElement]:
     labels = LabelIndex(drawing, params)
-
-    counts = drawing.layer_counts()
-    layer_infos = [LayerInfo(name, counts.get(name, 0), profile.classify(name)) for name in drawing.layers]
-    layers_by_type: dict[str, list[str]] = {}
-    for li in layer_infos:
-        if li.etype:
-            layers_by_type.setdefault(li.etype, []).append(li.name)
-
-    result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
-                            layers=layer_infos, warnings=list(drawing.warnings))
-
-    suggested = check_unit_against_labels(drawing, profile, params)
-    if suggested and suggested != drawing.unit:
-        result.suggested_unit = suggested
-        result.warnings.append(
-            f"Çizim birimi '{drawing.unit}' görünüyor ama kolon etiketleri '{suggested}' ile uyuşuyor. "
-            f"Birim '{suggested}' olarak alındı; gerekirse çizim ayarlarından değiştirin."
-        )
-
     columns = detect_columns(drawing, layers_by_type.get("column", []), labels, params)
     walls = detect_shear_walls(drawing, layers_by_type.get("shear_wall", []), labels, params)
     supports = [e.points for e in columns + walls]
@@ -125,8 +114,54 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
             e.confidence = min(e.confidence, 0.3)
             e.warnings.append("Temel paftasındaki kolon/perde izi; metraja alınmadı (kat planında sayılır)")
         result.warnings.append("Temel paftası: kolon/perde izleri metraj dışı bırakıldı (kat kalıp planında sayılırlar).")
+    if any(e.subtype == "net" for e in slabs):
+        result.warnings.append("Döşemeler kiriş ağından türetildi (kirişler arası net alan); kiriş betonu tam yükseklikle hesaplanır.")
+    return columns + walls + beams + slabs + founds
 
-    result.elements = columns + walls + beams + slabs + founds
+
+def _architectural(drawing: Drawing, layers_by_type: dict[str, list[str]], params: DetectParams,
+                   result: AnalysisResult) -> list[DetectedElement]:
+    walls = detect_walls(drawing, layers_by_type.get("wall", []), params)
+    openings = detect_openings(drawing, {k: layers_by_type.get(k, []) for k in ("door", "window")}, params)
+    if walls and not openings:
+        result.warnings.append("Kapı / pencere bulunamadı: kapı ve pencere katmanlarını eşleyin (bloklar sayılır).")
+    return walls + openings
+
+
+def _electrical(drawing: Drawing, layers_by_type: dict[str, list[str]], params: DetectParams,
+                result: AnalysisResult) -> list[DetectedElement]:
+    return detect_electrical(drawing, layers_by_type, params)
+
+
+DISCIPLINE_RUNNERS = {"structural": _structural, "architectural": _architectural, "electrical": _electrical}
+
+
+def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
+                    params: DetectParams | None = None, discipline: str = DEFAULT_DISCIPLINE) -> AnalysisResult:
+    profile = profile or LayerProfile()
+    params = params or DetectParams()
+    discipline = discipline if discipline in DISCIPLINE_RUNNERS else DEFAULT_DISCIPLINE
+
+    counts = drawing.layer_counts()
+    layer_infos = [LayerInfo(name, counts.get(name, 0), profile.classify(name, discipline)) for name in drawing.layers]
+    layers_by_type: dict[str, list[str]] = {}
+    for li in layer_infos:
+        if li.etype:
+            layers_by_type.setdefault(li.etype, []).append(li.name)
+
+    result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
+                            discipline=discipline, layers=layer_infos, warnings=list(drawing.warnings))
+
+    if discipline == "structural":
+        suggested = check_unit_against_labels(drawing, profile, params)
+        if suggested and suggested != drawing.unit:
+            result.suggested_unit = suggested
+            result.warnings.append(
+                f"Çizim birimi '{drawing.unit}' görünüyor ama kolon etiketleri '{suggested}' ile uyuşuyor. "
+                f"Birim '{suggested}' olarak alındı; gerekirse çizim ayarlarından değiştirin."
+            )
+
+    result.elements = DISCIPLINE_RUNNERS[discipline](drawing, layers_by_type, params, result)
 
     unmapped = [li.name for li in layer_infos if li.etype is None and li.count > 0]
     if unmapped:
@@ -134,23 +169,24 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
             "Eşlenmemiş katmanlar (eleman sayılmadı): " + ", ".join(unmapped[:15])
             + (" ..." if len(unmapped) > 15 else "")
         )
-    for etype, label in ELEMENT_TYPES.items():
+    for etype, label in types_for(discipline).items():
+        if etype == "hole":
+            continue
         if etype in layers_by_type and not result.by_type(etype):
             result.warnings.append(f"{label} katmanı var ama eleman tespit edilemedi: {', '.join(layers_by_type[etype])}")
-    if any(e.subtype == "net" for e in slabs):
-        result.warnings.append("Döşemeler kiriş ağından türetildi (kirişler arası net alan); kiriş betonu tam yükseklikle hesaplanır.")
     return result
 
 
 def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectParams | None = None,
-                 unit_override: str | None = None, auto_unit: bool = True) -> AnalysisResult:
+                 unit_override: str | None = None, auto_unit: bool = True,
+                 discipline: str = DEFAULT_DISCIPLINE) -> AnalysisResult:
     """Dosyayı analiz eder; etiketler birimi yalanlıyorsa (ve kullanıcı birim seçmediyse) doğru birimle yeniden okur."""
     drawing = load_dxf(path, unit_override=unit_override)
-    result = analyze_drawing(drawing, profile, params)
+    result = analyze_drawing(drawing, profile, params, discipline)
     if auto_unit and not unit_override and result.suggested_unit and result.suggested_unit != drawing.unit:
         drawing2 = load_dxf(path, unit_override=result.suggested_unit)
         warn = [w for w in result.warnings if "kolon etiketleri" in w]
-        result = analyze_drawing(drawing2, profile, params)
+        result = analyze_drawing(drawing2, profile, params, discipline)
         result.unit_detected = False
         result.warnings = warn + [w for w in result.warnings if "kolon etiketleri" not in w]
         result.suggested_unit = drawing2.unit
