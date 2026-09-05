@@ -63,10 +63,11 @@ class DetectedElement:
     label_raw: str | None = None
     source: str = ""
     handle: str = ""
+    meta: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
-            "etype": self.etype, "layer": self.layer, "name": self.name, "subtype": self.subtype,
+            "etype": self.etype, "layer": self.layer, "name": self.name, "subtype": self.subtype, "meta": self.meta,
             "b": self.b, "h": self.h, "thickness": self.thickness, "area": self.area,
             "length": self.length, "perimeter": self.perimeter, "count": self.count,
             "confidence": self.confidence, "warnings": self.warnings, "label_raw": self.label_raw,

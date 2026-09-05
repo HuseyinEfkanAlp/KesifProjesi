@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..parser.labels_ext import FIXTURE_CATEGORIES, WALL_MATERIALS
-from ..parser.layer_profile import DISCIPLINES
+from ..parser.layer_profile import DISCIPLINES, ELEMENT_TYPES
 from ..standard.catalog import Catalog, parse_layer, spec_numbers
 
 # tür -> (görünen ad, birim, disiplin)
@@ -25,6 +25,10 @@ KIND_META: dict[str, tuple[str, str, str]] = {
     "beton": ("Beton", "m³", "structural"),
     "kalip": ("Kalıp", "m²", "structural"),
     "demir": ("Demir", "kg", "structural"),
+    "bag_teli": ("Bağ teli", "kg", "structural"),
+    "plywood": ("Plywood kalıp levhası", "adet", "structural"),
+    "kalip_yagi": ("Kalıp yağı", "L", "structural"),
+    "civi": ("Çivi / kalıp aksesuarı", "kg", "structural"),
     "duvar": ("Duvar", "m²", "architectural"),
     "siva": ("Sıva", "m²", "architectural"),
     "boya": ("Boya", "m²", "architectural"),
@@ -45,6 +49,14 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "cable_waste_pct": 5.0,       # kablo fire %
     "tray_waste_pct": 5.0,
     "work_hours_per_day": 8.0,    # süre hesabı: günlük çalışma saati
+    # sarf / fire (statik)
+    "concrete_waste_pct": 3.0,    # beton fire %
+    "rebar_waste_pct": 5.0,       # demir fire % (bindirme + kesim)
+    "tie_wire_kg_per_t": 8.0,     # bağ teli: kg / ton demir
+    "plywood_sheet_m2": 3.125,    # 125 x 250 cm levha
+    "formwork_reuse": 5.0,        # bir levhanın kullanım sayısı
+    "formwork_oil_l_per_m2": 0.05,   # kalıp yağı L / m² (her kullanımda)
+    "nails_kg_per_m2": 0.10,      # çivi / aksesuar kg / m² kalıp
 }
 
 
@@ -121,13 +133,49 @@ class _Acc:
 
 # ------------------------------------------------------------------ statik
 
-def structural_items(summary: dict) -> list[BoqItem]:
+def structural_items(summary: dict, params: dict[str, Any] | None = None) -> list[BoqItem]:
+    """Beton / kalıp / demir + fire ve sarf (bağ teli, plywood, kalıp yağı, çivi).
+
+    Demir: donatı tablosu olan eleman tiplerinde çap bazında (demir:o12 …), tablosu olmayanlarda eleman grubu bazında oranla."""
+    params = effective_params(params)
     acc = _Acc()
-    field_kind = (("concrete_m3", "beton"), ("formwork_m2", "kalip"), ("rebar_kg", "demir"))
     for g in summary.get("groups", []):
-        for fld, kind in field_kind:
-            if g.get(fld, 0) > 0:
-                acc.add(kind, g["key"], f"{KIND_META[kind][0]} - {g['label']}", g[fld], count=g.get("element_count", 0))
+        if g.get("concrete_m3", 0) > 0:
+            acc.add("beton", g["key"], f"Beton - {g['label']}", g["concrete_m3"], count=g.get("element_count", 0))
+        if g.get("formwork_m2", 0) > 0:
+            acc.add("kalip", g["key"], f"Kalıp - {g['label']}", g["formwork_m2"], count=g.get("element_count", 0))
+        if g.get("rebar_kg", 0) > 0 and g.get("rebar_source", "oran") == "oran":
+            acc.add("demir", g["key"], f"Demir - {g['label']} (oranla)", g["rebar_kg"], count=g.get("element_count", 0),
+                    note="Beton × kg/m³ oranı; donatı paftası yüklenince tablodan alınır")
+    for d in summary.get("rebar_by_dia", []):
+        tg = ", ".join(f"{ELEMENT_TYPES.get(k, k)} {v/1000:.1f} t" for k, v in d["targets"].items())
+        acc.add("demir", f"o{d['dia_mm']}", f"Demir Ø{d['dia_mm']}", d["weight_kg"], count=0,
+                note=f"Donatı tablosundan; {tg}", length_m=d["length_m"])
+    tot = summary.get("totals", {})
+    conc = float(tot.get("concrete_m3") or 0.0)
+    form = float(tot.get("formwork_m2") or 0.0)
+    rebar = float(tot.get("rebar_kg") or 0.0)
+    cw = float(params.get("concrete_waste_pct") or 0.0)
+    rw = float(params.get("rebar_waste_pct") or 0.0)
+    if conc > 0 and cw > 0:
+        acc.add("beton", "fire", f"Beton fire (%{cw:g})", conc * cw / 100.0, note="Toplam beton × fire yüzdesi")
+    if rebar > 0 and rw > 0:
+        acc.add("demir", "fire", f"Demir fire / bindirme (%{rw:g})", rebar * rw / 100.0, note="Toplam demir × fire yüzdesi")
+    if rebar > 0:
+        tw = float(params.get("tie_wire_kg_per_t") or 0.0)
+        if tw > 0:
+            acc.add("bag_teli", "*", "Bağ teli", rebar / 1000.0 * tw, note=f"{tw:g} kg / ton demir")
+    if form > 0:
+        sheet = float(params.get("plywood_sheet_m2") or 3.125)
+        reuse = max(float(params.get("formwork_reuse") or 1.0), 1.0)
+        acc.add("plywood", "*", f"Plywood levha ({sheet:g} m², {reuse:g} kullanım)", form / sheet / reuse, count=0,
+                note=f"Kalıp {form:,.0f} m² / {sheet:g} m² / {reuse:g} kullanım")
+        oil = float(params.get("formwork_oil_l_per_m2") or 0.0)
+        if oil > 0:
+            acc.add("kalip_yagi", "*", "Kalıp yağı", form * oil, note=f"{oil:g} L / m² kalıp")
+        nails = float(params.get("nails_kg_per_m2") or 0.0)
+        if nails > 0:
+            acc.add("civi", "*", "Çivi / kalıp aksesuarı", form * nails, note=f"{nails:g} kg / m² kalıp")
     return list(acc.items.values())
 
 

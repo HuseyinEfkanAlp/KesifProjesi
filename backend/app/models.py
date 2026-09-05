@@ -61,6 +61,8 @@ class Element(SQLModel, table=True):
     points: list[list[float]] = Field(default_factory=list, sa_column=Column(JSON))
     included: bool = True
     manual: bool = False            # kullanıcı düzenledi/ekledi
+    # yapısal ek bilgi (donatı tablosu satırı: dia_mm, weight_kg, length_m, target, kot)
+    meta: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
 
 
 class PriceItem(SQLModel, table=True):

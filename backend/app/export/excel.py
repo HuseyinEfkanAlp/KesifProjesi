@@ -64,6 +64,32 @@ def build_workbook(project: dict, lines: list[QuantityLine], summary: dict, cost
             c.font = BOLD
         _autosize(ws1)
 
+    # ---- Kat (çizim) bazında ----
+    if summary.get("by_drawing"):
+        wsk = wb.create_sheet("Kat Bazında")
+        etypes = ["foundation", "column", "shear_wall", "beam", "slab"]
+        hdr = ["Plan / pafta", "Kot"]
+        for et in etypes:
+            hdr += [f"{ALL_ELEMENT_TYPES.get(et, et)} beton (m³)", f"{ALL_ELEMENT_TYPES.get(et, et)} kalıp (m²)"]
+        hdr += ["Beton toplam (m³)", "Kalıp toplam (m²)", "Demir (oranla, kg)", "Demir tablo (kg)", "Tablo hedefi", "Çap bazında (kg)"]
+        _header(wsk, 1, hdr)
+        for r in summary["by_drawing"]:
+            row = [r["drawing"], r.get("kot") or ""]
+            for et in etypes:
+                g = r["groups"].get(et, {})
+                row += [g.get("concrete_m3", 0.0) or None, g.get("formwork_m2", 0.0) or None]
+            row += [r["concrete_m3"], r["formwork_m2"], r["rebar_kg"] or None, r.get("rebar_table_kg"),
+                    ALL_ELEMENT_TYPES.get(r.get("rebar_target", ""), r.get("rebar_target", "")) if r.get("rebar_table_kg") else "",
+                    "; ".join(f"Ø{d}: {kg:,.0f}" for d, kg in (r.get("rebar_by_dia") or {}).items())]
+            wsk.append(row)
+        if summary.get("rebar_by_dia"):
+            wsk.append([])
+            _header(wsk, wsk.max_row + 1, ["Çap", "Toplam boy (m)", "Ağırlık (kg)", "Dağılım"])
+            for d in summary["rebar_by_dia"]:
+                wsk.append([f"Ø{d['dia_mm']}", d["length_m"], d["weight_kg"],
+                            "; ".join(f"{ALL_ELEMENT_TYPES.get(k, k)} {v:,.0f}" for k, v in d["targets"].items())])
+        _autosize(wsk)
+
     # ---- Eleman Listesi (statik) ----
     if lines:
         ws2 = wb.create_sheet("Eleman Metrajı")

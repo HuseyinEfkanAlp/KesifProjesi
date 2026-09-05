@@ -72,17 +72,69 @@ export default function Quantities() {
           </div>
 
           <div className="panel">
+            <h3>Statik: kat / pafta bazında</h3>
+            <div style={{ overflow: 'auto' }}>
+              <table>
+                <thead>
+                  <tr><th>Plan</th><th>Kot</th><th className="num">Kolon m³</th><th className="num">Perde m³</th><th className="num">Kiriş m³</th><th className="num">Döşeme m³</th><th className="num">Temel m³</th><th className="num">Beton m³</th><th className="num">Kalıp m²</th><th className="num">Demir (oran) t</th><th className="num">Demir (tablo) t</th><th>Çap bazında (kg)</th></tr>
+                </thead>
+                <tbody>
+                  {summary.by_drawing.map((r) => (
+                    <tr key={r.drawing}>
+                      <td>{r.drawing_id ? <Link to={`/projects/${pid}/drawings/${r.drawing_id}`}>{r.drawing}</Link> : r.drawing}</td>
+                      <td>{r.kot ?? '-'}</td>
+                      {(['column', 'shear_wall', 'beam', 'slab', 'foundation'] as const).map((et) => (
+                        <td className="num" key={et}>{r.groups[et] ? fmt(r.groups[et].concrete_m3, 1) : '-'}</td>
+                      ))}
+                      <td className="num"><b>{r.concrete_m3 ? fmt(r.concrete_m3, 1) : '-'}</b></td>
+                      <td className="num">{r.formwork_m2 ? fmt(r.formwork_m2, 0) : '-'}</td>
+                      <td className="num">{r.rebar_kg ? fmt(r.rebar_kg / 1000, 1) : '-'}</td>
+                      <td className="num">{r.rebar_table_kg ? <b>{fmt(r.rebar_table_kg / 1000, 1)}</b> : '-'}{r.rebar_target && <span className="muted"> ({ETYPE_LABELS[r.rebar_target as keyof typeof ETYPE_LABELS] ?? r.rebar_target})</span>}</td>
+                      <td className="muted">{Object.entries(r.rebar_by_dia).map(([d, kg]) => `Ø${d}: ${fmt(kg, 0)}`).join(' · ')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="muted">
+              Her kalıp planı o kottaki döşeme ve kirişleri, altındaki katın kolon ve perdelerini içerir. "Demir (oran)" beton × kg/m³ tahminidir;
+              "Demir (tablo)" donatı paftasındaki metraj tablosundan okunan gerçek değerdir ve ilgili eleman tipinin oran tahminini geçersiz kılar.
+            </p>
+          </div>
+
+          {summary.rebar_by_dia.length > 0 && (
+            <div className="panel">
+              <h3>Demir: çap bazında (donatı tablolarından, {fmt(summary.rebar_table_total_kg / 1000, 1)} t)</h3>
+              <table>
+                <thead><tr><th>Çap</th><th className="num">Toplam boy (m)</th><th className="num">Ağırlık (kg)</th><th className="num">Ton</th><th>Dağılım</th></tr></thead>
+                <tbody>
+                  {summary.rebar_by_dia.map((d) => (
+                    <tr key={d.dia_mm}>
+                      <td><b>Ø{d.dia_mm}</b></td>
+                      <td className="num">{fmt(d.length_m, 0)}</td>
+                      <td className="num">{fmt(d.weight_kg, 0)}</td>
+                      <td className="num">{fmt(d.weight_kg / 1000, 2)}</td>
+                      <td className="muted">{Object.entries(d.targets).map(([k, v]) => `${ETYPE_LABELS[k as keyof typeof ETYPE_LABELS] ?? k} ${fmt(v / 1000, 1)} t`).join(' · ')}</td>
+                    </tr>
+                  ))}
+                  <tr className="total"><td>TOPLAM</td><td></td><td className="num">{fmt(summary.rebar_table_total_kg, 0)}</td><td className="num">{fmt(summary.rebar_table_total_kg / 1000, 2)}</td><td className="muted">{summary.rebar_ratio_total_kg > 0 ? `+ oranla tahmin edilen ${fmt(summary.rebar_ratio_total_kg / 1000, 1)} t (tablosu olmayan elemanlar)` : ''}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="panel">
             <h3>Statik: eleman grubuna göre özet</h3>
             <table>
               <thead><tr><th>Grup</th><th className="num">Adet (kat dahil)</th><th className="num">Beton (m³)</th><th className="num">Kalıp (m²)</th><th className="num">Demir (kg)</th></tr></thead>
               <tbody>
                 {summary.groups.map((g) => (
-                  <tr key={g.key}><td><span className={`badge ${g.etype}`}>{g.label}</span></td><td className="num">{g.element_count}</td><td className="num">{fmt(g.concrete_m3, 3)}</td><td className="num">{fmt(g.formwork_m2)}</td><td className="num">{fmt(g.rebar_kg, 0)}</td></tr>
+                  <tr key={g.key}><td><span className={`badge ${g.etype}`}>{g.label}</span></td><td className="num">{g.element_count}</td><td className="num">{fmt(g.concrete_m3, 3)}</td><td className="num">{fmt(g.formwork_m2)}</td><td className="num">{fmt(g.rebar_kg, 0)} <span className="muted">({g.rebar_source})</span></td></tr>
                 ))}
                 <tr className="total"><td>TOPLAM</td><td></td><td className="num">{fmt(summary.totals.concrete_m3, 3)}</td><td className="num">{fmt(summary.totals.formwork_m2)}</td><td className="num">{fmt(summary.totals.rebar_kg, 0)}</td></tr>
               </tbody>
             </table>
-            <p className="muted">H = {project.storey_height} m, d = {Math.round(project.slab_thickness * 100)} cm. Temel kat sayısıyla çarpılmaz. Demir = beton × kg/m³ oranı (yaklaşık; detay paftası okuma sonraki sürümde).</p>
+            <p className="muted">H = {project.storey_height} m, d = {Math.round(project.slab_thickness * 100)} cm. Temel kat sayısıyla çarpılmaz. Demir: "tablo" = donatı paftasından okundu, "oran" = beton × kg/m³ tahmini. Fire, bağ teli, plywood, kalıp yağı ve çivi keşif listesinde ayrı kalemlerdir.</p>
           </div>
 
           <div className="panel">

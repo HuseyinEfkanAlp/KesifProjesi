@@ -333,7 +333,7 @@ class ElementIn(ElementPatch):
 def add_element(drawing_id: int, body: ElementIn, session: Session = Depends(get_session)):
     """Parser'ın kaçırdığı elemanı elle ekle (ör. 6 adet S5 40/40 kolon)."""
     get_drawing(drawing_id, session)
-    if body.etype not in ALL_ELEMENT_TYPES:
+    if body.etype not in ALL_ELEMENT_TYPES and body.etype != "rebar":
         raise HTTPException(400, "Geçersiz eleman tipi")
     data = body.model_dump(exclude_unset=True, exclude_none=True)
     e = Element(drawing_id=drawing_id, source="MANUAL", manual=True, confidence=1.0, layer="(elle)", **data)
@@ -350,7 +350,7 @@ def update_element(element_id: int, body: ElementPatch, session: Session = Depen
     if not e:
         raise HTTPException(404, "Eleman bulunamadı")
     data = body.model_dump(exclude_unset=True)
-    if "etype" in data and data["etype"] not in ALL_ELEMENT_TYPES:
+    if "etype" in data and data["etype"] not in ALL_ELEMENT_TYPES and data["etype"] != "rebar":
         raise HTTPException(400, "Geçersiz eleman tipi")
     geometric = {"b", "h", "length", "thickness", "etype", "subtype"} & set(data)
     for k, v in data.items():

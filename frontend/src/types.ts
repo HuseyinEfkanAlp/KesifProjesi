@@ -1,7 +1,8 @@
-export type Discipline = 'structural' | 'architectural' | 'electrical' | 'standard'
+export type Discipline = 'structural' | 'architectural' | 'electrical' | 'standard' | 'rebar'
 
 export const DISCIPLINES: Record<Discipline, string> = {
   structural: 'Statik (kalıp planı)',
+  rebar: 'Donatı planı (demir metraj tablosu)',
   architectural: 'Mimari (sezgisel)',
   electrical: 'Elektrik (sezgisel)',
   standard: 'KSF standart çizim (tüm disiplinler)',
@@ -32,6 +33,7 @@ export const ETYPES_BY_DISCIPLINE: Record<Discipline, EType[]> = {
   architectural: ['wall', 'door', 'window'],
   electrical: ['tray', 'cable', 'conduit', 'fixture'],
   standard: [],   // KSF çiziminde tipler katman adından gelir (katalog kalem kodu)
+  rebar: [],      // donatı paftası: yalnız metraj tablosu okunur
 }
 
 /** Statik tipler (beton/kalıp/demir metrajı) */
@@ -40,7 +42,7 @@ export const STRUCTURAL_ETYPES = ETYPES_BY_DISCIPLINE.structural
 /** Katman eşlemede seçilebilen tipler: disiplinin elemanları (+ statikte döşeme boşluğu) */
 export function layerTypeLabels(discipline: Discipline): Record<string, string> {
   const out: Record<string, string> = {}
-  if (discipline === 'standard') return out
+  if (discipline === 'standard' || discipline === 'rebar') return out
   for (const t of ETYPES_BY_DISCIPLINE[discipline]) out[t] = ETYPE_LABELS[t]
   if (discipline === 'structural') out.hole = 'Döşeme boşluğu (şaft)'
   return out
@@ -68,6 +70,13 @@ export interface ProjectParams {
   cable_waste_pct: number
   tray_waste_pct: number
   work_hours_per_day: number
+  concrete_waste_pct: number
+  rebar_waste_pct: number
+  tie_wire_kg_per_t: number
+  plywood_sheet_m2: number
+  formwork_reuse: number
+  formwork_oil_l_per_m2: number
+  nails_kg_per_m2: number
 }
 
 export interface Project {
@@ -160,6 +169,7 @@ export interface Element {
   points: number[][]
   included: boolean
   manual: boolean
+  meta?: Record<string, unknown>
 }
 
 export interface QuantityGroup {
@@ -170,11 +180,36 @@ export interface QuantityGroup {
   concrete_m3: number
   formwork_m2: number
   rebar_kg: number
+  rebar_source: 'oran' | 'tablo'
+}
+
+export interface RebarDia {
+  dia_mm: number
+  weight_kg: number
+  length_m: number
+  targets: Record<string, number>
+}
+
+export interface DrawingSummary {
+  drawing: string
+  drawing_id: number | null
+  kot: string | null
+  groups: Record<string, { concrete_m3: number; formwork_m2: number; rebar_kg: number; count: number }>
+  concrete_m3: number
+  formwork_m2: number
+  rebar_kg: number
+  rebar_by_dia: Record<string, number>
+  rebar_table_kg?: number
+  rebar_target?: string
 }
 
 export interface QuantitySummary {
   groups: QuantityGroup[]
   totals: { concrete_m3: number; formwork_m2: number; rebar_kg: number }
+  rebar_by_dia: RebarDia[]
+  rebar_table_total_kg: number
+  rebar_ratio_total_kg: number
+  by_drawing: DrawingSummary[]
 }
 
 export interface QuantityLine {

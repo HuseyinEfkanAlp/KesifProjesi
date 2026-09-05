@@ -235,6 +235,18 @@ Bu projede önerilen oranlar: döşeme 75, radye 100, kolon 130, kiriş 110 kg/m
 | Döşeme | 1.254 | 3.319 | 22.225 |
 | **Toplam** | | **15.064** | **46.363** |
 
+## Demir: donatı paftası tabloları, kat bazında metraj, sarf kalemleri
+
+- **Donatı planı** disiplini: paftadaki poz tablosu (POZ / ÇAP / ADET / BOY / toplam boy / ağırlık; `parser/rebar_tables.py`)
+  okunur, her çap bir `rebar` elemanı olur (meta: kg, m, hedef eleman, kot). Hedef eleman plan adından: TEMEL → temel,
+  KOLON, KİRİŞ, PERDE; yazmıyorsa döşeme. Kot (`+7.95`) plan adından. Tablosu olan eleman tipinin demiri **tablodan**
+  (kaynak "tablo"), diğerleri beton × kg/m³ oranıyla ("oran") alınır; keşifte demir çap bazında (`demir:o12`) listelenir.
+- **Kat / pafta bazında** özet (`summary.by_drawing`, Excel "Kat Bazında"): her planın kolon / perde / kiriş / döşeme /
+  temel betonu, kalıbı, oranla demiri; donatı paftalarının çap bazında kg'ı ve kotu.
+- **Sarf ve fire** (proje parametreleri, `quantity/boq.py: structural_items`): beton fire %, demir fire/bindirme %,
+  bağ teli kg/ton, plywood levha adedi (kalıp m² / levha m² / kullanım sayısı), kalıp yağı L/m², çivi kg/m².
+  Hepsi keşif listesinde ayrı kalem; fiyatlanır ve süreye girer.
+
 ## Gerçek çizimlerle kalibrasyon
 
 Firmanın çizimleri geldiğinde:

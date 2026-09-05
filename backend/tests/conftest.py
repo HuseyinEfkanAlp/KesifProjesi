@@ -1,7 +1,7 @@
 import pytest
 
-from tests.fixtures.make_dxf import (make_arch_dxf, make_elec_dxf, make_foundation_dxf, make_network_dxf, make_standard_dxf,
-                                     make_storey_dxf, make_unitless_mm_dxf)
+from tests.fixtures.make_dxf import (make_arch_dxf, make_elec_dxf, make_foundation_dxf, make_network_dxf, make_rebar_table_dxf,
+                                     make_standard_dxf, make_storey_dxf, make_unitless_mm_dxf)
 
 
 @pytest.fixture(scope="session")
@@ -37,3 +37,8 @@ def elec_dxf(tmp_path_factory):
 @pytest.fixture(scope="session")
 def standard_dxf(tmp_path_factory):
     return make_standard_dxf(tmp_path_factory.mktemp("dxf") / "ksf.dxf")
+
+
+@pytest.fixture(scope="session")
+def rebar_dxf(tmp_path_factory):
+    return make_rebar_table_dxf(tmp_path_factory.mktemp("dxf") / "donati.dxf")

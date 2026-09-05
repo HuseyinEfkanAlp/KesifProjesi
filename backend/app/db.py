@@ -31,6 +31,7 @@ _ADDED_COLUMNS = [
     ("priceitem", "brand", "VARCHAR DEFAULT ''"),
     ("priceitem", "hours_per_unit", "FLOAT DEFAULT 0"),
     ("priceitem", "crew_size", "FLOAT DEFAULT 0"),
+    ("element", "meta", "JSON"),
 ]
 
 

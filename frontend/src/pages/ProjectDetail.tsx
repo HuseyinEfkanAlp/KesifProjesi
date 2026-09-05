@@ -9,6 +9,7 @@ interface PickState { checked: boolean; label: string; storey: number; height: s
 /** Disipline göre metraja girecek pafta başlığı: statikte kalıp planı, mimaride kat planı, elektrikte tava/aydınlatma/kuvvet planı. */
 const isPlanTitle = (title: string, discipline: Discipline) => {
   const t = title.toLocaleUpperCase('tr-TR')
+  if (discipline === 'rebar') return t.includes('DONATI') || t.includes('DONATİ') || t.includes('METRAJ')
   if (t.includes('DONATI') || t.includes('DETAY') || t.includes('KESİT') || t.includes('KESIT')) return false
   if (discipline === 'standard') return t.includes('PLAN')
   if (discipline === 'structural') return t.includes('KALIP')
@@ -17,7 +18,7 @@ const isPlanTitle = (title: string, discipline: Discipline) => {
 }
 /** Ana başlık yanlış yazılmış olabilir; paftadaki diğer başlıklara da bakılır. */
 const looksLikePlan = (s: SheetInfo, discipline: Discipline) => isPlanTitle(s.title, discipline) || (s.titles ?? []).some((t) => isPlanTitle(t, discipline))
-const PLAN_WORD: Record<Discipline, string> = { structural: 'kalıp planlarını', architectural: 'mimari kat planlarını', electrical: 'elektrik (tava / aydınlatma / kuvvet) planlarını', standard: 'KSF standardına göre çizilmiş planları' }
+const PLAN_WORD: Record<Discipline, string> = { structural: 'kalıp planlarını', architectural: 'mimari kat planlarını', electrical: 'elektrik (tava / aydınlatma / kuvvet) planlarını', standard: 'KSF standardına göre çizilmiş planları', rebar: 'donatı planlarını (metraj tablosu olan paftalar)' }
 
 const PARAM_FIELDS: Array<{ key: keyof ProjectParams; label: string; step: string; hint: string }> = [
   { key: 'wall_height', label: 'Duvar yüksekliği (m)', step: '0.05', hint: 'Boş: H − d' },
@@ -27,6 +28,15 @@ const PARAM_FIELDS: Array<{ key: keyof ProjectParams; label: string; step: strin
   { key: 'cable_waste_pct', label: 'Kablo fire (%)', step: '1', hint: '' },
   { key: 'tray_waste_pct', label: 'Tava fire (%)', step: '1', hint: '' },
   { key: 'work_hours_per_day', label: 'Günlük çalışma (saat)', step: '0.5', hint: 'Süre hesabı' },
+]
+const SARF_FIELDS: Array<{ key: keyof ProjectParams; label: string; step: string; hint: string }> = [
+  { key: 'concrete_waste_pct', label: 'Beton fire (%)', step: '0.5', hint: '' },
+  { key: 'rebar_waste_pct', label: 'Demir fire / bindirme (%)', step: '0.5', hint: '' },
+  { key: 'tie_wire_kg_per_t', label: 'Bağ teli (kg / ton demir)', step: '0.5', hint: 'yaygın 6–10' },
+  { key: 'plywood_sheet_m2', label: 'Plywood levha (m²)', step: '0.005', hint: '125×250 = 3.125' },
+  { key: 'formwork_reuse', label: 'Kalıp kullanım sayısı', step: '1', hint: 'levha kaç kez kullanılır' },
+  { key: 'formwork_oil_l_per_m2', label: 'Kalıp yağı (L / m²)', step: '0.01', hint: '' },
+  { key: 'nails_kg_per_m2', label: 'Çivi / aksesuar (kg / m²)', step: '0.01', hint: '' },
 ]
 
 export default function ProjectDetail() {
@@ -199,9 +209,9 @@ export default function ProjectDetail() {
           <p className="muted">
             DXF ya da doğrudan DWG yükleyin (DWG için sunucuda ODA File Converter kurulu olmalı; yoksa AutoCAD'de <b>Farklı Kaydet → DXF</b>).
             Bütün paftaların yan yana durduğu tek bir ruhsat projesi dosyası da yüklenebilir: paftalar otomatik bulunur, planları seçersiniz.
-            <b> Disiplin</b> çizimin ne olduğunu söyler. <b>KSF standart çizim</b>: katmanları <code className="layer">KSF-…</code> standardıyla
-            adlandırılmış her disiplinden plan (havalandırma, yangın, sıhhi, cephe, çatı, izolasyon, altyapı, peyzaj…); katman eşleme gerekmez.
-            Diğer üçü standart dışı eski çizimler için sezgisel tanımadır.
+            <b> Disiplin</b> çizimin ne olduğunu söyler. <b>Donatı planı</b>: paftadaki demir metraj tablosu (poz / çap / adet / boy / ağırlık) okunur,
+            demir çap bazında gerçek değerle çıkar; plan adında TEMEL / KOLON / KİRİŞ / PERDE yazıyorsa o elemanın demiri, yoksa döşeme sayılır, kot
+            (+7.95) plan adından alınır. <b>KSF standart çizim</b>: <code className="layer">KSF-…</code> katmanlı her disiplinden plan; katman eşleme gerekmez.
           </p>
           <form className="upload" onSubmit={upload}>
             <label className="field">Dosya (DXF / DWG)<input id="dxf-input" type="file" accept=".dxf,.dwg,.DXF,.DWG" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
@@ -235,6 +245,15 @@ export default function ProjectDetail() {
           <h3>Mimari / elektrik / süre parametreleri</h3>
           <div className="params-grid">
             {PARAM_FIELDS.map((f) => (
+              <label className="field" key={f.key} title={f.hint}>{f.label}
+                <input type="number" step={f.step} value={dparams[f.key] ?? ''} placeholder={f.hint}
+                  onChange={(e) => setDparams({ ...dparams, [f.key]: e.target.value })} />
+              </label>
+            ))}
+          </div>
+          <h3>Statik sarf ve fire (bağ teli, plywood, kalıp yağı, çivi)</h3>
+          <div className="params-grid">
+            {SARF_FIELDS.map((f) => (
               <label className="field" key={f.key} title={f.hint}>{f.label}
                 <input type="number" step={f.step} value={dparams[f.key] ?? ''} placeholder={f.hint}
                   onChange={(e) => setDparams({ ...dparams, [f.key]: e.target.value })} />

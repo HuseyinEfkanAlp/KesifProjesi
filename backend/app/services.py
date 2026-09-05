@@ -10,7 +10,9 @@ from .models import Drawing, Element, PriceItem, Project
 from .parser.analyzer import analyze_file
 from .parser.detectors.base import DetectParams
 from .db import DATA_DIR
-from .parser.layer_profile import DEFAULT_DISCIPLINE, STANDARD_DISCIPLINE, STRUCTURAL_TYPES, TYPE_DISCIPLINE, LayerProfile
+from .parser.layer_profile import (DEFAULT_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE, STRUCTURAL_TYPES, TYPE_DISCIPLINE,
+                                   LayerProfile)
+from .parser.rebar_tables import kot_from_label
 from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary, effective_params, electrical_items,
                            sort_items, standard_items, structural_items)
 from .standard.catalog import Catalog
@@ -48,7 +50,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     """Çizimi (yeniden) analiz eder; otomatik elemanları yeniler, elle eklenenleri korur."""
     result = analyze_file(drawing.stored_path, project_profile(project), detect_params(project),
                           unit_override=drawing.unit_override, discipline=drawing.discipline or DEFAULT_DISCIPLINE,
-                          catalog=load_catalog())
+                          catalog=load_catalog(), label=drawing.label or drawing.filename)
 
     for old in session.exec(select(Element).where(Element.drawing_id == drawing.id, Element.manual == False)):  # noqa: E712
         session.delete(old)
@@ -59,7 +61,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
             perimeter=det.perimeter, count=det.count, confidence=det.confidence, warnings=det.warnings,
             label_raw=det.label_raw, source=det.source, handle=det.handle,
             points=[[round(x, 4), round(y, 4)] for x, y in det.points],
-            included=det.confidence >= MIN_INCLUDED_CONFIDENCE,
+            included=det.confidence >= MIN_INCLUDED_CONFIDENCE, meta=det.meta or {},
         ))
     drawing.unit = result.unit
     drawing.unit_detected = result.unit_detected
@@ -114,12 +116,29 @@ def _included_elements(d: Drawing, session: Session) -> list[Element]:
     return session.exec(select(Element).where(Element.drawing_id == d.id, Element.included == True)).all()  # noqa: E712
 
 
+def rebar_table_rows(project: Project, session: Session) -> list[dict]:
+    """Donatı paftalarından okunan tablo satırları (çap bazında kg) — özet ve keşif için."""
+    rows: list[dict] = []
+    for d in session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.discipline == REBAR_DISCIPLINE)).all():
+        for e in _included_elements(d, session):
+            if e.etype != "rebar" or not e.meta:
+                continue
+            m = e.meta
+            rows.append({"drawing": d.label or d.filename, "drawing_id": d.id, "kot": m.get("kot") or kot_from_label(d.label),
+                         "target": m.get("target", "slab"), "dia_mm": m.get("dia_mm"), "weight_kg": m.get("weight_kg", 0.0),
+                         "length_m": m.get("length_m", 0.0)})
+    return rows
+
+
 def project_quantities(project: Project, session: Session) -> tuple[list[QuantityLine], dict, dict]:
-    """Statik metraj: (satırlar, özet, element_info) döndürür. Yalnızca statik eleman tipleri girer."""
+    """Statik metraj: (satırlar, özet, element_info) döndürür. Yalnızca statik eleman tipleri girer;
+    donatı paftalarındaki tablolar demiri çap bazında verir ve ilgili eleman tipinin oran tahminini geçersiz kılar."""
     drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
     lines: list[QuantityLine] = []
     info: dict = {}
     for d in drawings:
+        if d.discipline == REBAR_DISCIPLINE:
+            continue
         elements = [e for e in _included_elements(d, session) if e.etype in STRUCTURAL_TYPES]
         if not elements:
             continue
@@ -130,11 +149,11 @@ def project_quantities(project: Project, session: Session) -> tuple[list[Quantit
                                 rebar_ratios={**QuantityParams().rebar_ratios, **(project.rebar_ratios or {})})
         data = [ElementData.from_obj(e) for e in elements]
         for e in elements:
-            info[e.id] = {"drawing": d.label or d.filename, "drawing_id": d.id, "layer": e.layer, "b": e.b, "h": e.h,
-                          "thickness": e.thickness, "area": round(e.area, 4), "length": round(e.length, 4),
+            info[e.id] = {"drawing": d.label or d.filename, "drawing_id": d.id, "kot": kot_from_label(d.label), "layer": e.layer,
+                          "b": e.b, "h": e.h, "thickness": e.thickness, "area": round(e.area, 4), "length": round(e.length, 4),
                           "warnings": e.warnings}
         lines.extend(compute_all(data, params))
-    return lines, summarize(lines), info
+    return lines, summarize(lines, rebar_table_rows(project, session), info), info
 
 
 def project_boq(project: Project, session: Session, summary: dict | None = None) -> list[BoqItem]:
@@ -152,11 +171,13 @@ def project_boq(project: Project, session: Session, summary: dict | None = None)
         if d.discipline == STANDARD_DISCIPLINE:
             std.append(entry)
             continue
+        if d.discipline == REBAR_DISCIPLINE:
+            continue
         if any(TYPE_DISCIPLINE.get(e.etype) == "architectural" for e in elements):
             arch.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "architectural"]})
         if any(TYPE_DISCIPLINE.get(e.etype) == "electrical" for e in elements):
             elec.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "electrical"]})
-    items = structural_items(summary) + architectural_items(arch, params) + electrical_items(elec, params)
+    items = structural_items(summary, params) + architectural_items(arch, params) + electrical_items(elec, params)
     if std:
         items += standard_items(std, params, load_catalog())
     return sort_items(items)

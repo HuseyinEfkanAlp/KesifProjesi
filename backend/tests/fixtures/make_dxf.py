@@ -296,3 +296,37 @@ def make_standard_dxf(path: str | Path) -> Path:
     path = Path(path)
     doc.saveas(path)
     return path
+
+
+def make_rebar_table_dxf(path: str | Path, kot: str = "+7.95") -> Path:
+    """Donatı paftası metraj tablosu (cm). Poz satırları + çap bazında TOPLAM BOY / AĞIRLIK satırları.
+    Beklenen: Ø10 1212 m -> 747.8 kg (0.617), Ø12 762 m -> 676.7 kg (0.888), Ø16 ağırlık satırı '---' -> 0.
+    İkinci küçük tablo: Ø14 100 m -> 120.8 kg."""
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 5
+    for n in ("VM-METRAJ", "YAZI"):
+        doc.layers.add(n)
+    msp = doc.modelspace()
+    def T(x, y, t, h=6):
+        msp.add_text(t, dxfattribs={"layer": "VM-METRAJ", "height": h}).set_placement((x, y))
+    y = 1000
+    T(0, y, "POZ"); T(100, y, "ÇAP"); T(200, y, "ADET"); T(300, y, "BOY"); T(500, y, "DEMIR UZUNLUGU (m)")
+    T(500, y - 30, "ƒ10"); T(620, y - 30, "Ø12"); T(740, y - 30, "Ø16")
+    rows = [("01", "12", "254", "300", 620, "762.00"), ("02", "10", "101", "1200", 500, "1212.00")]
+    for i, (poz, cap, adet, boy, xcol, L) in enumerate(rows):
+        yy = y - 80 - i * 40
+        T(0, yy, poz); T(100, yy, cap); T(200, yy, adet); T(300, yy, boy); T(xcol, yy, L)
+    y2 = y - 200
+    T(-20, y2, "TOPLAM BOY / TOTAL LENGTH (m)"); T(500, y2, "1212.00"); T(620, y2, "762.00"); T(740, y2, "---")
+    T(-20, y2 - 40, "BIRIM AGIRLIK / UNIT WEIGTH (kg/m)"); T(500, y2 - 40, "0.617"); T(620, y2 - 40, "0.888"); T(740, y2 - 40, "1.578")
+    T(-20, y2 - 80, "AGIRLIK / WEIGTH (kg)"); T(500, y2 - 80, "747.80"); T(620, y2 - 80, "676.66"); T(740, y2 - 80, "0.00")
+    T(-20, y2 - 120, "TOPLAM AGIRLIK / TOTAL WEIGTH (kg)"); T(620, y2 - 120, "1424.46")
+    T(-20, y2 - 160, "GENEL TOPLAM / GENERAL WEIGTH (kg)"); T(620, y2 - 160, "1424.46")
+    # ikinci tablo (ağırlık satırı yok -> boydan hesaplanır)
+    T(1500, 1000 - 30, "Ø14")
+    T(1400, 800, "03"); T(1450, 800, "14"); T(1470, 800, "10"); T(1490, 800, "1000"); T(1500, 800, "100.00")
+    T(1380, 700, "TOPLAM BOY (m)"); T(1500, 700, "100.00")
+    msp.add_text(f"{kot} KOTU DÖŞEME DONATI PLANI", dxfattribs={"layer": "YAZI", "height": 20}).set_placement((0, 1200))
+    path = Path(path)
+    doc.saveas(path)
+    return path

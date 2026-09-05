@@ -87,7 +87,11 @@ def test_full_flow(client, storey_dxf, foundation_dxf):
                                                        {"key": "demir:*", "unit_price": 28}])
     assert r.status_code == 200
     cost = client.get(f"/api/projects/{pid}/cost").json()["cost"]
-    assert cost["grand_total"] > 0 and cost["missing_prices"] == []
+    assert cost["grand_total"] > 0
+    # beton/kalıp/demir fiyatlandı; yalnız sarf kalemleri (bağ teli, plywood, yağ, çivi) fiyatsız kalabilir
+    assert all(k.split(":")[0] in {"bag_teli", "plywood", "kalip_yagi", "civi"} for k in cost["missing_prices"]), cost["missing_prices"]
+    keys = {l["key"] for l in cost["lines"]}
+    assert {"beton:fire", "demir:fire", "bag_teli:*", "plywood:*"} <= keys
 
     r = client.get(f"/api/projects/{pid}/cost.xlsx")
     assert r.status_code == 200 and r.content[:2] == b"PK"
