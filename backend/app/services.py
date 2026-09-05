@@ -10,8 +10,8 @@ from .models import Drawing, Element, PriceItem, Project
 from .parser.analyzer import analyze_file
 from .parser.detectors.base import DetectParams
 from .db import DATA_DIR
-from .parser.layer_profile import (DEFAULT_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE, STRUCTURAL_TYPES, TYPE_DISCIPLINE,
-                                   LayerProfile)
+from .parser.layer_profile import (DEFAULT_DISCIPLINE, MAPPED_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE, STRUCTURAL_TYPES,
+                                   TYPE_DISCIPLINE, LayerProfile)
 from .parser.rebar_tables import kot_from_label
 from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary, effective_params, electrical_items,
                            sort_items, standard_items, structural_items)
@@ -137,7 +137,7 @@ def project_quantities(project: Project, session: Session) -> tuple[list[Quantit
     lines: list[QuantityLine] = []
     info: dict = {}
     for d in drawings:
-        if d.discipline == REBAR_DISCIPLINE:
+        if d.discipline in (REBAR_DISCIPLINE, MAPPED_DISCIPLINE, STANDARD_DISCIPLINE):
             continue
         elements = [e for e in _included_elements(d, session) if e.etype in STRUCTURAL_TYPES]
         if not elements:
@@ -168,7 +168,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None)
         entry = {"label": d.label or d.filename, "storey_count": d.storey_count,
                  "storey_height": d.storey_height or project.storey_height, "slab_thickness": project.slab_thickness,
                  "elements": elements}
-        if d.discipline == STANDARD_DISCIPLINE:
+        if d.discipline in (STANDARD_DISCIPLINE, MAPPED_DISCIPLINE):
             std.append(entry)
             continue
         if d.discipline == REBAR_DISCIPLINE:

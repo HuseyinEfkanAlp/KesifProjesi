@@ -80,3 +80,32 @@ def test_template_dxf(tmp_path):
     names = {l.dxf.name for l in doc.layers}
     assert "KSF-HAV-HAVA_KANAL-600x400" in names and "KSF-YAN-SPRINKLER-K80_UST" in names
     assert len(names) > 100
+
+
+def test_mapped_discipline_facade(facade_dxf):
+    """Ofis katmanları -> katalog kalemi eşlemesi: tarama m², kapalı polyline m², çizgi m, blok adet; öneriler."""
+    from app.parser.layer_profile import LayerProfile
+    from app.parser.detectors.standard import suggest_item
+    cat = Catalog()
+    assert suggest_item("brn_hatch_gazbeton", cat) == "DUVAR_YTONG" and suggest_item("brn_glass", cat) == "CAM"
+    assert suggest_item("dc mantolama01", cat) == "MANTOLAMA" and suggest_item("brn_dim", cat) is None
+    r0 = analyze_file(str(facade_dxf), discipline="mapped", catalog=cat)
+    assert not r0.elements and any("Öneri" in w and "brn_hatch_gazbeton → DUVAR_YTONG" in w for w in r0.warnings)
+    prof = (LayerProfile().with_layer("item:DUVAR_YTONG:area", "brn_hatch_gazbeton").with_layer("item:CAM", "brn_glass")
+            .with_layer("item:KOREKUYU:length", "Söve").with_layer("item:CEPHE_TASI:count", "Kartonpiyer"))
+    r = analyze_file(str(facade_dxf), profile=prof, discipline="mapped", catalog=cat)
+    by = {}
+    for e in r.elements:
+        by.setdefault(e.etype, []).append(e)
+    assert sum(e.area for e in by["duvar_ytong"]) == pytest.approx(48.0)
+    assert sum(e.area for e in by["cam"]) == pytest.approx(9.0) and len(by["cam"]) == 3
+    assert sum(e.length for e in by["korekuyu"]) == pytest.approx(8.0)
+    assert len(by["cephe_tasi"]) == 5 and all(e.meta["ksf_code"] == "CEPHE_TASI" for e in by["cephe_tasi"])
+    layer = next(l for l in r.layers if l.name == "brn_hatch_gazbeton")
+    assert layer.mapped_code == "DUVAR_YTONG" and layer.mapped_measure == "area" and "m²" in layer.to_dict()["etype_label"]
+    items = standard_items([{"label": "Ön cephe", "storey_count": 1, "elements": r.elements}], effective_params({}), cat)
+    by_key = {i.key: i for i in items}
+    assert by_key["duvar_ytong:*"].quantity == pytest.approx(48.0) and by_key["duvar_ytong:*"].unit == "m²"
+    assert by_key["duvar_ytong:*"].discipline == "ksf:MIM"
+    assert by_key["cam:*"].quantity == pytest.approx(9.0) and by_key["korekuyu:*"].quantity == pytest.approx(8.0)
+    assert by_key["cephe_tasi:*"].quantity == 5

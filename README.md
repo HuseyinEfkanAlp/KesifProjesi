@@ -113,6 +113,15 @@ Tarayıcı: http://127.0.0.1:5173  (API dokümantasyonu: http://127.0.0.1:8000/d
 - Keşif anahtarı `<kalem_kodu>:<özellik>` (`hava_kanal:600x400`, `sprinkler:k80_ust`); fiyat / işçilik / süre mekanizması aynıdır.
 - Katalog: varsayılan kodda (`DEFAULT_ITEMS`), kullanıcı değişiklikleri `DATA_DIR/catalog.json`; API `/api/catalog`, şablon `/api/catalog/template.dxf`.
 
+### Katman eşlemeli çizim (`mapped` disiplini): cephe, çatı, peyzaj, standart dışı her pafta
+
+KSF adlandırması olmayan bir çizimde (ör. ofisin kendi katmanlarıyla çizilmiş cephe görünüşü) kullanıcı **her katmanı bir
+katalog kalemine ve ölçüm kuralına** eşler: `brn_hatch_gazbeton → Ytong duvar, alan (m²)`, `Söve → korkuluk/söve, uzunluk (m)`,
+`Kartonpiyer → adet`. Program katman adından öneri üretir (`detectors/standard.py: SUGGEST_RULES`), kullanıcı tek tıkla onaylar.
+Eşleme projeye kaydedilir (`layer_profile` içinde `item:<KOD>[:<ölçüm>]`), aynı ofisin sonraki çizimlerinde otomatik uygulanır.
+Pafta kırpma bu amaçla **tarama (HATCH) sınırlarını** kapalı çokgen olarak ve **blok içeriğini** de yazar (500 MB'a kadar).
+Cephe görünüşünde malzeme taramalarının alanı = cephe m² (sıva, boya, mantolama, kaplama, cam); söve / silme / küpeşte m; kartonpiyer adet.
+
 ### Mimari parser (sezgisel)
 
 - **Duvar** (`detectors/walls.py`): duvar katmanındaki paralel çizgi çiftleri (aralık = kalınlık; kapı boşluklarında kesilen parçalar

@@ -143,7 +143,19 @@ def map_layer(project_id: int, body: LayerMap, session: Session = Depends(get_se
     """Tek bir katmanı bir eleman tipine atar (ya da atamayı kaldırır) ve tüm çizimleri yeniden analiz eder."""
     p = get_project(project_id, session)
     if body.etype is not None and body.etype not in ALL_TYPES:
-        raise HTTPException(400, f"Geçersiz eleman tipi: {body.etype}")
+        if body.etype.startswith("item:"):
+            from ..services import load_catalog
+            from ..standard.catalog import MEASURES, normalize_code
+            parts = body.etype.split(":")
+            code = normalize_code(parts[1]) if len(parts) > 1 else ""
+            measure = parts[2] if len(parts) > 2 and parts[2] else ""
+            if not load_catalog().get(code):
+                raise HTTPException(400, f"Katalogda olmayan kalem: {code}")
+            if measure and measure not in MEASURES:
+                raise HTTPException(400, f"Geçersiz ölçüm kuralı: {measure}")
+            body.etype = f"item:{code}" + (f":{measure}" if measure else "")
+        else:
+            raise HTTPException(400, f"Geçersiz eleman tipi: {body.etype}")
     p.layer_profile = LayerProfile(p.layer_profile or None).with_layer(body.etype, body.layer).to_dict()
     session.add(p)
     session.commit()

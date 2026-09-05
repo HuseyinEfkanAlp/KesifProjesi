@@ -288,10 +288,16 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
         wall_h_default = params.get("wall_height") or max((d.get("storey_height") or 3.0) - (d.get("slab_thickness") or 0.0), 0.0)
         for e in d["elements"]:
             p = parse_layer(_g(e, "layer") or "", catalog)
+            meta = _g(e, "meta") or {}
+            if p is None and meta.get("ksf_code"):
+                # katman eşlemeli çizim: kalem kodu ve ölçüm kuralı elemanın meta bilgisinde
+                item = catalog.get(meta["ksf_code"])
+                from ..standard.catalog import ParsedLayer
+                p = ParsedLayer(item.discipline if item else str(meta.get("discipline") or "???"), meta["ksf_code"], meta.get("spec"), item, _g(e, "layer") or "")
             if p is None:
                 continue
             item = p.item
-            measure = item.measure if item else None
+            measure = meta.get("measure") or (item.measure if item else None)
             spec = _g(e, "subtype") or p.spec
             n = _g(e, "count") or 1
             length = _g(e, "length") or 0.0

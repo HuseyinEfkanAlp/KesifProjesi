@@ -10,6 +10,7 @@ interface PickState { checked: boolean; label: string; storey: number; height: s
 const isPlanTitle = (title: string, discipline: Discipline) => {
   const t = title.toLocaleUpperCase('tr-TR')
   if (discipline === 'rebar') return t.includes('DONATI') || t.includes('DONATİ') || t.includes('METRAJ')
+  if (discipline === 'mapped') return ['GÖRÜNÜŞ', 'GORUNUS', 'CEPHE', 'PLAN', 'ÇATI', 'CATI', 'PEYZAJ', 'VAZİYET'].some((k) => t.includes(k))
   if (t.includes('DONATI') || t.includes('DETAY') || t.includes('KESİT') || t.includes('KESIT')) return false
   if (discipline === 'standard') return t.includes('PLAN')
   if (discipline === 'structural') return t.includes('KALIP')
@@ -18,7 +19,7 @@ const isPlanTitle = (title: string, discipline: Discipline) => {
 }
 /** Ana başlık yanlış yazılmış olabilir; paftadaki diğer başlıklara da bakılır. */
 const looksLikePlan = (s: SheetInfo, discipline: Discipline) => isPlanTitle(s.title, discipline) || (s.titles ?? []).some((t) => isPlanTitle(t, discipline))
-const PLAN_WORD: Record<Discipline, string> = { structural: 'kalıp planlarını', architectural: 'mimari kat planlarını', electrical: 'elektrik (tava / aydınlatma / kuvvet) planlarını', standard: 'KSF standardına göre çizilmiş planları', rebar: 'donatı planlarını (metraj tablosu olan paftalar)' }
+const PLAN_WORD: Record<Discipline, string> = { structural: 'kalıp planlarını', architectural: 'mimari kat planlarını', electrical: 'elektrik (tava / aydınlatma / kuvvet) planlarını', standard: 'KSF standardına göre çizilmiş planları', rebar: 'donatı planlarını (metraj tablosu olan paftalar)', mapped: 'ölçülecek paftaları (görünüş, cephe, çatı, peyzaj…)' }
 
 const PARAM_FIELDS: Array<{ key: keyof ProjectParams; label: string; step: string; hint: string }> = [
   { key: 'wall_height', label: 'Duvar yüksekliği (m)', step: '0.05', hint: 'Boş: H − d' },

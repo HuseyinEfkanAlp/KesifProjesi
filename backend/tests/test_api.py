@@ -264,3 +264,25 @@ def test_dwg_upload_when_converter_available(client, storey_dxf, tmp_path):
     assert r.status_code == 201, r.text
     d = r.json()
     assert d["filename"].endswith(".dxf") and d["element_count"] == 8 and d["unit"] == "cm"
+
+
+def test_mapped_flow_api(client, facade_dxf):
+    pid = client.post("/api/projects", json={"name": "Cephe"}).json()["id"]
+    with open(facade_dxf, "rb") as f:
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("cephe.dxf", f, "application/dxf")},
+                        data={"label": "Ön cephe", "discipline": "mapped"})
+    assert r.status_code == 201, r.text
+    d = r.json()
+    assert d["element_count"] == 0
+    layers = {l["name"]: l for l in d["layers"]}
+    assert layers["brn_hatch_gazbeton"]["suggested"] == "DUVAR_YTONG"
+    assert client.post(f"/api/projects/{pid}/layer-profile/map", json={"layer": "brn_hatch_gazbeton", "etype": "item:duvar ytong:area"}).status_code == 200
+    assert client.post(f"/api/projects/{pid}/layer-profile/map", json={"layer": "brn_glass", "etype": "item:CAM"}).status_code == 200
+    assert client.post(f"/api/projects/{pid}/layer-profile/map", json={"layer": "x", "etype": "item:YOK_BOYLE"}).status_code == 400
+    assert client.post(f"/api/projects/{pid}/layer-profile/map", json={"layer": "x", "etype": "item:CAM:kilo"}).status_code == 400
+    d = client.get(f"/api/drawings/{d['id']}").json()
+    assert d["element_count"] == 5
+    q = client.get(f"/api/projects/{pid}/quantities").json()
+    by = {i["key"]: i for i in q["boq"]["items"]}
+    assert by["duvar_ytong:*"]["quantity"] == pytest.approx(48.0) and by["cam:*"]["quantity"] == pytest.approx(9.0)
+    assert by["duvar_ytong:*"]["discipline_label"] == "Mimari"

@@ -18,10 +18,11 @@ from .detectors.foundations import detect_foundations
 from .detectors.openings import detect_openings
 from .detectors.shear_walls import detect_shear_walls
 from .detectors.slabs import detect_slabs
-from .detectors.standard import detect_standard, standard_layers
+from .detectors.standard import detect_mapped, detect_standard, standard_layers
 from .detectors.walls import detect_walls
 from .geometry import polygon_area
-from .layer_profile import ALL_TYPES, DEFAULT_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE, LayerProfile, types_for
+from .layer_profile import (ALL_TYPES, DEFAULT_DISCIPLINE, MAPPED_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE, LayerProfile,
+                            types_for)
 from .rebar_tables import kot_from_label, parse_rebar_labels, parse_rebar_tables, target_from_label
 from .loader import UNIT_SCALE, Drawing, load_dxf
 from ..standard.catalog import Catalog
@@ -34,10 +35,14 @@ class LayerInfo:
     etype: str | None
 
     etype_label: str | None = None
+    suggested: str | None = None          # eşlemeli çizim: katman adından önerilen katalog kalemi
+    mapped_code: str | None = None
+    mapped_measure: str | None = None
 
     def to_dict(self) -> dict:
         return {"name": self.name, "count": self.count, "etype": self.etype,
-                "etype_label": self.etype_label or ALL_TYPES.get(self.etype or "", None)}
+                "etype_label": self.etype_label or ALL_TYPES.get(self.etype or "", None),
+                "suggested": self.suggested, "mapped_code": self.mapped_code, "mapped_measure": self.mapped_measure}
 
 
 @dataclass
@@ -202,6 +207,24 @@ def analyze_rebar(drawing: Drawing, label: str = "") -> AnalysisResult:
     return result
 
 
+def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, params: DetectParams) -> AnalysisResult:
+    """Katman eşlemeli çizim (cephe görünüşü, çatı, peyzaj…): katman -> katalog kalemi + ölçüm kuralı."""
+    counts = drawing.layer_counts()
+    elements, warns, info = detect_mapped(drawing, profile, catalog, params)
+    infos = []
+    for name in drawing.layers:
+        i = info.get(name, {})
+        infos.append(LayerInfo(name, counts.get(name, 0), (i.get("code") or "").lower() or None, etype_label=i.get("label"),
+                               suggested=i.get("suggested"), mapped_code=i.get("code"), mapped_measure=i.get("measure")))
+    result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
+                            discipline=MAPPED_DISCIPLINE, layers=infos, warnings=list(drawing.warnings) + warns)
+    result.elements = elements
+    sugg = [f"{l.name} → {l.suggested}" for l in infos if l.suggested and not l.mapped_code and l.count > 0]
+    if sugg:
+        result.warnings.append("Öneri (onaylamak için katmanı eşleyin): " + "; ".join(sugg[:12]) + (" …" if len(sugg) > 12 else ""))
+    return result
+
+
 def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
                     params: DetectParams | None = None, discipline: str = DEFAULT_DISCIPLINE,
                     catalog: Catalog | None = None, label: str = "") -> AnalysisResult:
@@ -209,6 +232,8 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
     params = params or DetectParams()
     if discipline == STANDARD_DISCIPLINE:
         return analyze_standard(drawing, catalog or Catalog(), params)
+    if discipline == MAPPED_DISCIPLINE:
+        return analyze_mapped(drawing, profile, catalog or Catalog(), params)
     if discipline == REBAR_DISCIPLINE:
         return analyze_rebar(drawing, label)
     discipline = discipline if discipline in DISCIPLINE_RUNNERS else DEFAULT_DISCIPLINE

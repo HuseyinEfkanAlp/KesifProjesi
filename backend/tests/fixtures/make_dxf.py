@@ -371,3 +371,31 @@ def make_beam_detail_dxf(path: str | Path) -> Path:
     path = Path(path)
     doc.saveas(path)
     return path
+
+
+def make_facade_dxf(path: str | Path) -> Path:
+    """Cephe görünüşü (cm), ofis katman adlarıyla (KSF değil). Beklenen (eşleme sonrası):
+    brn_hatch_gazbeton: 2 tarama 10x3 m + 6x3 m = 48 m² ; brn_glass: kapalı polyline 2x1.5 m x 3 = 9 m² ;
+    Söve: çizgiler 4 x 2 m = 8 m ; Kartonpiyer: 5 blok -> 5 adet ; brn_dim: ölçü (eşlenmez)."""
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 5
+    for n in ("brn_hatch_gazbeton", "brn_glass", "Söve", "Kartonpiyer", "brn_dim", "TABLO"):
+        doc.layers.add(n)
+    msp = doc.modelspace()
+    msp.add_lwpolyline(_rect(-100, -100, 3000, 1500), close=True, dxfattribs={"layer": "TABLO"})
+    for x, w in ((0, 1000), (1200, 600)):
+        h = msp.add_hatch(dxfattribs={"layer": "brn_hatch_gazbeton"})
+        h.paths.add_polyline_path(_rect(x, 0, w, 300), is_closed=True)
+    for x in (100, 400, 700):
+        msp.add_lwpolyline(_rect(x, 50, 200, 150), close=True, dxfattribs={"layer": "brn_glass"})
+    for x in (100, 400, 700, 1300):
+        msp.add_line((x, 250), (x + 200, 250), dxfattribs={"layer": "Söve"})
+    k = doc.blocks.new("KARTONPIYER")
+    k.add_lwpolyline([(0, 0), (30, 0), (30, 10), (0, 10)], close=True)
+    for x in range(5):
+        msp.add_blockref("KARTONPIYER", (x * 300, 320), dxfattribs={"layer": "Kartonpiyer"})
+    msp.add_line((0, -50), (1000, -50), dxfattribs={"layer": "brn_dim"})
+    msp.add_text("ÖN GÖRÜNÜŞ", dxfattribs={"layer": "TABLO", "height": 30}).set_placement((0, 1300))
+    path = Path(path)
+    doc.saveas(path)
+    return path

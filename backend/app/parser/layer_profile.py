@@ -18,9 +18,11 @@ DISCIPLINES: dict[str, str] = {
     "electrical": "Elektrik (sezgisel)",
     "standard": "KSF standart çizim (tüm disiplinler)",
     "rebar": "Donatı planı (demir metraj tablosu)",
+    "mapped": "Katman eşlemeli (cephe / çatı / peyzaj / diğer)",
 }
 STANDARD_DISCIPLINE = "standard"
 REBAR_DISCIPLINE = "rebar"
+MAPPED_DISCIPLINE = "mapped"
 DEFAULT_DISCIPLINE = "structural"
 
 # Eleman tipleri (metraja giren)
@@ -58,7 +60,7 @@ ALL_TYPES = {**ALL_ELEMENT_TYPES, **AUX_TYPES}
 
 def types_for(discipline: str) -> dict[str, str]:
     """Katman eşlemede seçilebilen tipler: disiplinin elemanları (+ statikte döşeme boşluğu). Standart çizimde eşleme yok."""
-    if discipline in (STANDARD_DISCIPLINE, REBAR_DISCIPLINE):
+    if discipline in (STANDARD_DISCIPLINE, REBAR_DISCIPLINE, MAPPED_DISCIPLINE):
         return {}
     base = dict(TYPES_BY_DISCIPLINE.get(discipline, STRUCTURAL_TYPES))
     if discipline == "structural":
@@ -187,3 +189,17 @@ class LayerProfile:
         else:
             raw["ignore"].append(exact)
         return LayerProfile(raw)
+
+
+def mapped_item(profile: "LayerProfile", layer: str) -> tuple[str, str | None] | None:
+    """Katman eşlemeli çizim: kullanıcı katmanı bir katalog kalemine atamışsa (anahtar 'item:<KOD>' ya da
+    'item:<KOD>:<ölçüm>') (kod, ölçüm) döndürür."""
+    name = _upper(layer)
+    for key, pats in profile.raw.items():
+        if not key.startswith("item:"):
+            continue
+        for pat in profile._compiled.get(key, []):
+            if pat.search(name):
+                parts = key.split(":")
+                return parts[1], (parts[2] if len(parts) > 2 and parts[2] else None)
+    return None

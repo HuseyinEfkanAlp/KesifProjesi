@@ -562,7 +562,7 @@ def crop_sheet(src: str | Path, bbox: Bbox, dest: str | Path, margin_ratio: floa
     return crop_sheets(src, [(bbox, dest)], margin_ratio)[0]
 
 
-BLOCK_PASS_MAX_BYTES = 250 * 1024 * 1024   # blok içeriği için ezdxf ile ikinci geçiş yapılacak en büyük dosya
+BLOCK_PASS_MAX_BYTES = 500 * 1024 * 1024   # blok / tarama içeriği için ezdxf ile ikinci geçiş yapılacak en büyük dosya
 
 
 def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_ratio: float = 0.02,
@@ -583,10 +583,12 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
                 insunits = int(ent.get("insunits", 0) or 0)
                 continue
             layer = ent.get("8", "0")
-            if t == "INSERT":
+            if t in ("INSERT", "HATCH"):
                 xs, ys = ent.get("xs") or [], ent.get("ys") or []
                 if xs and ys and any(g.inside(xs, ys) for g in tg):
                     inserts_hit += 1
+                elif t == "HATCH":
+                    inserts_hit += 1          # tarama sınır noktaları akışta okunmaz; ezdxf geçişinde kontrol edilir
                 continue
             if t == "POLYLINE":
                 poly = {"layer": layer, "closed": bool(ent.get("70", 0) & 1), "pts": []}
@@ -632,12 +634,25 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
 
 
 def _add_block_contents(src: str | Path, tg: list["_Target"]) -> None:
-    """Hedef paftalara düşen INSERT'lerin içeriğini (patlatılmış) yazar: yazı, çizgi, polyline, daire, yay."""
+    """Hedef paftalara düşen taramaları (sınır çokgeni) ve INSERT içeriğini (patlatılmış) yazar."""
     import ezdxf
     from ezdxf import path as ezpath
 
     doc = ezdxf.readfile(str(src))
     msp = doc.modelspace()
+    # taramalar (HATCH): sınır yolları kapalı polyline olarak yazılır (cephe / mimari alan ölçümü)
+    for h in msp.query("HATCH"):
+        try:
+            for pth in ezpath.from_hatch(h):
+                pts = [(v.x, v.y) for v in pth.flattening(0.5)]
+                if len(pts) < 3:
+                    continue
+                xs = [q[0] for q in pts]; ys = [q[1] for q in pts]
+                for g in tg:
+                    if g.inside(xs, ys):
+                        g.msp.add_lwpolyline(pts, close=True, dxfattribs={"layer": h.dxf.layer}); g.layers.add(h.dxf.layer); g.written += 1
+        except Exception:
+            continue
     for ins in msp.query("INSERT"):
         try:
             subs = list(ins.virtual_entities())

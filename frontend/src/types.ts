@@ -1,4 +1,4 @@
-export type Discipline = 'structural' | 'architectural' | 'electrical' | 'standard' | 'rebar'
+export type Discipline = 'structural' | 'architectural' | 'electrical' | 'standard' | 'rebar' | 'mapped'
 
 export const DISCIPLINES: Record<Discipline, string> = {
   structural: 'Statik (kalıp planı)',
@@ -6,6 +6,7 @@ export const DISCIPLINES: Record<Discipline, string> = {
   architectural: 'Mimari (sezgisel)',
   electrical: 'Elektrik (sezgisel)',
   standard: 'KSF standart çizim (tüm disiplinler)',
+  mapped: 'Katman eşlemeli (cephe / çatı / peyzaj / diğer)',
 }
 
 export type EType =
@@ -34,6 +35,7 @@ export const ETYPES_BY_DISCIPLINE: Record<Discipline, EType[]> = {
   electrical: ['tray', 'cable', 'conduit', 'fixture'],
   standard: [],   // KSF çiziminde tipler katman adından gelir (katalog kalem kodu)
   rebar: [],      // donatı paftası: yalnız metraj tablosu okunur
+  mapped: [],     // katman -> katalog kalemi eşlemesi
 }
 
 /** Statik tipler (beton/kalıp/demir metrajı) */
@@ -42,7 +44,7 @@ export const STRUCTURAL_ETYPES = ETYPES_BY_DISCIPLINE.structural
 /** Katman eşlemede seçilebilen tipler: disiplinin elemanları (+ statikte döşeme boşluğu) */
 export function layerTypeLabels(discipline: Discipline): Record<string, string> {
   const out: Record<string, string> = {}
-  if (discipline === 'standard' || discipline === 'rebar') return out
+  if (discipline === 'standard' || discipline === 'rebar' || discipline === 'mapped') return out
   for (const t of ETYPES_BY_DISCIPLINE[discipline]) out[t] = ETYPE_LABELS[t]
   if (discipline === 'structural') out.hole = 'Döşeme boşluğu (şaft)'
   return out
@@ -97,6 +99,9 @@ export interface LayerInfo {
   count: number
   etype: string | null
   etype_label: string | null
+  suggested?: string | null
+  mapped_code?: string | null
+  mapped_measure?: string | null
 }
 
 export interface Drawing {

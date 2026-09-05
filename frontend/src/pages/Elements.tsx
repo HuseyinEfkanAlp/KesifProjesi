@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
-import { DISCIPLINES, ETYPE_COLORS, ETYPE_LABELS, ETYPES_BY_DISCIPLINE, SUBTYPE_LABELS, layerTypeLabels, type Drawing, type Element, type EType } from '../types'
+import { DISCIPLINES, ETYPE_COLORS, ETYPE_LABELS, ETYPES_BY_DISCIPLINE, SUBTYPE_LABELS, layerTypeLabels, type Catalog, type Drawing, type Element, type EType } from '../types'
 
 /** Tipe göre düzenlenebilir sayısal alanlar */
 const FIELDS: Record<EType, Array<'b' | 'h' | 'thickness' | 'length' | 'area'>> = {
@@ -26,12 +26,15 @@ export default function Elements() {
   const [filter, setFilter] = useState<EType | ''>('')
   const svgRef = useRef<HTMLDivElement>(null)
   const [manual, setManual] = useState({ etype: '' as EType | '', name: '', subtype: '', b: 0.3, h: 0.6, length: 0, thickness: 0, area: 0, count: 1 })
+  const [catalog, setCatalog] = useState<Catalog | null>(null)
+  const [measureSel, setMeasureSel] = useState<Record<string, string>>({})
 
   const load = useCallback(async () => {
     try {
       const [d, els, s] = await Promise.all([Api.drawings.get(drawingId), Api.drawings.elements(drawingId), Api.drawings.previewSvg(drawingId)])
       setDrawing(d); setElements(els); setSvg(s)
       setManual((m) => (m.etype ? m : { ...m, etype: ETYPES_BY_DISCIPLINE[d.discipline][0] ?? '' }))
+      if (d.discipline === 'mapped') Api.catalog.get().then(setCatalog).catch(() => {})
     } catch (e) { setError((e as Error).message) }
   }, [drawingId])
   useEffect(() => { load() }, [load])
@@ -95,10 +98,13 @@ export default function Elements() {
 
   if (!drawing) return <p className="muted">{error || 'Yükleniyor...'}</p>
   const discipline = drawing.discipline
-  const isStd = discipline === 'standard'
-  // KSF çiziminde tipler katalog kalem kodlarıdır; etiketleri katman bilgisinden alınır
+  const isMapped = discipline === 'mapped'
+  const isStd = discipline === 'standard' || isMapped
+  // KSF / eşlemeli çizimde tipler katalog kalem kodlarıdır; etiketleri katman bilgisinden alınır
   const stdLabels: Record<string, string> = {}
   if (isStd) for (const l of drawing.layers) if (l.etype && l.etype_label) stdLabels[l.etype] = l.etype_label.split(' · ')[0].replace(/ \[.*\]$/, '')
+  const mapItem = (layer: string, code: string, measure: string) => run(() => Api.projects.mapLayer(pid, layer, code ? `item:${code}${measure ? ':' + measure : ''}` : null))
+  const itemName = (code: string) => catalog?.items.find((i) => i.code === code)?.name ?? code
   const ETYPES: string[] = isStd ? Array.from(new Set(elements.map((e) => e.etype))) : ETYPES_BY_DISCIPLINE[discipline]
   const labelOf = (t: string) => (ETYPE_LABELS as Record<string, string>)[t] ?? stdLabels[t] ?? t
   const colorOf = (t: string) => (ETYPE_COLORS as Record<string, string>)[t] ?? '#555'
@@ -133,8 +139,11 @@ export default function Elements() {
           <div className="svg-wrap" ref={svgRef} dangerouslySetInnerHTML={{ __html: svg }} />
         </div>
         <div className="panel">
-          <h3>{isStd ? 'Katmanlar (KSF standardı)' : 'Katman eşleme'}</h3>
-          {isStd ? (
+          <h3>{isMapped ? 'Katman → katalog kalemi eşleme' : isStd ? 'Katmanlar (KSF standardı)' : 'Katman eşleme'}</h3>
+          {isMapped ? (
+            <p className="muted">Her katmanı ölçülecek bir katalog kalemine ve ölçüm kuralına atayın (kapalı çokgen / tarama → m², çizgi → m, blok → adet).
+              Katman adından üretilen öneriler <b>öneri</b> düğmesiyle tek tıkla uygulanır. Eşlenmeyen katman metraja girmez. <Link to="/standard">Katalog</Link></p>
+          ) : isStd ? (
             <p className="muted">Katman adı kalemi tanımlar; eşleme gerekmez. <code className="layer">KSF-</code> ile başlamayan katmanlar metraja girmez.
               Tanınmayan kalem kodları <Link to="/standard">Standart</Link> sayfasından kataloğa eklenir.</p>
           ) : (
@@ -152,7 +161,28 @@ export default function Elements() {
                     <td className="mono">{l.name}</td>
                     <td className="num">{l.count}</td>
                     <td>
-                      {isStd ? (l.etype_label ? <span>{l.etype_label}</span> : <span className="muted">— standart dışı, yok sayılır —</span>) : (
+                      {isMapped ? (
+                        <div className="row" style={{ gap: 6 }}>
+                          <select value={l.mapped_code ?? ''} disabled={busy || !catalog}
+                            onChange={(e) => mapItem(l.name, e.target.value, measureSel[l.name] ?? l.mapped_measure ?? '')} style={{ maxWidth: 260 }}>
+                            <option value="">— ölçülmez —</option>
+                            {catalog?.by_discipline.map((g) => (
+                              <optgroup key={g.code} label={`${g.code} · ${g.name}`}>
+                                {g.items.map((it) => <option key={it.code} value={it.code}>{it.name} ({it.unit})</option>)}
+                              </optgroup>
+                            ))}
+                          </select>
+                          <select value={measureSel[l.name] ?? l.mapped_measure ?? ''} disabled={busy}
+                            onChange={(e) => { setMeasureSel({ ...measureSel, [l.name]: e.target.value }); if (l.mapped_code) mapItem(l.name, l.mapped_code, e.target.value) }}>
+                            <option value="">ölçüm: kalem varsayılanı</option>
+                            {catalog && Object.entries(catalog.measures).map(([m, v]) => <option key={m} value={m}>{v.label}</option>)}
+                          </select>
+                          {!l.mapped_code && l.suggested && (
+                            <button className="small secondary" disabled={busy} title={`Öneri: ${itemName(l.suggested)}`}
+                              onClick={() => mapItem(l.name, l.suggested!, measureSel[l.name] ?? '')}>öneri: {itemName(l.suggested)}</button>
+                          )}
+                        </div>
+                      ) : isStd ? (l.etype_label ? <span>{l.etype_label}</span> : <span className="muted">— standart dışı, yok sayılır —</span>) : (
                         <select value={l.etype ?? ''} disabled={busy} onChange={(e) => mapLayer(l.name, e.target.value)}>
                           <option value="">— yok sayılır —</option>
                           {Object.entries(layerTypes).map(([t, lbl]) => <option key={t} value={t}>{lbl}</option>)}
