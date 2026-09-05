@@ -31,7 +31,7 @@ export default function Elements() {
     try {
       const [d, els, s] = await Promise.all([Api.drawings.get(drawingId), Api.drawings.elements(drawingId), Api.drawings.previewSvg(drawingId)])
       setDrawing(d); setElements(els); setSvg(s)
-      setManual((m) => (m.etype ? m : { ...m, etype: ETYPES_BY_DISCIPLINE[d.discipline][0] }))
+      setManual((m) => (m.etype ? m : { ...m, etype: ETYPES_BY_DISCIPLINE[d.discipline][0] ?? '' }))
     } catch (e) { setError((e as Error).message) }
   }, [drawingId])
   useEffect(() => { load() }, [load])
@@ -75,7 +75,7 @@ export default function Elements() {
   }
 
   const numCell = (el: Element, field: 'b' | 'h' | 'thickness' | 'length' | 'area', asCm: boolean) => {
-    if (!FIELDS[el.etype].includes(field)) {
+    if (!(FIELDS[el.etype] ?? ['length', 'area']).includes(field)) {
       const v = el[field]
       return <td className="num muted">{v ? (asCm ? Math.round(v * 100) : fmt(v, field === 'area' ? 3 : 2)) : '-'}</td>
     }
@@ -95,7 +95,13 @@ export default function Elements() {
 
   if (!drawing) return <p className="muted">{error || 'Yükleniyor...'}</p>
   const discipline = drawing.discipline
-  const ETYPES = ETYPES_BY_DISCIPLINE[discipline]
+  const isStd = discipline === 'standard'
+  // KSF çiziminde tipler katalog kalem kodlarıdır; etiketleri katman bilgisinden alınır
+  const stdLabels: Record<string, string> = {}
+  if (isStd) for (const l of drawing.layers) if (l.etype && l.etype_label) stdLabels[l.etype] = l.etype_label.split(' · ')[0].replace(/ \[.*\]$/, '')
+  const ETYPES: string[] = isStd ? Array.from(new Set(elements.map((e) => e.etype))) : ETYPES_BY_DISCIPLINE[discipline]
+  const labelOf = (t: string) => (ETYPE_LABELS as Record<string, string>)[t] ?? stdLabels[t] ?? t
+  const colorOf = (t: string) => (ETYPE_COLORS as Record<string, string>)[t] ?? '#555'
   const layerTypes = layerTypeLabels(discipline)
   const isElec = discipline === 'electrical'
   const shown = elements.filter((e) => !filter || e.etype === filter)
@@ -123,15 +129,20 @@ export default function Elements() {
       <div className="grid2">
         <div className="panel">
           <h3>Plan önizleme</h3>
-          <div className="legend">{ETYPES.map((t) => <span key={t}><i style={{ background: ETYPE_COLORS[t] }} />{ETYPE_LABELS[t]}</span>)}<span className="muted">— tıklayınca tabloda seçilir</span></div>
+          <div className="legend">{ETYPES.map((t) => <span key={t}><i style={{ background: colorOf(t) }} />{labelOf(t)}</span>)}<span className="muted">— tıklayınca tabloda seçilir</span></div>
           <div className="svg-wrap" ref={svgRef} dangerouslySetInnerHTML={{ __html: svg }} />
         </div>
         <div className="panel">
-          <h3>Katman eşleme</h3>
-          <p className="muted">
-            Hangi katman hangi elemanı çiziyor? Eşlenmemiş katmanlar metraja girmez. Bu çizim <b>{DISCIPLINES[discipline]}</b> disiplininde;
-            yalnızca bu disiplinin tipleri seçilebilir (disiplin proje sayfasından değiştirilir). Değişiklik projedeki tüm çizimlere uygulanır.
-          </p>
+          <h3>{isStd ? 'Katmanlar (KSF standardı)' : 'Katman eşleme'}</h3>
+          {isStd ? (
+            <p className="muted">Katman adı kalemi tanımlar; eşleme gerekmez. <code className="layer">KSF-</code> ile başlamayan katmanlar metraja girmez.
+              Tanınmayan kalem kodları <Link to="/standard">Standart</Link> sayfasından kataloğa eklenir.</p>
+          ) : (
+            <p className="muted">
+              Hangi katman hangi elemanı çiziyor? Eşlenmemiş katmanlar metraja girmez. Bu çizim <b>{DISCIPLINES[discipline]}</b> disiplininde;
+              yalnızca bu disiplinin tipleri seçilebilir (disiplin proje sayfasından değiştirilir). Değişiklik projedeki tüm çizimlere uygulanır.
+            </p>
+          )}
           <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
             <table>
               <thead><tr><th>Katman</th><th className="num">Nesne</th><th>Eleman tipi</th></tr></thead>
@@ -141,10 +152,12 @@ export default function Elements() {
                     <td className="mono">{l.name}</td>
                     <td className="num">{l.count}</td>
                     <td>
-                      <select value={l.etype ?? ''} disabled={busy} onChange={(e) => mapLayer(l.name, e.target.value)}>
-                        <option value="">— yok sayılır —</option>
-                        {Object.entries(layerTypes).map(([t, lbl]) => <option key={t} value={t}>{lbl}</option>)}
-                      </select>
+                      {isStd ? (l.etype_label ? <span>{l.etype_label}</span> : <span className="muted">— standart dışı, yok sayılır —</span>) : (
+                        <select value={l.etype ?? ''} disabled={busy} onChange={(e) => mapLayer(l.name, e.target.value)}>
+                          <option value="">— yok sayılır —</option>
+                          {Object.entries(layerTypes).map(([t, lbl]) => <option key={t} value={t}>{lbl}</option>)}
+                        </select>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -159,7 +172,7 @@ export default function Elements() {
           <h3>Tespit edilen elemanlar ({elements.length})</h3>
           <div className="row">
             <button className={`small ${filter === '' ? '' : 'secondary'}`} onClick={() => setFilter('')}>Tümü</button>
-            {counts.map(([t, n]) => <button key={t} className={`small ${filter === t ? '' : 'secondary'}`} onClick={() => setFilter(t)}>{ETYPE_LABELS[t]} ({n})</button>)}
+            {counts.map(([t, n]) => <button key={t} className={`small ${filter === t ? '' : 'secondary'}`} onClick={() => setFilter(t as EType)}>{labelOf(t)} ({n})</button>)}
           </div>
         </div>
         <p className="muted">
@@ -170,7 +183,7 @@ export default function Elements() {
           <table>
             <thead>
               <tr>
-                <th>Dahil</th><th>Tip</th><th>Ad</th><th>{discipline === 'structural' ? 'Alt tip' : discipline === 'architectural' ? 'Malzeme / blok' : 'Boyut / kesit / kategori'}</th><th>Katman</th>
+                <th>Dahil</th><th>Tip</th><th>Ad</th><th>{discipline === 'structural' ? 'Alt tip' : discipline === 'architectural' ? 'Malzeme / blok' : isStd ? 'Özellik' : 'Boyut / kesit / kategori'}</th><th>Katman</th>
                 <th className="num">b {isElec ? '(mm)' : '(cm)'}</th><th className="num">h {isElec ? '(mm)' : '(cm)'}</th><th className="num">Kal. (cm)</th>
                 <th className="num">Uzunluk (m)</th><th className="num">Alan (m²)</th><th className="num">Adet</th><th>Güven</th><th>Etiket / Uyarı</th><th></th>
               </tr>
@@ -180,10 +193,12 @@ export default function Elements() {
                 <tr key={el.id} className={`${selected === el.id ? 'selected' : ''} ${el.included ? '' : 'excluded'}`} onClick={() => setSelected(el.id)}>
                   <td><input type="checkbox" checked={el.included} onChange={(e) => patch(el, { included: e.target.checked })} /></td>
                   <td>
-                    <select value={el.etype} onChange={(e) => patch(el, { etype: e.target.value as EType })} className="badge-select">
-                      {ETYPES.map((t) => <option key={t} value={t}>{ETYPE_LABELS[t]}</option>)}
-                      {!ETYPES.includes(el.etype) && <option value={el.etype}>{ETYPE_LABELS[el.etype]}</option>}
-                    </select>
+                    {isStd ? <span className="badge" style={{ background: colorOf(el.etype) }}>{labelOf(el.etype)}</span> : (
+                      <select value={el.etype} onChange={(e) => patch(el, { etype: e.target.value as EType })} className="badge-select">
+                        {ETYPES.map((t) => <option key={t} value={t}>{labelOf(t)}</option>)}
+                        {!ETYPES.includes(el.etype) && <option value={el.etype}>{labelOf(el.etype)}</option>}
+                      </select>
+                    )}
                   </td>
                   <td><input style={{ width: 90 }} defaultValue={el.name ?? ''} key={`${el.id}-name-${el.name}`} onBlur={(e) => e.target.value !== (el.name ?? '') && patch(el, { name: e.target.value })} /></td>
                   <td>
@@ -219,11 +234,11 @@ export default function Elements() {
           </table>
         </div>
 
-        <h3>Elle eleman ekle</h3>
-        <form className="row" onSubmit={addManual}>
+        {!isStd && <h3>Elle eleman ekle</h3>}
+        {!isStd && <form className="row" onSubmit={addManual}>
           <label className="field">Tip
             <select value={manual.etype} onChange={(e) => setManual({ ...manual, etype: e.target.value as EType })}>
-              {ETYPES.map((t) => <option key={t} value={t}>{ETYPE_LABELS[t]}{t === 'foundation' ? ' (sürekli)' : ''}</option>)}
+              {ETYPES.map((t) => <option key={t} value={t}>{labelOf(t)}{t === 'foundation' ? ' (sürekli)' : ''}</option>)}
             </select>
           </label>
           <label className="field">Ad<input style={{ width: 90 }} value={manual.name} onChange={(e) => setManual({ ...manual, name: e.target.value })} /></label>
@@ -235,7 +250,7 @@ export default function Elements() {
           {mt && FIELDS[mt].includes('area') && <label className="field">Alan (m²)<input type="number" step="0.01" value={manual.area} onChange={(e) => setManual({ ...manual, area: +e.target.value })} /></label>}
           <label className="field">Adet<input type="number" min={1} value={manual.count} onChange={(e) => setManual({ ...manual, count: +e.target.value })} /></label>
           <button type="submit" disabled={busy || !manual.etype}>Ekle</button>
-        </form>
+        </form>}
       </div>
     </>
   )

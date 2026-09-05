@@ -18,6 +18,7 @@ from typing import Any
 
 from ..parser.labels_ext import FIXTURE_CATEGORIES, WALL_MATERIALS
 from ..parser.layer_profile import DISCIPLINES
+from ..standard.catalog import Catalog, parse_layer, spec_numbers
 
 # tür -> (görünen ad, birim, disiplin)
 KIND_META: dict[str, tuple[str, str, str]] = {
@@ -72,14 +73,22 @@ class BoqItem:
     unit: str
     quantity: float
     discipline: str
+    kind_label: str = ""
+    discipline_label: str = ""
     count: float = 0.0                     # adet (eleman/hat sayısı) bilgi amaçlı
     notes: list[str] = field(default_factory=list)
     detail: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self):
+        if not self.kind_label:
+            self.kind_label = KIND_META.get(self.kind, (self.kind,))[0]
+        if not self.discipline_label:
+            self.discipline_label = DISCIPLINES.get(self.discipline, self.discipline)
+
     def to_dict(self) -> dict:
-        return {"key": self.key, "kind": self.kind, "kind_label": KIND_META[self.kind][0], "group": self.group,
+        return {"key": self.key, "kind": self.kind, "kind_label": self.kind_label, "group": self.group,
                 "label": self.label, "unit": self.unit, "quantity": round(self.quantity, 3), "count": self.count,
-                "discipline": self.discipline, "discipline_label": DISCIPLINES.get(self.discipline, self.discipline),
+                "discipline": self.discipline, "discipline_label": self.discipline_label,
                 "notes": self.notes, "detail": self.detail}
 
 
@@ -88,12 +97,18 @@ class _Acc:
         self.items: dict[str, BoqItem] = {}
 
     def add(self, kind: str, group: str, label: str, qty: float, count: float = 0.0, note: str | None = None,
-            **detail) -> BoqItem:
+            meta: tuple[str, str, str, str] | None = None, **detail) -> BoqItem:
+        """meta: (tür adı, birim, disiplin kodu, disiplin adı) — KIND_META dışındaki (katalog) kalemler için."""
         key = f"{kind}:{group}"
         it = self.items.get(key)
         if it is None:
-            name, unit, disc = KIND_META[kind]
-            it = BoqItem(key=key, kind=kind, group=group, label=label, unit=unit, quantity=0.0, discipline=disc)
+            if meta:
+                kname, unit, disc, dlabel = meta
+            else:
+                kname, unit, disc = KIND_META[kind]
+                dlabel = DISCIPLINES.get(disc, disc)
+            it = BoqItem(key=key, kind=kind, group=group, label=label, unit=unit, quantity=0.0, discipline=disc,
+                         kind_label=kname, discipline_label=dlabel)
             self.items[key] = it
         it.quantity += qty
         it.count += count
@@ -214,21 +229,85 @@ def _g(o: Any, k: str, default=None):
     return o.get(k, default) if isinstance(o, dict) else getattr(o, k, default)
 
 
+# ------------------------------------------------------------------ KSF standart çizim
+
+def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalog) -> list[BoqItem]:
+    """Standart çizim elemanları: katman adından kalem + özellik, katalogdan ölçüm kuralı.
+    Disiplin anahtarı 'ksf:<KOD>' (ör. ksf:HAV) — sezgisel disiplinlerle çakışmaz."""
+    acc = _Acc()
+    for d in drawings:
+        mult = int(d.get("storey_count") or 1)
+        wall_h_default = params.get("wall_height") or max((d.get("storey_height") or 3.0) - (d.get("slab_thickness") or 0.0), 0.0)
+        for e in d["elements"]:
+            p = parse_layer(_g(e, "layer") or "", catalog)
+            if p is None:
+                continue
+            item = p.item
+            measure = item.measure if item else None
+            spec = _g(e, "subtype") or p.spec
+            n = _g(e, "count") or 1
+            length = _g(e, "length") or 0.0
+            area = _g(e, "area") or 0.0
+            nums = spec_numbers(spec)
+            note = None
+            if measure is None:
+                # katalog dışı: geometriye göre
+                if length > 0:
+                    measure = "length"
+                elif area > 0:
+                    measure = "area"
+                else:
+                    measure = "count"
+                note = "Katalogda yok; geometriye göre ölçüldü"
+            if measure == "count":
+                qty = n
+            elif measure == "length":
+                qty = length * n
+            elif measure == "area":
+                qty = area * n
+            elif measure == "wall_area":
+                h = _g(e, "h") or (nums[1] / 100.0 if len(nums) >= 2 and nums[1] > 50 else None) or wall_h_default
+                qty = length * h * n
+                note = f"uzunluk × yükseklik {h:g} m"
+            else:  # volume
+                t = _g(e, "thickness") or (nums[0] / 100.0 if nums else None)
+                if not t:
+                    t = 0.0
+                    note = "Kalınlık özellikte yok (ör. KSF-STA-DOLGU-30); hacim 0"
+                else:
+                    note = f"alan × kalınlık {t:g} m"
+                qty = area * t * n
+            kind = p.code.lower()
+            unit = item.unit if item else {"count": "adet", "length": "m", "area": "m²"}.get(measure, "")
+            kname = item.name if item else p.code
+            disc_key = f"ksf:{p.discipline}"
+            group = slug(spec) if spec else "*"
+            label = f"{kname}" + (f" {spec}" if spec else "")
+            acc.add(kind, group, label, qty * mult, count=n * mult, note=note,
+                    meta=(kname, unit, disc_key, catalog.discipline_name(p.discipline)))
+    return list(acc.items.values())
+
+
 # ------------------------------------------------------------------ birleşik
 
 KIND_ORDER = list(KIND_META)
 
 
 def sort_items(items: list[BoqItem]) -> list[BoqItem]:
-    return sorted(items, key=lambda i: (KIND_ORDER.index(i.kind), i.group != "*", i.label))
+    def k(i: BoqItem):
+        return (KIND_ORDER.index(i.kind) if i.kind in KIND_META else 100, i.discipline, i.kind_label, i.group != "*", i.label)
+    return sorted(items, key=k)
 
 
 def boq_summary(items: list[BoqItem]) -> dict:
-    by_disc: dict[str, list[dict]] = {}
+    by_disc: dict[str, tuple[str, list[dict]]] = {}
     for it in sort_items(items):
-        by_disc.setdefault(it.discipline, []).append(it.to_dict())
+        by_disc.setdefault(it.discipline, (it.discipline_label, []))[1].append(it.to_dict())
+    kinds = {k: {"label": v[0], "unit": v[1], "discipline": v[2]} for k, v in KIND_META.items()}
+    for it in items:
+        kinds.setdefault(it.kind, {"label": it.kind_label, "unit": it.unit, "discipline": it.discipline})
     return {
         "items": [it.to_dict() for it in sort_items(items)],
-        "by_discipline": [{"discipline": d, "label": DISCIPLINES.get(d, d), "items": its} for d, its in by_disc.items()],
-        "kinds": {k: {"label": v[0], "unit": v[1], "discipline": v[2]} for k, v in KIND_META.items()},
+        "by_discipline": [{"discipline": d, "label": lbl, "items": its} for d, (lbl, its) in by_disc.items()],
+        "kinds": kinds,
     }

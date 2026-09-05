@@ -18,10 +18,12 @@ from .detectors.foundations import detect_foundations
 from .detectors.openings import detect_openings
 from .detectors.shear_walls import detect_shear_walls
 from .detectors.slabs import detect_slabs
+from .detectors.standard import detect_standard, standard_layers
 from .detectors.walls import detect_walls
 from .geometry import polygon_area
-from .layer_profile import ALL_TYPES, DEFAULT_DISCIPLINE, LayerProfile, types_for
+from .layer_profile import ALL_TYPES, DEFAULT_DISCIPLINE, STANDARD_DISCIPLINE, LayerProfile, types_for
 from .loader import UNIT_SCALE, Drawing, load_dxf
+from ..standard.catalog import Catalog
 
 
 @dataclass
@@ -30,9 +32,11 @@ class LayerInfo:
     count: int
     etype: str | None
 
+    etype_label: str | None = None
+
     def to_dict(self) -> dict:
         return {"name": self.name, "count": self.count, "etype": self.etype,
-                "etype_label": ALL_TYPES.get(self.etype or "", None)}
+                "etype_label": self.etype_label or ALL_TYPES.get(self.etype or "", None)}
 
 
 @dataclass
@@ -136,10 +140,32 @@ def _electrical(drawing: Drawing, layers_by_type: dict[str, list[str]], params: 
 DISCIPLINE_RUNNERS = {"structural": _structural, "architectural": _architectural, "electrical": _electrical}
 
 
+def analyze_standard(drawing: Drawing, catalog: Catalog, params: DetectParams) -> AnalysisResult:
+    """KSF standart çizimi: katman adları kendini tanıtır; katalog ölçüm kuralını verir."""
+    counts = drawing.layer_counts()
+    parsed = standard_layers(drawing, catalog)
+    infos = []
+    for name in drawing.layers:
+        p = parsed.get(name)
+        label = None
+        if p:
+            label = (p.item.name if p.item else p.code) + (f" [{p.spec}]" if p.spec else "") + f" · {catalog.discipline_name(p.discipline)}"
+        infos.append(LayerInfo(name, counts.get(name, 0), p.code.lower() if p else None, etype_label=label))
+    result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
+                            discipline=STANDARD_DISCIPLINE, layers=infos, warnings=list(drawing.warnings))
+    elements, warns = detect_standard(drawing, catalog, params)
+    result.elements = elements
+    result.warnings.extend(warns)
+    return result
+
+
 def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
-                    params: DetectParams | None = None, discipline: str = DEFAULT_DISCIPLINE) -> AnalysisResult:
+                    params: DetectParams | None = None, discipline: str = DEFAULT_DISCIPLINE,
+                    catalog: Catalog | None = None) -> AnalysisResult:
     profile = profile or LayerProfile()
     params = params or DetectParams()
+    if discipline == STANDARD_DISCIPLINE:
+        return analyze_standard(drawing, catalog or Catalog(), params)
     discipline = discipline if discipline in DISCIPLINE_RUNNERS else DEFAULT_DISCIPLINE
 
     counts = drawing.layer_counts()
@@ -179,14 +205,14 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
 
 def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectParams | None = None,
                  unit_override: str | None = None, auto_unit: bool = True,
-                 discipline: str = DEFAULT_DISCIPLINE) -> AnalysisResult:
+                 discipline: str = DEFAULT_DISCIPLINE, catalog: Catalog | None = None) -> AnalysisResult:
     """Dosyayı analiz eder; etiketler birimi yalanlıyorsa (ve kullanıcı birim seçmediyse) doğru birimle yeniden okur."""
     drawing = load_dxf(path, unit_override=unit_override)
-    result = analyze_drawing(drawing, profile, params, discipline)
+    result = analyze_drawing(drawing, profile, params, discipline, catalog)
     if auto_unit and not unit_override and result.suggested_unit and result.suggested_unit != drawing.unit:
         drawing2 = load_dxf(path, unit_override=result.suggested_unit)
         warn = [w for w in result.warnings if "kolon etiketleri" in w]
-        result = analyze_drawing(drawing2, profile, params, discipline)
+        result = analyze_drawing(drawing2, profile, params, discipline, catalog)
         result.unit_detected = False
         result.warnings = warn + [w for w in result.warnings if "kolon etiketleri" not in w]
         result.suggested_unit = drawing2.unit

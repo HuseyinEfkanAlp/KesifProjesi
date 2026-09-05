@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Api } from '../api/client'
-import { DISCIPLINES, type Discipline, type PriceIn, type PriceItem, type Project } from '../types'
+import type { PriceIn, PriceItem, Project } from '../types'
 import ProjectNav from './ProjectNav'
 
 type Field = 'unit_price' | 'labor_price' | 'hours_per_unit' | 'crew_size' | 'brand'
 type Edit = Partial<Record<Field, number | string>>
 
-const DISC_ORDER: Discipline[] = ['structural', 'architectural', 'electrical']
+const DISC_ORDER = ['structural', 'architectural', 'electrical']
 
 export default function Prices() {
   const pid = Number(useParams().id)
@@ -46,8 +46,10 @@ export default function Prices() {
   if (!project) return <p className="muted">{error || 'Yükleniyor...'}</p>
   const hoursPerDay = project.params?.work_hours_per_day ?? 8
 
-  const byDisc = DISC_ORDER
-    .map((d) => ({ d, rows: items.filter((i) => i.discipline === d) }))
+  const discKeys = Array.from(new Set(items.map((i) => i.discipline)))
+    .sort((a, b) => (DISC_ORDER.indexOf(a) === -1 ? 99 : DISC_ORDER.indexOf(a)) - (DISC_ORDER.indexOf(b) === -1 ? 99 : DISC_ORDER.indexOf(b)) || a.localeCompare(b))
+  const byDisc = discKeys
+    .map((d) => ({ d, label: items.find((i) => i.discipline === d)?.discipline_label ?? d, rows: items.filter((i) => i.discipline === d) }))
     .filter((g) => g.rows.length > 0)
   const kindsOf = (rows: PriceItem[]) => Array.from(new Set(rows.map((r) => r.kind)))
 
@@ -77,9 +79,9 @@ export default function Prices() {
           {saved && <span style={{ color: 'var(--ok)' }}>Kaydedildi.</span>}
         </div>
         {byDisc.length === 0 && <p className="muted">Henüz keşif kalemi yok; önce çizim yükleyin.</p>}
-        {byDisc.map(({ d, rows }) => (
+        {byDisc.map(({ d, label, rows }) => (
           <div key={d}>
-            <h2>{DISCIPLINES[d]}</h2>
+            <h2>{label}</h2>
             <table>
               <thead>
                 <tr>

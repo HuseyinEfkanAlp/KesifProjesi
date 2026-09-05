@@ -252,3 +252,47 @@ def make_elec_dxf(path: str | Path) -> Path:
     path = Path(path)
     doc.saveas(path)
     return path
+
+
+def make_standard_dxf(path: str | Path) -> Path:
+    """KÇS standart çizim (mm). Katman adı kendini tanıtır. Beklenen keşif:
+      KSF-HAV-HAVA_KANAL-600x400        polyline 10 m + 5 m            -> 15 m
+      KSF-SIH-BORU_PPRC_TEMIZ-25        çizgi 8 m                      -> 8 m
+      KSF-YAN-SPRINKLER-K80_UST         6 blok                         -> 6 adet
+      KSF-CEP-KOMPOZIT_PANEL-4MM        kapalı polyline 10 x 3 m       -> 30 m²
+      KSF-IZO-XPS-5                     tarama 5 x 4 m                 -> 20 m²
+      KSF-MIM-DUVAR_YTONG-20x300        çizgi 6 m, yükseklik 3.00 m    -> 18 m²
+      KSF-STA-DOLGU-30                  kapalı polyline 4 x 5 m, 0.30  -> 6 m³
+      KSF-PEY-AGAC-CINAR                3 blok                         -> 3 adet
+      KSF-ALT-YENI_KALEM-X              katalog dışı çizgi 3 m         -> 3 m (uyarı)
+      YAZI / AKS                        standart dışı, metraja girmez
+    """
+    doc = ezdxf.new("R2018")
+    doc.header["$INSUNITS"] = 4
+    layers = ["KSF-HAV-HAVA_KANAL-600x400", "KSF-SIH-BORU_PPRC_TEMIZ-25", "KSF-YAN-SPRINKLER-K80_UST",
+              "KSF-CEP-KOMPOZIT_PANEL-4MM", "KSF-IZO-XPS-5", "KSF-MIM-DUVAR_YTONG-20x300", "KSF-STA-DOLGU-30",
+              "KSF-PEY-AGAC-CINAR", "KSF-ALT-YENI_KALEM-X", "YAZI", "AKS"]
+    for name in layers:
+        doc.layers.add(name)
+    msp = doc.modelspace()
+    msp.add_lwpolyline([(0, 0), (10000, 0), (10000, 5000)], dxfattribs={"layer": "KSF-HAV-HAVA_KANAL-600x400"})
+    msp.add_line((0, 1000), (8000, 1000), dxfattribs={"layer": "KSF-SIH-BORU_PPRC_TEMIZ-25"})
+    spk = doc.blocks.new("SPRINKLER")
+    spk.add_circle((0, 0), 100)
+    for x in range(6):
+        msp.add_blockref("SPRINKLER", (x * 3000, 3000), dxfattribs={"layer": "KSF-YAN-SPRINKLER-K80_UST"})
+    msp.add_lwpolyline(_rect(0, 20000, 10000, 3000), close=True, dxfattribs={"layer": "KSF-CEP-KOMPOZIT_PANEL-4MM"})
+    h = msp.add_hatch(dxfattribs={"layer": "KSF-IZO-XPS-5"})
+    h.paths.add_polyline_path(_rect(20000, 0, 5000, 4000), is_closed=True)
+    msp.add_line((0, 30000), (6000, 30000), dxfattribs={"layer": "KSF-MIM-DUVAR_YTONG-20x300"})
+    msp.add_lwpolyline(_rect(30000, 0, 4000, 5000), close=True, dxfattribs={"layer": "KSF-STA-DOLGU-30"})
+    tree = doc.blocks.new("AGAC")
+    tree.add_circle((0, 0), 1500)
+    for x in range(3):
+        msp.add_blockref("AGAC", (40000 + x * 5000, 0), dxfattribs={"layer": "KSF-PEY-AGAC-CINAR"})
+    msp.add_line((0, 40000), (3000, 40000), dxfattribs={"layer": "KSF-ALT-YENI_KALEM-X"})
+    msp.add_text("ZEMİN KAT TESİSAT PLANI", dxfattribs={"layer": "YAZI", "height": 300}).set_placement((0, -2000))
+    msp.add_line((-5000, -5000), (60000, -5000), dxfattribs={"layer": "AKS"})
+    path = Path(path)
+    doc.saveas(path)
+    return path

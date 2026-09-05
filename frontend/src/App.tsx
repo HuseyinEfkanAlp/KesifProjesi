@@ -5,7 +5,9 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <Link to="/" className="brand">Keşif</Link>
-        <span className="muted">DXF planından metraj ve maliyet</span>
+        <span className="muted">DXF planından keşif, maliyet ve süre</span>
+        <span style={{ flex: 1 }} />
+        <Link to="/standard" className="topnav">Çizim standardı (KÇS)</Link>
       </header>
       <main className="content">
         <Outlet />

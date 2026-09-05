@@ -1,4 +1,4 @@
-import type { Boq, CostResult, Discipline, Drawing, Element, PriceIn, PriceItem, Project, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
+import type { Boq, Catalog, CatalogItem, CostResult, Discipline, Drawing, Element, LayerCheck, PriceIn, PriceItem, Project, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
@@ -84,6 +84,15 @@ export const Api = {
   cost: {
     get: (pid: number) => request<{ summary: QuantitySummary; boq: Boq; cost: CostResult }>(`/api/projects/${pid}/cost`),
     excelUrl: (pid: number) => `/api/projects/${pid}/cost.xlsx`,
+  },
+  catalog: {
+    get: () => request<Catalog>('/api/catalog'),
+    upsertItem: (body: Partial<CatalogItem>) => request<CatalogItem>('/api/catalog/items', { method: 'PUT', body: json(body) }),
+    removeItem: (code: string) => request<void>(`/api/catalog/items/${encodeURIComponent(code)}`, { method: 'DELETE' }),
+    upsertDiscipline: (code: string, name: string) => request<{ disciplines: Record<string, string> }>('/api/catalog/disciplines', { method: 'PUT', body: json({ code, name }) }),
+    reset: () => request<Catalog>('/api/catalog/reset', { method: 'POST' }),
+    checkLayer: (name: string) => request<LayerCheck>(`/api/catalog/check-layer?name=${encodeURIComponent(name)}`),
+    templateUrl: '/api/catalog/template.dxf',
   },
 }
 

@@ -9,6 +9,7 @@ import Elements from './pages/Elements'
 import Quantities from './pages/Quantities'
 import Prices from './pages/Prices'
 import Cost from './pages/Cost'
+import Standard from './pages/Standard'
 
 const router = createBrowserRouter([
   {
@@ -16,6 +17,7 @@ const router = createBrowserRouter([
     element: <App />,
     children: [
       { index: true, element: <Projects /> },
+      { path: 'standard', element: <Standard /> },
       { path: 'projects/:id', element: <ProjectDetail /> },
       { path: 'projects/:id/drawings/:did', element: <Elements /> },
       { path: 'projects/:id/quantities', element: <Quantities /> },

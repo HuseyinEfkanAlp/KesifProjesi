@@ -13,10 +13,12 @@ from __future__ import annotations
 import re
 
 DISCIPLINES: dict[str, str] = {
-    "structural": "Statik",
-    "architectural": "Mimari",
-    "electrical": "Elektrik",
+    "structural": "Statik (kalıp planı)",
+    "architectural": "Mimari (sezgisel)",
+    "electrical": "Elektrik (sezgisel)",
+    "standard": "KSF standart çizim (tüm disiplinler)",
 }
+STANDARD_DISCIPLINE = "standard"
 DEFAULT_DISCIPLINE = "structural"
 
 # Eleman tipleri (metraja giren)
@@ -53,7 +55,9 @@ ALL_TYPES = {**ALL_ELEMENT_TYPES, **AUX_TYPES}
 
 
 def types_for(discipline: str) -> dict[str, str]:
-    """Katman eşlemede seçilebilen tipler: disiplinin elemanları (+ statikte döşeme boşluğu)."""
+    """Katman eşlemede seçilebilen tipler: disiplinin elemanları (+ statikte döşeme boşluğu). Standart çizimde eşleme yok."""
+    if discipline == STANDARD_DISCIPLINE:
+        return {}
     base = dict(TYPES_BY_DISCIPLINE.get(discipline, STRUCTURAL_TYPES))
     if discipline == "structural":
         base.update(AUX_TYPES)

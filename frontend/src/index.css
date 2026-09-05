@@ -99,3 +99,8 @@ td input.wide { width: 110px; }
 .badge.disc-electrical { background: #b8860b; }
 .svg-wrap polyline.el { cursor: pointer; }
 .params-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.topbar .topnav { color: #fff; opacity: .9; font-weight: 600; }
+.topbar .topnav:hover { opacity: 1; }
+.badge.disc-standard { background: #444; }
+code.layer { font-family: Consolas, monospace; font-size: 12px; background: #eef2f6; padding: 1px 5px; border-radius: 4px; }
+.ok { color: var(--ok); }

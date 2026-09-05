@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import drawings, prices, projects, quantities, reports
+from .api import catalog, drawings, prices, projects, quantities, reports
 from .db import init_db
 
 
@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Keşif - DXF Metraj ve Maliyet", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-for r in (projects.router, drawings.router, quantities.router, prices.router, reports.router):
+for r in (projects.router, drawings.router, quantities.router, prices.router, reports.router, catalog.router):
     app.include_router(r)
 
 

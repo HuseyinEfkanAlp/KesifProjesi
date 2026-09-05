@@ -10,13 +10,14 @@ interface PickState { checked: boolean; label: string; storey: number; height: s
 const isPlanTitle = (title: string, discipline: Discipline) => {
   const t = title.toLocaleUpperCase('tr-TR')
   if (t.includes('DONATI') || t.includes('DETAY') || t.includes('KESİT') || t.includes('KESIT')) return false
+  if (discipline === 'standard') return t.includes('PLAN')
   if (discipline === 'structural') return t.includes('KALIP')
   if (discipline === 'architectural') return t.includes('KAT PLANI') || (t.includes('PLAN') && !t.includes('KALIP') && !t.includes('TAVAN'))
   return ['TAVA', 'AYDINLATMA', 'KUVVET', 'PRİZ', 'PRIZ', 'ELEKTRİK', 'ELEKTRIK', 'ZAYIF', 'TESİSAT', 'TESISAT'].some((k) => t.includes(k))
 }
 /** Ana başlık yanlış yazılmış olabilir; paftadaki diğer başlıklara da bakılır. */
 const looksLikePlan = (s: SheetInfo, discipline: Discipline) => isPlanTitle(s.title, discipline) || (s.titles ?? []).some((t) => isPlanTitle(t, discipline))
-const PLAN_WORD: Record<Discipline, string> = { structural: 'kalıp planlarını', architectural: 'mimari kat planlarını', electrical: 'elektrik (tava / aydınlatma / kuvvet) planlarını' }
+const PLAN_WORD: Record<Discipline, string> = { structural: 'kalıp planlarını', architectural: 'mimari kat planlarını', electrical: 'elektrik (tava / aydınlatma / kuvvet) planlarını', standard: 'KSF standardına göre çizilmiş planları' }
 
 const PARAM_FIELDS: Array<{ key: keyof ProjectParams; label: string; step: string; hint: string }> = [
   { key: 'wall_height', label: 'Duvar yüksekliği (m)', step: '0.05', hint: 'Boş: H − d' },
@@ -198,8 +199,9 @@ export default function ProjectDetail() {
           <p className="muted">
             DWG dosyasını AutoCAD'de <b>Farklı Kaydet → AutoCAD DXF</b> ile dönüştürün. Bütün paftaların yan yana durduğu tek bir
             ruhsat projesi dosyası da yüklenebilir: paftalar otomatik bulunur, planları seçersiniz.
-            <b> Disiplin</b> çizimin ne olduğunu söyler: statik kalıp planı (beton / kalıp / demir), mimari kat planı (duvar, kapı, pencere,
-            cam, sıva, boya) ya da elektrik planı (tava, kablo, boru, armatür / priz / anahtar).
+            <b> Disiplin</b> çizimin ne olduğunu söyler. <b>KSF standart çizim</b>: katmanları <code className="layer">KSF-…</code> standardıyla
+            adlandırılmış her disiplinden plan (havalandırma, yangın, sıhhi, cephe, çatı, izolasyon, altyapı, peyzaj…); katman eşleme gerekmez.
+            Diğer üçü standart dışı eski çizimler için sezgisel tanımadır.
           </p>
           <form className="upload" onSubmit={upload}>
             <label className="field">Dosya<input id="dxf-input" type="file" accept=".dxf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>

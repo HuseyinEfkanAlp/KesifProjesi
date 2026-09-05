@@ -9,9 +9,11 @@ from .cost.pricing import PriceItem as PriceData, compute_cost, default_price_it
 from .models import Drawing, Element, PriceItem, Project
 from .parser.analyzer import analyze_file
 from .parser.detectors.base import DetectParams
-from .parser.layer_profile import DEFAULT_DISCIPLINE, STRUCTURAL_TYPES, TYPE_DISCIPLINE, LayerProfile
+from .db import DATA_DIR
+from .parser.layer_profile import DEFAULT_DISCIPLINE, STANDARD_DISCIPLINE, STRUCTURAL_TYPES, TYPE_DISCIPLINE, LayerProfile
 from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary, effective_params, electrical_items,
-                           sort_items, structural_items)
+                           sort_items, standard_items, structural_items)
+from .standard.catalog import Catalog
 from .quantity.engine import ElementData, QuantityLine, QuantityParams, compute_all
 from .quantity.summary import summarize
 
@@ -30,10 +32,23 @@ def project_params(project: Project) -> dict:
     return effective_params(project.params or {})
 
 
+CATALOG_PATH = DATA_DIR / "catalog.json"
+
+
+def load_catalog() -> Catalog:
+    """KÇS kataloğu: varsayılan + DATA_DIR/catalog.json içindeki kullanıcı değişiklikleri."""
+    return Catalog.load(CATALOG_PATH)
+
+
+def save_catalog(cat: Catalog) -> None:
+    cat.save(CATALOG_PATH)
+
+
 def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> Drawing:
     """Çizimi (yeniden) analiz eder; otomatik elemanları yeniler, elle eklenenleri korur."""
     result = analyze_file(drawing.stored_path, project_profile(project), detect_params(project),
-                          unit_override=drawing.unit_override, discipline=drawing.discipline or DEFAULT_DISCIPLINE)
+                          unit_override=drawing.unit_override, discipline=drawing.discipline or DEFAULT_DISCIPLINE,
+                          catalog=load_catalog())
 
     for old in session.exec(select(Element).where(Element.drawing_id == drawing.id, Element.manual == False)):  # noqa: E712
         session.delete(old)
@@ -128,17 +143,22 @@ def project_boq(project: Project, session: Session, summary: dict | None = None)
         _, summary, _ = project_quantities(project, session)
     params = project_params(project)
     drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
-    arch, elec = [], []
+    arch, elec, std = [], [], []
     for d in drawings:
         elements = _included_elements(d, session)
         entry = {"label": d.label or d.filename, "storey_count": d.storey_count,
                  "storey_height": d.storey_height or project.storey_height, "slab_thickness": project.slab_thickness,
                  "elements": elements}
+        if d.discipline == STANDARD_DISCIPLINE:
+            std.append(entry)
+            continue
         if any(TYPE_DISCIPLINE.get(e.etype) == "architectural" for e in elements):
             arch.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "architectural"]})
         if any(TYPE_DISCIPLINE.get(e.etype) == "electrical" for e in elements):
             elec.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "electrical"]})
     items = structural_items(summary) + architectural_items(arch, params) + electrical_items(elec, params)
+    if std:
+        items += standard_items(std, params, load_catalog())
     return sort_items(items)
 
 

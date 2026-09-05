@@ -11,6 +11,21 @@ AutoCAD planlarını (DXF) okuyup üç disiplinde keşif çıkarır:
 Girdiğiniz **malzeme** ve **işçilik** birim fiyatları, tercih ettiğiniz **marka** ve **adam-saat / birim** değerleriyle
 maliyet tablosu (malzeme + işçilik, KDV) ve **süre tahmini** (gün) üretir; Excel raporu indirir.
 
+### Keşif Çizim Standardı (KÇS) — bütün disiplinler
+
+Yukarıdaki üç disiplin, standart dışı eski çizimler için **sezgisel** tanımadır. Asıl yol, müelliflerin çizimi
+[**KÇS**](docs/KESIF_CIZIM_STANDARDI.md) ile teslim etmesidir: katman adı kalemi tanımlar, geometri miktarı verir.
+
+```
+KSF-<DİSİPLİN>-<KALEM>-<ÖZELLİK>      KSF-HAV-HAVA_KANAL-600x400   KSF-YAN-SPRINKLER-K80_UST   KSF-STA-DOLGU-30
+```
+
+Program katman adını okur, **katalog**dan ölçüm kuralını alır (blok → adet, çizgi → m, kapalı alan → m², duvar → uzunluk × yükseklik,
+hacim → alan × kalınlık) ve doğrudan keşif kalemi üretir; katman eşleme gerekmez. Katalog 15 disiplin (statik, mimari, ince işler,
+cephe, çatı, izolasyon, elektrik, zayıf akım, mekanik, havalandırma, yangın, sıhhi tesisat, altyapı, peyzaj, asansör) ve ~120 kalemle
+gelir; **Standart** sayfasından disiplin ve kalem eklenir (`data/catalog.json`). Tasarımcı için hazır katmanlı **şablon DXF** indirilir
+(`/api/catalog/template.dxf`). Yeni bir disiplin eklemek kod değil, katalog satırıdır.
+
 ## Kurulum
 
 Gereksinimler: Python 3.12, Node 20+.
@@ -64,7 +79,8 @@ Tarayıcı: http://127.0.0.1:5173  (API dokümantasyonu: http://127.0.0.1:8000/d
 6. **Maliyet**: malzeme + işçilik kalem tablosu, disiplin bazlı toplamlar, KDV, **süre** (disiplinler paralel / işler ardışık), Excel indir.
 
 `samples/` klasöründe sentetik örnek çizimler var: `ornek_kat_plani.dxf`, `ornek_temel_plani.dxf` (statik),
-`ornek_mimari_plani.dxf` (Ytong 20 + tuğla 10 duvarlar, 2 kapı, 3 pencere), `ornek_elektrik_plani.dxf` (2 tava, 3 kablo hattı, boru, 9 armatür/priz/anahtar).
+`ornek_mimari_plani.dxf` (Ytong 20 + tuğla 10 duvarlar, 2 kapı, 3 pencere), `ornek_elektrik_plani.dxf` (2 tava, 3 kablo hattı, boru, 9 armatür/priz/anahtar),
+`ornek_ksf_plani.dxf` (KÇS standardı: havalandırma kanalı, PPRC boru, sprinkler, kompozit cephe, XPS, Ytong duvar, dolgu, ağaç).
 
 ## Parser nasıl çalışır
 
@@ -88,7 +104,16 @@ Tarayıcı: http://127.0.0.1:5173  (API dokümantasyonu: http://127.0.0.1:8000/d
   Çokgen dışında kalan radye etiketleri varsa (`RD2 40cm`, sınırı çizilmemiş ince bölge) bina oturumu kolon/perde dış
   hattından 1 m dışarı alınarak tahmin edilir, çokgenler düşülür (düşük güven; alan elle düzeltilebilir).
 
-### Mimari parser
+### KÇS standart çizim (`standard/catalog.py`, `detectors/standard.py`, `quantity/boq.py: standard_items`)
+
+- Katman adı `KSF-<DİSİPLİN>-<KALEM>-<ÖZELLİK>` ayrıştırılır (`parse_layer`); kalem katalogda aranır.
+- Ölçüm kuralı: `count` (bloklar), `length` (çizgi / polyline; kapalı ise çevre), `area` (kapalı çokgen / tarama, kopyalar elenir),
+  `wall_area` (uzunluk × yükseklik; yükseklik özellikteki 2. sayı ya da proje duvar yüksekliği), `volume` (alan × özellikteki kalınlık cm).
+- Katalogda olmayan kalem geometriye göre ölçülür ve "kataloğa ekleyin" uyarısı verir; `KSF` ile başlamayan katmanlar metraja girmez.
+- Keşif anahtarı `<kalem_kodu>:<özellik>` (`hava_kanal:600x400`, `sprinkler:k80_ust`); fiyat / işçilik / süre mekanizması aynıdır.
+- Katalog: varsayılan kodda (`DEFAULT_ITEMS`), kullanıcı değişiklikleri `DATA_DIR/catalog.json`; API `/api/catalog`, şablon `/api/catalog/template.dxf`.
+
+### Mimari parser (sezgisel)
 
 - **Duvar** (`detectors/walls.py`): duvar katmanındaki paralel çizgi çiftleri (aralık = kalınlık; kapı boşluklarında kesilen parçalar
   birleştirilir) ve kapalı çokgenler / taramalar (dikdörtgense kısa kenar = kalınlık, değilse uzunluk = alan / kalınlık).

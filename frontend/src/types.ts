@@ -1,9 +1,10 @@
-export type Discipline = 'structural' | 'architectural' | 'electrical'
+export type Discipline = 'structural' | 'architectural' | 'electrical' | 'standard'
 
 export const DISCIPLINES: Record<Discipline, string> = {
-  structural: 'Statik',
-  architectural: 'Mimari',
-  electrical: 'Elektrik',
+  structural: 'Statik (kalıp planı)',
+  architectural: 'Mimari (sezgisel)',
+  electrical: 'Elektrik (sezgisel)',
+  standard: 'KSF standart çizim (tüm disiplinler)',
 }
 
 export type EType =
@@ -30,6 +31,7 @@ export const ETYPES_BY_DISCIPLINE: Record<Discipline, EType[]> = {
   structural: ['column', 'shear_wall', 'beam', 'slab', 'foundation'],
   architectural: ['wall', 'door', 'window'],
   electrical: ['tray', 'cable', 'conduit', 'fixture'],
+  standard: [],   // KSF çiziminde tipler katman adından gelir (katalog kalem kodu)
 }
 
 /** Statik tipler (beton/kalıp/demir metrajı) */
@@ -38,6 +40,7 @@ export const STRUCTURAL_ETYPES = ETYPES_BY_DISCIPLINE.structural
 /** Katman eşlemede seçilebilen tipler: disiplinin elemanları (+ statikte döşeme boşluğu) */
 export function layerTypeLabels(discipline: Discipline): Record<string, string> {
   const out: Record<string, string> = {}
+  if (discipline === 'standard') return out
   for (const t of ETYPES_BY_DISCIPLINE[discipline]) out[t] = ETYPE_LABELS[t]
   if (discipline === 'structural') out.hole = 'Döşeme boşluğu (şaft)'
   return out
@@ -209,7 +212,7 @@ export interface BoqItem {
   unit: string
   quantity: number
   count: number
-  discipline: Discipline
+  discipline: string
   discipline_label: string
   notes: string[]
   detail: Record<string, unknown>
@@ -217,8 +220,8 @@ export interface BoqItem {
 
 export interface Boq {
   items: BoqItem[]
-  by_discipline: { discipline: Discipline; label: string; items: BoqItem[] }[]
-  kinds: Record<string, { label: string; unit: string; discipline: Discipline }>
+  by_discipline: { discipline: string; label: string; items: BoqItem[] }[]
+  kinds: Record<string, { label: string; unit: string; discipline: string }>
 }
 
 export interface QuantitiesResponse {
@@ -239,8 +242,42 @@ export interface PriceItem {
   hours_per_unit: number
   crew_size: number
   kind: string
-  discipline: Discipline | ''
+  kind_label: string
+  discipline: string
+  discipline_label: string
   is_general: boolean
+}
+
+/** KÇS kataloğu */
+export interface CatalogItem {
+  code: string
+  discipline: string
+  name: string
+  measure: 'count' | 'length' | 'area' | 'wall_area' | 'volume'
+  measure_label: string
+  unit: string
+  spec_label: string
+  example: string
+  custom: boolean
+}
+
+export interface Catalog {
+  disciplines: Record<string, string>
+  items: CatalogItem[]
+  measures: Record<string, { label: string; unit: string }>
+  by_discipline: { code: string; name: string; items: CatalogItem[] }[]
+}
+
+export interface LayerCheck {
+  valid: boolean
+  reason?: string
+  discipline?: string
+  discipline_name?: string
+  code?: string
+  spec?: string | null
+  known?: boolean
+  item?: CatalogItem | null
+  measure?: string
 }
 
 export interface PriceIn {
@@ -258,7 +295,7 @@ export interface CostLine {
   kind_label: string
   group: string
   group_label: string
-  discipline: Discipline
+  discipline: string
   discipline_label: string
   unit: string
   quantity: number
@@ -285,7 +322,7 @@ export interface CostResult {
   vat: number
   grand_total: number
   by_kind: Record<string, number>
-  by_discipline: { discipline: Discipline; label: string; material: number; labor: number; total: number; hours: number; days: number }[]
+  by_discipline: { discipline: string; label: string; material: number; labor: number; total: number; hours: number; days: number }[]
   missing_prices: string[]
   missing_labor: string[]
   duration: { hours_per_day: number; total_hours: number; sequential_days: number; parallel_days: number; missing_rates: string[] }

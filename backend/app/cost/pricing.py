@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..parser.layer_profile import DISCIPLINES
 from ..quantity.boq import KIND_META, BoqItem
 
 # Geriye uyumluluk (eski içe aktarmalar)
@@ -33,10 +32,11 @@ class PriceItem:
 def default_price_items(items: list[BoqItem]) -> list[PriceItem]:
     """Keşifteki her kalem için sıfır fiyatlı satır + her tür için genel satır (kullanıcı doldurur)."""
     out: list[PriceItem] = []
-    kinds_present = {it.kind for it in items}
-    for kind, (kname, unit, _) in KIND_META.items():
-        if kind in kinds_present:
-            out.append(PriceItem(f"{kind}:*", f"{kname} (genel)", unit))
+    seen: set[str] = set()
+    for it in items:
+        if it.kind not in seen:
+            seen.add(it.kind)
+            out.append(PriceItem(f"{it.kind}:*", f"{it.kind_label} (genel)", it.unit))
     for it in items:
         if it.group != "*":
             out.append(PriceItem(it.key, it.label, it.unit))
@@ -73,9 +73,9 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
         mat_total = round(it.quantity * float(mat), 2)
         lab_total = round(it.quantity * float(lab), 2)
         lines.append({
-            "key": it.key, "kind": it.kind, "kind_label": KIND_META[it.kind][0],
+            "key": it.key, "kind": it.kind, "kind_label": it.kind_label,
             "group": it.group, "group_label": it.label, "discipline": it.discipline,
-            "discipline_label": DISCIPLINES.get(it.discipline, it.discipline),
+            "discipline_label": it.discipline_label,
             "unit": it.unit, "quantity": round(it.quantity, 3),
             "brand": brand or "",
             "unit_price": float(mat), "labor_price": float(lab),

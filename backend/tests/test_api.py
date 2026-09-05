@@ -184,3 +184,51 @@ def test_multi_discipline_flow(client, storey_dxf, arch_dxf, elec_dxf):
     assert r.status_code == 200 and r.content[:2] == b"PK"
     svg = client.get(f"/api/drawings/{arch['id']}/preview.svg")
     assert svg.status_code == 200 and b"el-wall" in svg.content and b"el-window" in svg.content
+
+
+def test_standard_flow_and_catalog_api(client, standard_dxf):
+    # katalog
+    cat = client.get("/api/catalog").json()
+    assert "HAV" in cat["disciplines"] and any(i["code"] == "HAVA_KANAL" for i in cat["items"])
+    chk = client.get("/api/catalog/check-layer", params={"name": "KSF-HAV-HAVA_KANAL-600x400"}).json()
+    assert chk["valid"] and chk["known"] and chk["discipline_name"] == "Havalandırma"
+    assert not client.get("/api/catalog/check-layer", params={"name": "DUVAR"}).json()["valid"]
+    r = client.put("/api/catalog/items", json={"code": "yeni_kalem", "discipline": "ALT", "name": "Yeni kalem", "measure": "length"})
+    assert r.status_code == 200 and r.json()["code"] == "YENI_KALEM" and r.json()["custom"]
+    assert client.put("/api/catalog/items", json={"code": "x", "discipline": "QQQ", "name": "x", "measure": "count"}).status_code == 400
+    t = client.get("/api/catalog/template.dxf")
+    assert t.status_code == 200 and b"KSF-HAV-HAVA_KANAL" in t.content
+
+    pid = client.post("/api/projects", json={"name": "KSF"}).json()["id"]
+    with open(standard_dxf, "rb") as f:
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("ksf.dxf", f, "application/dxf")},
+                        data={"label": "Zemin tesisat", "storey_count": "1", "discipline": "standard"})
+    assert r.status_code == 201, r.text
+    d = r.json()
+    assert d["discipline"] == "standard" and d["element_count"] >= 15
+    layers = client.get(f"/api/drawings/{d['id']}/layers").json()
+    assert layers["element_types"] == {}
+    q = client.get(f"/api/projects/{pid}/quantities").json()
+    by = {i["key"]: i for i in q["boq"]["items"]}
+    assert by["hava_kanal:600x400"]["quantity"] == pytest.approx(15.0)
+    assert by["sprinkler:k80_ust"]["quantity"] == 6
+    assert by["dolgu:30"]["quantity"] == pytest.approx(6.0)
+    assert by["yeni_kalem:x"]["kind_label"] == "Yeni kalem"           # kataloğa eklenen kalem tanındı
+    discs = {dd["label"] for dd in q["boq"]["by_discipline"]}
+    assert {"Havalandırma", "Yangın tesisatı", "Peyzaj", "Altyapı"} <= discs
+
+    prices = client.get(f"/api/projects/{pid}/prices").json()
+    hk = next(p for p in prices if p["key"] == "hava_kanal:*")
+    assert hk["discipline_label"] == "Havalandırma" and hk["unit"] == "m"
+    r = client.put(f"/api/projects/{pid}/prices", json=[{"key": "hava_kanal:*", "unit_price": 900, "labor_price": 300, "hours_per_unit": 0.6, "crew_size": 2},
+                                                       {"key": "sprinkler:k80_ust", "unit_price": 250, "labor_price": 150, "hours_per_unit": 0.5}])
+    assert r.status_code == 200
+    c = client.get(f"/api/projects/{pid}/cost").json()["cost"]
+    hk_line = next(l for l in c["lines"] if l["key"] == "hava_kanal:600x400")
+    assert hk_line["total"] == pytest.approx(15 * 1200) and hk_line["discipline_label"] == "Havalandırma"
+    assert c["duration"]["parallel_days"] > 0
+    assert client.get(f"/api/projects/{pid}/cost.xlsx").status_code == 200
+
+    assert client.delete("/api/catalog/items/YENI_KALEM").status_code == 204
+    assert client.delete("/api/catalog/items/YENI_KALEM").status_code == 404
+    assert client.post("/api/catalog/reset").status_code == 200
