@@ -3,7 +3,7 @@ import pytest
 
 from app.parser.analyzer import analyze_file
 from app.parser.loader import load_dxf
-from app.parser.rebar_tables import kot_from_label, parse_rebar_tables, target_from_label, unit_weight
+from app.parser.rebar_tables import kot_from_label, parse_rebar_labels, parse_rebar_tables, target_from_label, unit_weight
 from app.quantity.boq import effective_params, structural_items
 from app.quantity.engine import ElementData, QuantityParams, compute_all
 from app.quantity.summary import summarize
@@ -58,3 +58,27 @@ def test_rebar_discipline_and_summary(rebar_dxf):
     form = s["totals"]["formwork_m2"]
     assert items["plywood:*"].quantity == pytest.approx(form / 3.125 / 5, rel=1e-3) and items["plywood:*"].unit == "adet"
     assert items["beton:fire"].quantity == pytest.approx(s["totals"]["concrete_m3"] * 0.03, rel=1e-3)
+
+
+def test_rebar_labels_and_block_crop(beam_detail_dxf, tmp_path):
+    """Kiriş açılımı: adetli poz yazıları toplanır, kesit tekrarları sayılmaz. Kolon paftası blok içinde: kırpma blok içeriğini alır."""
+    from app.parser.sheets import crop_sheets
+    lab = parse_rebar_labels(load_dxf(str(beam_detail_dxf)))
+    assert lab is not None and lab.pos_count == 3
+    assert lab.weight[8] == pytest.approx(72 * 1.60 * unit_weight(8), rel=1e-3)
+    assert lab.weight[14] == pytest.approx(4 * 1.60 * unit_weight(14), rel=1e-3)
+    assert lab.weight[16] == pytest.approx(4 * 5.25 * unit_weight(16), rel=1e-3)
+    # iki pafta bölgesi: kiriş paftası poz yazılarıyla, kolon paftasının içeriği blokta (kırpma bloğu patlatır)
+    kiris_bbox, kolon_bbox = (0.0, 0.0, 3000.0, 2000.0), (3200.0, 0.0, 6200.0, 2000.0)
+    outk = tmp_path / "kiris.dxf"
+    crop_sheets(beam_detail_dxf, [(kiris_bbox, outk)])
+    r = analyze_file(str(outk), discipline="rebar", label="KİRİŞ DETAYLARI")
+    els = r.by_type("rebar")
+    assert {e.meta["dia_mm"] for e in els} == {8, 14, 16} and all(e.meta["target"] == "beam" and e.source == "REBAR_LABELS" for e in els)
+    out = tmp_path / "kolon.dxf"
+    crop_sheets(beam_detail_dxf, [(kolon_bbox, out)])
+    tables = parse_rebar_tables(load_dxf(str(out)))
+    assert len(tables) == 1 and tables[0].weight[12] == pytest.approx(888.0)
+    out2 = tmp_path / "kolon_bloksuz.dxf"
+    crop_sheets(beam_detail_dxf, [(kolon_bbox, out2)], include_blocks=False)
+    assert parse_rebar_tables(load_dxf(str(out2))) == []

@@ -330,3 +330,44 @@ def make_rebar_table_dxf(path: str | Path, kot: str = "+7.95") -> Path:
     path = Path(path)
     doc.saveas(path)
     return path
+
+
+def make_beam_detail_dxf(path: str | Path) -> Path:
+    """Kiriş açılımı (cm): adetli poz yazıları + adetsiz kesit tekrarları. Beklenen (sadece adetli satırlar):
+    P05 72 Ø8 l=160 -> 72×1.60×0.395 = 45.5 kg ; P45 4 Ø14 l=160 -> 4×1.60×1.208 = 7.7 kg ; P90 4 Ø16 l=525 -> 4×5.25×1.578 = 33.1 kg
+    Ayrıca bir blok içinde 'KOLON DETAYI' metraj tablosu (Ø12 1000 m -> 888 kg) pafta çerçevesi içinde INSERT edilir."""
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 5
+    for n in ("REBAR_DET2", "BEAM4", "TABLO", "YAZI"):
+        doc.layers.add(n)
+    msp = doc.modelspace()
+    # pafta çerçevesi (çok paftalı algılama için iki çerçeve)
+    msp.add_lwpolyline(_rect(0, 0, 3000, 2000), close=True, dxfattribs={"layer": "TABLO"})
+    msp.add_lwpolyline(_rect(3200, 0, 3000, 2000), close=True, dxfattribs={"layer": "TABLO"})
+    msp.add_text("KİRİŞ DETAYLARI", dxfattribs={"layer": "YAZI", "height": 40}).set_placement((100, 1900))
+    msp.add_text("KOLON DETAYLARI", dxfattribs={"layer": "YAZI", "height": 40}).set_placement((3300, 1900))
+    def T(x, y, t, h=8):
+        msp.add_text(t, dxfattribs={"layer": "REBAR_DET2", "height": h}).set_placement((x, y))
+    T(300, 1500, "K1018 KIRISI", 12)
+    T(600, 1400, "P05 72ƒ8/10 etr. l=160")
+    T(600, 1300, "P45 4ƒ14 ila. l= 160")
+    T(600, 1200, "P90 4ƒ16 l= 525")
+    T(400, 1000, "4ƒ16"); T(400, 950, "P05 ƒ8 l=160")      # kesit tekrarları, sayılmaz
+    # kolon paftası: tüm içerik blok
+    blk = doc.blocks.new("KOLON_PAFTA")
+    blk.add_text("POZ", dxfattribs={"height": 8}).set_placement((100, 1500))
+    blk.add_text("ƒ12", dxfattribs={"height": 8}).set_placement((800, 1450))
+    blk.add_text("01", dxfattribs={"height": 8}).set_placement((100, 1400))
+    blk.add_text("12", dxfattribs={"height": 8}).set_placement((200, 1400))
+    blk.add_text("100", dxfattribs={"height": 8}).set_placement((300, 1400))
+    blk.add_text("1000", dxfattribs={"height": 8}).set_placement((400, 1400))
+    blk.add_text("1000.00", dxfattribs={"height": 8}).set_placement((800, 1400))
+    blk.add_text("TOPLAM BOY / TOTAL LENGTH (m)", dxfattribs={"height": 8}).set_placement((100, 1300))
+    blk.add_text("1000.00", dxfattribs={"height": 8}).set_placement((800, 1300))
+    blk.add_text("AGIRLIK / WEIGTH (kg)", dxfattribs={"height": 8}).set_placement((100, 1200))
+    blk.add_text("888.00", dxfattribs={"height": 8}).set_placement((800, 1200))
+    blk.add_line((100, 1100), (900, 1100))
+    msp.add_blockref("KOLON_PAFTA", (3200, 0), dxfattribs={"layer": "TABLO"})
+    path = Path(path)
+    doc.saveas(path)
+    return path

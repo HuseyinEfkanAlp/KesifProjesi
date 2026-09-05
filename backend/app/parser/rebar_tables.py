@@ -1,5 +1,9 @@
 """Donatı paftalarındaki metraj tablolarını okur (poz / çap / adet / boy / toplam boy / ağırlık).
 
+Tablo yoksa poz yazıları toplanır (kiriş / kolon açılımı): "P45 4ƒ14 ila. l= 160", "P05 72ƒ8/10 etr. l=160"
+= poz 45: 4 adet Ø14, her biri 160 cm. Ağırlık = adet × boy × birim ağırlık. Adetsiz kesit yazıları ("4ƒ12",
+"P05 ƒ8 l=160") sayılmaz (aynı çubuğun kesitteki tekrarıdır).
+
 Statik ofis programları (ideCAD, Sta4CAD, ProtaStructure...) donatı planının yanına poz tablosu basar:
     POZ | ÇAP | ADET | BOY | DEMİR ŞEKLİ | DEMİR UZUNLUĞU (m):  Ø10 | Ø12 | Ø16
     01  | 12  | 254  | 300 | ...          |                            762.00
@@ -227,3 +231,41 @@ def kot_from_label(label: str) -> str | None:
     """'+7.95 KOTU KALIP PLANI' -> '+7.95' (kat eşlemesi için)."""
     m = KOT_RE.search(label or "")
     return m.group(1).replace(" ", "").replace(",", ".") if m else None
+
+
+POZ_LINE = re.compile(
+    r"^\s*P\s*(?P<poz>\d+)\s+(?P<n>\d+)\s*(?:[ØøΦφ∅ƒ]|%%c)\s*(?P<d>\d{1,2})(?:\s*/\s*(?P<s>\d+))?"
+    r"\s*(?P<tip>[A-Za-zçğıöşüÇĞİÖŞÜ]+)?\.?\s*[lL]\s*=\s*(?P<L>\d+(?:[.,]\d+)?)",
+)
+POZ_TYPES = {"etr": "etriye", "ila": "ilave", "mon": "montaj", "gov": "gövde", "duz": "düz", "pil": "pilye", "cir": "çiroz"}
+
+
+def parse_rebar_labels(drawing: Drawing) -> RebarTable | None:
+    """Adetli poz yazılarını toplar; RebarTable biçiminde tek 'tablo' döndürür (kaynak: yazılar)."""
+    per: dict[int, float] = {}
+    lengths: dict[int, float] = {}
+    n_lines = 0
+    types: dict[str, int] = {}
+    for e in drawing.texts():
+        m = POZ_LINE.match(e.text.strip())
+        if not m:
+            continue
+        d = int(m.group("d"))
+        if not 6 <= d <= 50:
+            continue
+        n = int(m.group("n"))
+        L = float(m.group("L").replace(",", ".")) / 100.0      # cm -> m
+        if n <= 0 or L <= 0:
+            continue
+        per[d] = per.get(d, 0.0) + n * L * unit_weight(d)
+        lengths[d] = lengths.get(d, 0.0) + n * L
+        n_lines += 1
+        tip = (m.group("tip") or "duz").lower()[:3]
+        types[tip] = types.get(tip, 0) + 1
+    if not per:
+        return None
+    t = RebarTable(columns={d: 0.0 for d in per}, total_length=lengths, weight=per, pos_count=n_lines)
+    t.warnings.append(f"Metraj tablosu yok; {n_lines} adetli poz yazısından hesaplandı "
+                      f"({', '.join(f'{POZ_TYPES.get(k, k)} {v}' for k, v in sorted(types.items()))}). "
+                      "Boylar yazıdaki değerdir; kanca / bindirme payı yazıda yoksa eksik olabilir")
+    return t

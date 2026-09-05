@@ -562,11 +562,20 @@ def crop_sheet(src: str | Path, bbox: Bbox, dest: str | Path, margin_ratio: floa
     return crop_sheets(src, [(bbox, dest)], margin_ratio)[0]
 
 
-def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_ratio: float = 0.02) -> list[int]:
-    """Birden çok paftayı tek geçişte kırpar; her hedef için yazılan nesne sayısını döndürür."""
+BLOCK_PASS_MAX_BYTES = 250 * 1024 * 1024   # blok içeriği için ezdxf ile ikinci geçiş yapılacak en büyük dosya
+
+
+def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_ratio: float = 0.02,
+                include_blocks: bool = True) -> list[int]:
+    """Birden çok paftayı tek geçişte kırpar; her hedef için yazılan nesne sayısını döndürür.
+
+    include_blocks: pafta içine düşen blok yerleşimlerinin (INSERT) içeriği de yazılır (bazı ofisler tüm paftayı ya da
+    donatı tablosunu blok olarak koyar). Bu ikinci geçiş ezdxf ile yapılır; çok büyük dosyalarda atlanır.
+    """
     tg = [_Target(b, Path(d), margin_ratio) for b, d in targets]
     poly: dict | None = None      # POLYLINE + VERTEX ... SEQEND
     insunits = 0
+    inserts_hit = 0
     with _open_dxf_text(src) as f:
         for ent in _iter_entities(f):
             t = ent["t"]
@@ -574,6 +583,11 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
                 insunits = int(ent.get("insunits", 0) or 0)
                 continue
             layer = ent.get("8", "0")
+            if t == "INSERT":
+                xs, ys = ent.get("xs") or [], ent.get("ys") or []
+                if xs and ys and any(g.inside(xs, ys) for g in tg):
+                    inserts_hit += 1
+                continue
             if t == "POLYLINE":
                 poly = {"layer": layer, "closed": bool(ent.get("70", 0) & 1), "pts": []}
                 continue
@@ -598,6 +612,11 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
             for g in tg:
                 if g.inside(xs, ys):
                     _write_entity(g, t, ent, xs, ys, layer)
+    if include_blocks and inserts_hit and Path(src).stat().st_size <= BLOCK_PASS_MAX_BYTES:
+        try:
+            _add_block_contents(src, tg)
+        except Exception:
+            pass
     out = []
     for g in tg:
         for name in g.layers:
@@ -610,6 +629,62 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
         g.doc.saveas(str(g.dest))
         out.append(g.written)
     return out
+
+
+def _add_block_contents(src: str | Path, tg: list["_Target"]) -> None:
+    """Hedef paftalara düşen INSERT'lerin içeriğini (patlatılmış) yazar: yazı, çizgi, polyline, daire, yay."""
+    import ezdxf
+    from ezdxf import path as ezpath
+
+    doc = ezdxf.readfile(str(src))
+    msp = doc.modelspace()
+    for ins in msp.query("INSERT"):
+        try:
+            subs = list(ins.virtual_entities())
+        except Exception:
+            continue
+        if not subs:
+            continue
+        for sub in subs:
+            t = sub.dxftype()
+            layer = sub.dxf.layer if sub.dxf.hasattr("layer") else "0"
+            if layer == "0":
+                layer = ins.dxf.layer
+            try:
+                if t in ("TEXT", "ATTRIB"):
+                    txt = sub.dxf.text
+                    p = sub.dxf.insert
+                    xs, ys = [p.x], [p.y]
+                    for g in tg:
+                        if g.inside(xs, ys) and txt.strip():
+                            g.msp.add_text(txt, height=float(sub.dxf.height or 1.0), rotation=float(sub.dxf.rotation or 0.0),
+                                           dxfattribs={"layer": layer}).set_placement((p.x, p.y))
+                            g.layers.add(layer); g.written += 1
+                elif t == "MTEXT":
+                    txt = sub.plain_text()
+                    p = sub.dxf.insert
+                    for g in tg:
+                        if g.inside([p.x], [p.y]) and txt.strip():
+                            m = g.msp.add_mtext(txt, dxfattribs={"layer": layer, "char_height": float(sub.dxf.char_height or 1.0)})
+                            m.set_location((p.x, p.y), rotation=float(sub.dxf.rotation or 0.0))
+                            g.layers.add(layer); g.written += 1
+                elif t == "LINE":
+                    a, b = sub.dxf.start, sub.dxf.end
+                    for g in tg:
+                        if g.inside([a.x, b.x], [a.y, b.y]):
+                            g.msp.add_line((a.x, a.y), (b.x, b.y), dxfattribs={"layer": layer}); g.layers.add(layer); g.written += 1
+                elif t in ("LWPOLYLINE", "POLYLINE", "ARC", "CIRCLE", "ELLIPSE", "SPLINE"):
+                    pth = ezpath.make_path(sub)
+                    pts = [(v.x, v.y) for v in pth.flattening(0.5)]
+                    if len(pts) < 2:
+                        continue
+                    closed = bool(getattr(sub, "is_closed", False)) or t == "CIRCLE" or pth.is_closed
+                    xs = [q[0] for q in pts]; ys = [q[1] for q in pts]
+                    for g in tg:
+                        if g.inside(xs, ys):
+                            g.msp.add_lwpolyline(pts, close=closed, dxfattribs={"layer": layer}); g.layers.add(layer); g.written += 1
+            except Exception:
+                continue
 
 
 def _write_entity(g: _Target, t: str, ent: dict, xs: list[float], ys: list[float], layer: str) -> None:

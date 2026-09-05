@@ -222,18 +222,20 @@ Bu çizimle yapılan düzeltmeler:
 - Temel paftasındaki kolon/perde izleri metraj dışı (doğru); "Parapet (20/82)" etiketleri ve `VM Parapet Tarama` henüz sayılmıyor.
 - +15.65 çatı paftasında 66 döşeme etiketi kiriş ağı olmayan bölgede: bu döşemeler bulunamıyor (elle eklenmeli).
 
-Doğrulama: ofisin kendi donatı metraj tabloları (`VM-METRAJ` katmanı, "GENEL TOPLAM") pafta bazında okunabiliyor. Temel donatısı
-635,5 t → bizim radye betonu 6.573 m³ ile **97 kg/m³**; döşeme donatısı kat bazında 59–99 kg/m³ (+7.95: 62,7 t; +11.65: 67,9 t).
-Bu projede önerilen oranlar: döşeme 75, radye 100, kolon 130, kiriş 110 kg/m³.
+Demir: 11 donatı paftasının metraj tabloları (temel X/Y/ilave, döşeme alt/üst × 4 kot) birebir okundu (907,9 t); kolon paftalarının
+tabloları blok içindeydi (5 tablo, 633 t); kiriş detaylarında tablo yok, 7.987 adetli poz yazısından 607 t hesaplandı. Yalnız perde
+(7 t) oranla kaldı. Gerçek oranlar bu projede: radye 97, kolon **374**, kiriş 178, döşeme 82 kg/m³ — kolon için varsayılan 130 çok düşüktü.
 
-| Grup | Adet | Beton m³ | Kalıp m² |
-|---|---|---|---|
-| Radye (RD1 7.166 m² × 0,70 + RD2 3.368 m² × 0,40) | 8 | 6.572 | 945 |
-| Kolon | 457 | 1.693 | 5.963 |
-| Perde | 23 | 74 | 433 |
-| Kiriş | 1.746 | 3.405 | 16.797 |
-| Döşeme | 1.254 | 3.319 | 22.225 |
-| **Toplam** | | **15.064** | **46.363** |
+| Grup | Adet | Beton m³ | Kalıp m² | Demir t | Demir kaynağı |
+|---|---|---|---|---|---|
+| Radye (RD1 7.166 m² × 0,70 + RD2 3.368 m² × 0,40) | 8 | 6.572 | 945 | 635,5 | tablo |
+| Kolon | 457 | 1.693 | 5.963 | 633,0 | tablo (blok içi) |
+| Perde | 23 | 74 | 433 | 7,4 | oran |
+| Kiriş | 1.746 | 3.405 | 16.797 | 607,5 | poz yazıları |
+| Döşeme | 1.254 | 3.319 | 22.225 | 272,3 | tablo |
+| **Toplam** | | **15.064** | **46.363** | **2.156** | |
+
+Çap bazında: Ø8 154 t, Ø10 200 t, Ø12 367 t, Ø14 268 t, Ø16 82 t, Ø20 596 t, Ø26 481 t.
 
 ## Demir: donatı paftası tabloları, kat bazında metraj, sarf kalemleri
 
@@ -241,6 +243,11 @@ Bu projede önerilen oranlar: döşeme 75, radye 100, kolon 130, kiriş 110 kg/m
   okunur, her çap bir `rebar` elemanı olur (meta: kg, m, hedef eleman, kot). Hedef eleman plan adından: TEMEL → temel,
   KOLON, KİRİŞ, PERDE; yazmıyorsa döşeme. Kot (`+7.95`) plan adından. Tablosu olan eleman tipinin demiri **tablodan**
   (kaynak "tablo"), diğerleri beton × kg/m³ oranıyla ("oran") alınır; keşifte demir çap bazında (`demir:o12`) listelenir.
+- Tablo yoksa **adetli poz yazıları** toplanır (kiriş / kolon açılımı: `P45 4Ø14 ila. l=160` = 4 adet Ø14 × 1.60 m;
+  etriye bölgeleri `P05 72Ø8/10 etr. l=160`). Adetsiz kesit tekrarları (`4Ø12`, `P05 Ø8 l=160`) sayılmaz. Kanca / bindirme
+  payı yazıda yoksa eksik kalabilir (uyarı verilir).
+- Pafta kırpma, pafta içine düşen **blok (INSERT) içeriğini** de yazar: bazı ofisler kolon detay paftasını ya da metraj tablosunu
+  blok olarak koyar (A4-A5 kolon paftaları böyleydi; 250 MB üstü dosyada bu geçiş atlanır).
 - **Kat / pafta bazında** özet (`summary.by_drawing`, Excel "Kat Bazında"): her planın kolon / perde / kiriş / döşeme /
   temel betonu, kalıbı, oranla demiri; donatı paftalarının çap bazında kg'ı ve kotu.
 - **Sarf ve fire** (proje parametreleri, `quantity/boq.py: structural_items`): beton fire %, demir fire/bindirme %,

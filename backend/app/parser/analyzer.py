@@ -22,7 +22,7 @@ from .detectors.standard import detect_standard, standard_layers
 from .detectors.walls import detect_walls
 from .geometry import polygon_area
 from .layer_profile import ALL_TYPES, DEFAULT_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE, LayerProfile, types_for
-from .rebar_tables import kot_from_label, parse_rebar_tables, target_from_label
+from .rebar_tables import kot_from_label, parse_rebar_labels, parse_rebar_tables, target_from_label
 from .loader import UNIT_SCALE, Drawing, load_dxf
 from ..standard.catalog import Catalog
 
@@ -167,6 +167,12 @@ def analyze_rebar(drawing: Drawing, label: str = "") -> AnalysisResult:
     result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
                             discipline=REBAR_DISCIPLINE, layers=infos, warnings=list(drawing.warnings))
     tables = parse_rebar_tables(drawing)
+    source = "REBAR_TABLE"
+    if not tables:
+        lab = parse_rebar_labels(drawing)
+        if lab is not None:
+            tables = [lab]
+            source = "REBAR_LABELS"
     target = target_from_label(label)
     kot = kot_from_label(label)
     for ti, t in enumerate(tables):
@@ -178,17 +184,19 @@ def analyze_rebar(drawing: Drawing, label: str = "") -> AnalysisResult:
             r = 0.3
             el = DetectedElement(etype="rebar", layer="(metraj tablosu)", points=[(x - r, y - r), (x + r, y - r), (x + r, y + r), (x - r, y + r)],
                                  name=f"Ø{d}", subtype=f"Ø{d}", count=1, length=t.total_length.get(d, 0.0), b=d / 1000.0,
-                                 source="REBAR_TABLE", confidence=0.95)
+                                 source=source, confidence=0.95 if source == "REBAR_TABLE" else 0.8)
             el.warnings.extend(t.warnings)
-            el.label_raw = f"tablo {ti + 1}: {kg:.0f} kg"
+            el.label_raw = (f"tablo {ti + 1}: {kg:.0f} kg" if source == "REBAR_TABLE" else f"poz yazıları: {kg:.0f} kg")
             el.meta = {"dia_mm": d, "weight_kg": round(kg, 1), "length_m": round(t.total_length.get(d, 0.0), 2),
                        "target": target, "kot": kot, "table": ti + 1}
             result.elements.append(el)
     if not tables:
-        result.warnings.append("Donatı metraj tablosu bulunamadı (başlıkta Ø10 / Ø12 … çap sütunları ve AĞIRLIK satırı aranır).")
+        result.warnings.append("Donatı metraj tablosu bulunamadı (başlıkta Ø10 / Ø12 … çap sütunları ve AĞIRLIK satırı aranır) "
+                               "ve adetli poz yazısı ('P45 4Ø14 l=160') yok.")
     else:
         from .layer_profile import STRUCTURAL_TYPES
-        result.warnings.append(f"{len(tables)} metraj tablosu okundu, toplam {sum(t.total_kg for t in tables):,.0f} kg; "
+        what = f"{len(tables)} metraj tablosu okundu" if source == "REBAR_TABLE" else "poz yazılarından hesaplandı"
+        result.warnings.append(f"{what}, toplam {sum(t.total_kg for t in tables):,.0f} kg; "
                                f"hedef eleman: {STRUCTURAL_TYPES.get(target, target)} (plan adından; TEMEL / KOLON / KİRİŞ / PERDE yazmıyorsa döşeme)"
                                + (f", kot {kot}" if kot else ""))
     return result
