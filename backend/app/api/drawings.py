@@ -16,7 +16,8 @@ from ..models import Drawing, Element, Project
 from ..parser.layer_profile import ALL_ELEMENT_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, types_for
 from ..parser.dwg import convert_dwg_to_dxf, dwg_supported
 from ..parser.loader import UNIT_SCALE, load_dxf
-from ..parser.sheets import BIG_FILE_BYTES, SheetScan, crop_sheets, scan_sheets
+from ..parser.sheets import BIG_FILE_BYTES, Sheet, SheetScan, crop_sheets, scan_sheets
+from ..planset import PLAN_TYPE_BY_CODE, resolve_plan
 from ..services import analyze_and_store, recompute_derived
 from .projects import get_project
 
@@ -39,16 +40,45 @@ def _safe_name(filename: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", filename)
 
 
-def _check_discipline(d: str | None) -> str:
+AUTO_DISCIPLINE = "auto"
+
+
+def _check_discipline(d: str | None, allow_auto: bool = False) -> str:
     d = (d or DEFAULT_DISCIPLINE).strip().lower()
+    if allow_auto and d == AUTO_DISCIPLINE:
+        return AUTO_DISCIPLINE
     if d not in DISCIPLINES:
-        raise HTTPException(400, f"Geçersiz disiplin: {d} (structural / architectural / electrical)")
+        raise HTTPException(400, f"Geçersiz disiplin: {d} ({' / '.join(DISCIPLINES)})")
     return d
+
+
+def _check_plan_type(code: str | None) -> str:
+    code = (code or "").strip()
+    if code and code not in PLAN_TYPE_BY_CODE:
+        raise HTTPException(400, f"Geçersiz plan tipi: {code}")
+    return code
+
+
+def _resolve(discipline: str, plan_type: str | None, titles: list[str], layers: dict[str, int] | None = None) -> tuple[str, str]:
+    """Disiplin ve plan tipini tamamlar: plan tipi verilmemişse başlıklardan (zayıfsa katmanlardan) tanınır;
+    disiplin 'auto' ise plan tipinden gelir."""
+    code, disc = resolve_plan(titles, layers, _check_plan_type(plan_type))
+    if discipline == AUTO_DISCIPLINE:
+        discipline = disc or DEFAULT_DISCIPLINE
+    return discipline, code
+
+
+def _sheet_out(sh: Sheet) -> dict:
+    """Pafta bilgisi + başlığından / katmanlarından tanınan plan tipi ve disiplin önerisi."""
+    code, disc = resolve_plan([sh.title, *sh.titles], sh.layers)
+    pt = PLAN_TYPE_BY_CODE.get(code)
+    return {**sh.to_dict(), "plan_type": code, "plan_type_label": pt.label if pt else "",
+            "discipline": disc if (pt or disc) else "", "analyze": pt.analyze if pt else bool(disc)}
 
 
 def _create_drawing(project: Project, dest: Path, filename: str, label: str, storey_count: int,
                     unit_override: str | None, session: Session, storey_height: float | None = None,
-                    discipline: str = DEFAULT_DISCIPLINE) -> Drawing:
+                    discipline: str = DEFAULT_DISCIPLINE, plan_type: str = "") -> Drawing:
     """Kaydedilmiş DXF için Drawing kaydı açar ve analiz eder; hata olursa dosya ve kayıt geri alınır."""
     try:
         load_dxf(dest, unit_override=unit_override)
@@ -58,7 +88,7 @@ def _create_drawing(project: Project, dest: Path, filename: str, label: str, sto
     d = Drawing(project_id=project.id, filename=filename, stored_path=str(dest),
                 label=label, storey_count=max(1, storey_count), unit_override=unit_override or None,
                 storey_height=storey_height if storey_height and storey_height > 0 else None,
-                discipline=discipline)
+                discipline=discipline, plan_type=plan_type)
     session.add(d)
     session.commit()
     session.refresh(d)
@@ -95,16 +125,19 @@ def _source_out(src: Path, scan: SheetScan) -> dict:
 @router.post("/projects/{project_id}/drawings", status_code=201)
 async def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = Form(""),
                          storey_count: int = Form(1), unit_override: str | None = Form(None),
-                         discipline: str = Form(DEFAULT_DISCIPLINE),
+                         discipline: str = Form(AUTO_DISCIPLINE), plan_type: str = Form(""),
                          session: Session = Depends(get_session)):
     """DXF yükler. Dosya tek paftaysa hemen analiz edilir (201 + çizim).
+
+    discipline "auto" (varsayılan): plan tipi dosya adı ve çizimdeki başlıktan tanınır, disiplin ondan gelir.
 
     Çok paftalı (ruhsat projesi gibi bütün paftalar yan yana) ya da çok büyük dosyalarda ise dosya kaynak
     olarak saklanır ve pafta listesi döner (200 + needs_sheet_selection); kullanıcı paftaları seçince
     /drawings/from-source ile her pafta ayrı çizim olarak kırpılıp analiz edilir.
     """
     project = get_project(project_id, session)
-    discipline = _check_discipline(discipline)
+    discipline = _check_discipline(discipline, allow_auto=True)
+    plan_type = _check_plan_type(plan_type)
     fname = file.filename or ""
     is_dwg = fname.lower().endswith(".dwg")
     if not (fname.lower().endswith(".dxf") or is_dwg):
@@ -145,12 +178,13 @@ async def upload_drawing(project_id: int, file: UploadFile = File(...), label: s
         scan.save()
         return JSONResponse(status_code=200, content={
             "needs_sheet_selection": True, "source": _source_out(src, scan),
-            "sheets": [sh.to_dict() for sh in scan.sheets],
+            "sheets": [_sheet_out(sh) for sh in scan.sheets],
         })
     dest = UPLOAD_DIR / f"{project_id}_{token[:8]}_{safe}"
     src.rename(dest)
+    discipline, plan_type = _resolve(discipline, plan_type, [label, Path(fname).stem, *scan.titles], scan.layers)
     d = _create_drawing(project, dest, file_label, label or Path(fname).stem, storey_count,
-                        unit_override or None, session, discipline=discipline)
+                        unit_override or None, session, discipline=discipline, plan_type=plan_type)
     return drawing_out(d, session)
 
 
@@ -159,7 +193,8 @@ class SheetPick(BaseModel):
     label: str = ""
     storey_count: int = 1
     storey_height: float | None = None   # bu katın yüksekliği (m); boş -> proje değeri
-    discipline: str | None = None        # boş -> isteğin disiplini
+    discipline: str | None = None        # boş -> isteğin disiplini ("auto": plan tipinden)
+    plan_type: str | None = None         # boş -> pafta başlığından tanınır
 
 
 class FromSourceIn(BaseModel):
@@ -167,14 +202,15 @@ class FromSourceIn(BaseModel):
     sheets: list[SheetPick] = []
     whole: bool = False               # (küçük dosyalarda) tüm çizimi tek plan olarak ekle
     unit_override: str | None = None
-    discipline: str = DEFAULT_DISCIPLINE
+    discipline: str = AUTO_DISCIPLINE  # "auto": her paftanın disiplini başlığından tanınan plan tipinden gelir
+    plan_type: str | None = None       # whole için
 
 
 @router.get("/sources/{token}/sheets")
 def source_sheets(token: str):
     src = _source_path(token)
     scan = SheetScan.load(src) or scan_sheets(src)
-    return {"source": _source_out(src, scan), "sheets": [sh.to_dict() for sh in scan.sheets]}
+    return {"source": _source_out(src, scan), "sheets": [_sheet_out(sh) for sh in scan.sheets]}
 
 
 @router.post("/projects/{project_id}/drawings/from-source", status_code=201)
@@ -183,7 +219,7 @@ def drawings_from_source(project_id: int, body: FromSourceIn, session: Session =
     project = get_project(project_id, session)
     if body.unit_override and body.unit_override not in UNIT_SCALE:
         raise HTTPException(400, "Birim mm, cm veya m olmalı")
-    discipline = _check_discipline(body.discipline)
+    discipline = _check_discipline(body.discipline, allow_auto=True)
     src = _source_path(body.token)
     scan = SheetScan.load(src) or scan_sheets(src)
     orig = src.name[len(f"src_{body.token}_"):]
@@ -193,8 +229,9 @@ def drawings_from_source(project_id: int, body: FromSourceIn, session: Session =
             raise HTTPException(400, "Dosya tüm çizim olarak analiz edilemeyecek kadar büyük; pafta seçin")
         dest = UPLOAD_DIR / f"{project_id}_{uuid.uuid4().hex[:8]}_{orig}"
         shutil.copyfile(src, dest)
+        disc, ptype = _resolve(discipline, body.plan_type, [Path(orig).stem, *scan.titles], scan.layers)
         created.append(_create_drawing(project, dest, orig, Path(orig).stem, 1, body.unit_override, session,
-                                       discipline=discipline))
+                                       discipline=disc, plan_type=ptype))
     jobs = []
     seen: set[int] = set()
     for pick in body.sheets:
@@ -212,10 +249,11 @@ def drawings_from_source(project_id: int, body: FromSourceIn, session: Session =
             if n == 0:
                 dest.unlink(missing_ok=True)
                 continue
+            disc, ptype = _resolve(_check_discipline(pick.discipline or discipline, allow_auto=True), pick.plan_type,
+                                   [sheet.title, *sheet.titles], sheet.layers)
             created.append(_create_drawing(project, dest, f"{orig} › {sheet.title}", pick.label or sheet.title,
                                            pick.storey_count, body.unit_override, session,
-                                           storey_height=pick.storey_height,
-                                           discipline=_check_discipline(pick.discipline or discipline)))
+                                           storey_height=pick.storey_height, discipline=disc, plan_type=ptype))
     if not created:
         raise HTTPException(400, "Eklenecek pafta seçilmedi")
     return [drawing_out(d, session) for d in created]
@@ -238,6 +276,7 @@ class DrawingPatch(BaseModel):
     storey_height: float | None = None   # 0 / None -> proje değeri kullanılır
     unit_override: str | None = None   # "" -> otomatik
     discipline: str | None = None      # değişirse yeniden analiz
+    plan_type: str | None = None       # plan seti tipi ("" -> tanımsız)
 
 
 @router.patch("/drawings/{drawing_id}")
@@ -259,6 +298,8 @@ def update_drawing(drawing_id: int, body: DrawingPatch, session: Session = Depen
         if disc != d.discipline:
             reanalyze = True
             d.discipline = disc
+    if "plan_type" in data:
+        d.plan_type = _check_plan_type(data.pop("plan_type"))
     for k, v in data.items():
         setattr(d, k, v)
     session.add(d)

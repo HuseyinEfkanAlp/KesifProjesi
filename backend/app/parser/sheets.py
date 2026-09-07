@@ -52,17 +52,18 @@ class Sheet:
     titled: bool = True
     source: str = "frame"     # frame | cluster
     titles: list[str] = field(default_factory=list)   # paftadaki diğer başlık adayları (büyükten küçüğe)
+    layers: dict[str, int] = field(default_factory=dict)   # paftadaki katmanlar -> nesne sayısı (en kalabalık 40)
 
     def to_dict(self) -> dict:
         return {"index": self.index, "title": self.title, "bbox": [round(v, 3) for v in self.bbox],
                 "entity_count": self.entity_count, "text_count": self.text_count, "titled": self.titled,
-                "source": self.source, "titles": list(self.titles)}
+                "source": self.source, "titles": list(self.titles), "layers": dict(self.layers)}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Sheet":
         return cls(int(d["index"]), d["title"], tuple(d["bbox"]), int(d["entity_count"]),
                    int(d.get("text_count", 0)), bool(d.get("titled", True)), d.get("source", "frame"),
-                   list(d.get("titles", [])))
+                   list(d.get("titles", [])), dict(d.get("layers", {})))
 
 
 @dataclass
@@ -72,6 +73,8 @@ class SheetScan:
     entity_count: int
     extent: Bbox | None
     sheets: list[Sheet] = field(default_factory=list)
+    titles: list[str] = field(default_factory=list)   # dosyadaki en büyük başlık yazıları (tek paftalı dosyada plan tipi için)
+    layers: dict[str, int] = field(default_factory=dict)   # dosyadaki katmanlar -> nesne sayısı (en kalabalık 40)
 
     @property
     def multi_sheet(self) -> bool:
@@ -79,12 +82,14 @@ class SheetScan:
 
     def to_dict(self) -> dict:
         return {"path": self.path, "insunits": self.insunits, "entity_count": self.entity_count,
-                "extent": list(self.extent) if self.extent else None, "sheets": [s.to_dict() for s in self.sheets]}
+                "extent": list(self.extent) if self.extent else None, "sheets": [s.to_dict() for s in self.sheets],
+                "titles": list(self.titles), "layers": dict(self.layers)}
 
     @classmethod
     def from_dict(cls, d: dict) -> "SheetScan":
         return cls(d["path"], int(d.get("insunits", 0)), int(d.get("entity_count", 0)),
-                   tuple(d["extent"]) if d.get("extent") else None, [Sheet.from_dict(s) for s in d.get("sheets", [])])
+                   tuple(d["extent"]) if d.get("extent") else None, [Sheet.from_dict(s) for s in d.get("sheets", [])],
+                   list(d.get("titles", [])), dict(d.get("layers", {})))
 
     def cache_path(self) -> Path:
         return _cache_path(self.path)
@@ -396,8 +401,21 @@ def cluster_sheets(xs: np.ndarray, ys: np.ndarray, extent: float) -> list[Bbox]:
 
 # ---------- Pafta tespiti ----------
 
+TOP_LAYERS = 40
+
+
+def _top_layers(ids: np.ndarray, names: list[str]) -> dict[str, int]:
+    """Katman kimliklerinden en kalabalık katmanların sayımı."""
+    if len(ids) == 0 or not names:
+        return {}
+    counts = np.bincount(ids, minlength=len(names))
+    order = np.argsort(-counts)[:TOP_LAYERS]
+    return {names[i]: int(counts[i]) for i in order if counts[i] > 0}
+
+
 def _build_sheets(boxes: list[tuple[Bbox, str]], xs: np.ndarray, ys: np.ndarray,
-                  titles: list[tuple[float, float, float, str]], extent: float) -> list[Sheet]:
+                  titles: list[tuple[float, float, float, str]], extent: float,
+                  layer_ids: np.ndarray | None = None, layer_names: list[str] | None = None) -> list[Sheet]:
     sheets: list[Sheet] = []
     # Başlık kutunun içinde değilse (kümeleme yedeğinde antet yazısı plandan ayrı kalabilir) en yakın kutuya bağlanır
     def _dist(t, b) -> float:
@@ -416,7 +434,9 @@ def _build_sheets(boxes: list[tuple[Bbox, str]], xs: np.ndarray, ys: np.ndarray,
             owner[ti] = best
     for bi, (bbox, source) in enumerate(boxes):
         x0, y0, x1, y1 = bbox
-        count = int(np.count_nonzero((xs >= x0) & (xs <= x1) & (ys >= y0) & (ys <= y1)))
+        m = (xs >= x0) & (xs <= x1) & (ys >= y0) & (ys <= y1)
+        count = int(np.count_nonzero(m))
+        layers = _top_layers(layer_ids[m], layer_names) if layer_ids is not None and layer_names else {}
         inside = [t for ti, t in enumerate(titles) if owner.get(ti) == bi]
         title, titled = "", False
         alts: list[str] = []
@@ -428,7 +448,7 @@ def _build_sheets(boxes: list[tuple[Bbox, str]], xs: np.ndarray, ys: np.ndarray,
                     alts.append(t[3])
                 if len(alts) >= 5:
                     break
-        sheets.append(Sheet(0, title, bbox, count, len(inside), titled, source, alts))
+        sheets.append(Sheet(0, title, bbox, count, len(inside), titled, source, alts, layers))
     # sıralama: üst satırdan alta, soldan sağa. Aynı satır = y aralıkları çakışan paftalar.
     sheets.sort(key=lambda s: -(s.bbox[1] + s.bbox[3]) / 2)
     rows: list[list[Sheet]] = []
@@ -455,6 +475,9 @@ def scan_sheets(path: str | Path) -> SheetScan:
     inserts: list[tuple[str, float, float, float, float]] = []   # ad, x, y, sx, sy
     blocks: dict[str, Bbox] = {}
     texts: list[tuple[float, float, float, str]] = []
+    layer_ids = array("i")
+    layer_names: list[str] = []
+    layer_index: dict[str, int] = {}
     insunits = 0
     count = 0
     with _open_dxf_text(path) as f:
@@ -473,6 +496,12 @@ def scan_sheets(path: str | Path) -> SheetScan:
                 continue
             xs.append(ent["xs"][0])
             ys.append(ent["ys"][0])
+            lname = ent.get("8", "0") or "0"
+            li = layer_index.get(lname)
+            if li is None:
+                li = layer_index[lname] = len(layer_names)
+                layer_names.append(lname)
+            layer_ids.append(li)
             if t == "LINE" and len(ent["xs"]) >= 2 and len(ent["ys"]) >= 2:
                 lines.extend((ent["xs"][0], ent["ys"][0], ent["xs"][1], ent["ys"][1]))
             elif t == "LWPOLYLINE" and (ent.get("70", 0) & 1 or len(ent["xs"]) == 5):
@@ -534,8 +563,15 @@ def scan_sheets(path: str | Path) -> SheetScan:
                 boxes.append((b, "cluster"))
     else:
         boxes = [(b, "cluster") for b in cluster_sheets(npx, npy, extent)]
-    sheets = _build_sheets(boxes, npx, npy, titles, extent) if len(boxes) >= 2 else []
-    return SheetScan(str(path), insunits, count, extent_box, sheets)
+    npl = np.frombuffer(layer_ids, dtype="i").copy() if len(layer_ids) else np.zeros(0, dtype="i")
+    sheets = _build_sheets(boxes, npx, npy, titles, extent, npl, layer_names) if len(boxes) >= 2 else []
+    top: list[str] = []
+    for t in sorted(titles, key=lambda t: -t[2]):
+        if t[3] not in top:
+            top.append(t[3])
+        if len(top) >= 8:
+            break
+    return SheetScan(str(path), insunits, count, extent_box, sheets, top, _top_layers(npl, layer_names))
 
 
 # ---------- Kırpma ----------

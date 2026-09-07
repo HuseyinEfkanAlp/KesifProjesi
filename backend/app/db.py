@@ -32,6 +32,8 @@ _ADDED_COLUMNS = [
     ("priceitem", "hours_per_unit", "FLOAT DEFAULT 0"),
     ("priceitem", "crew_size", "FLOAT DEFAULT 0"),
     ("element", "meta", "JSON"),
+    ("project", "plan_set", "JSON"),
+    ("drawing", "plan_type", "VARCHAR DEFAULT ''"),
 ]
 
 

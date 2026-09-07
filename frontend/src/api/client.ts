@@ -1,4 +1,4 @@
-import type { Boq, Catalog, CatalogItem, CostResult, Discipline, Drawing, Element, LayerCheck, PriceIn, PriceItem, Project, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
+import type { Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, LayerCheck, PlanCheck, PlanLevel, PlanType, PriceIn, PriceItem, Project, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
@@ -24,7 +24,8 @@ export interface SheetPick {
   label?: string
   storey_count?: number
   storey_height?: number | null
-  discipline?: Discipline
+  discipline?: DisciplineChoice
+  plan_type?: string
 }
 
 export interface DrawingPatch {
@@ -33,6 +34,16 @@ export interface DrawingPatch {
   storey_height?: number | null
   unit_override?: string
   discipline?: Discipline
+  plan_type?: string
+}
+
+export interface UploadOptions {
+  label?: string
+  storeyCount?: number
+  unitOverride?: string
+  /** 'auto' (varsayılan): plan tipi dosya adı / başlıktan tanınır, disiplin ondan gelir */
+  discipline?: DisciplineChoice
+  planType?: string
 }
 
 export const Api = {
@@ -44,22 +55,27 @@ export const Api = {
     remove: (id: number) => request<void>(`/api/projects/${id}`, { method: 'DELETE' }),
     mapLayer: (id: number, layer: string, etype: string | null) =>
       request<{ profile: Record<string, string[]> }>(`/api/projects/${id}/layer-profile/map`, { method: 'POST', body: json({ layer, etype }) }),
+    planCheck: (id: number) => request<PlanCheck>(`/api/projects/${id}/plan-check`),
+    setPlanLevels: (id: number, levels: Record<string, PlanLevel>) =>
+      request<PlanCheck>(`/api/projects/${id}/plan-set`, { method: 'PUT', body: json(levels) }),
+    planTypes: () => request<{ groups: Record<string, string>; types: PlanType[]; levels: PlanLevel[] }>('/api/projects/meta/plan-types'),
   },
   drawings: {
     list: (pid: number) => request<Drawing[]>(`/api/projects/${pid}/drawings`),
     get: (id: number) => request<Drawing>(`/api/drawings/${id}`),
     /** Tek paftalı dosya: doğrudan çizim döner. Çok paftalı / büyük dosya: pafta listesi döner (SheetSelection). */
-    upload: (pid: number, file: File, label: string, storeyCount: number, unitOverride: string, discipline: Discipline) => {
+    upload: (pid: number, file: File, opts: UploadOptions = {}) => {
       const fd = new FormData()
       fd.append('file', file)
-      fd.append('label', label)
-      fd.append('storey_count', String(storeyCount))
-      fd.append('discipline', discipline)
-      if (unitOverride) fd.append('unit_override', unitOverride)
+      fd.append('label', opts.label ?? '')
+      fd.append('storey_count', String(opts.storeyCount ?? 1))
+      fd.append('discipline', opts.discipline ?? 'auto')
+      if (opts.planType) fd.append('plan_type', opts.planType)
+      if (opts.unitOverride) fd.append('unit_override', opts.unitOverride)
       return request<UploadResult>(`/api/projects/${pid}/drawings`, { method: 'POST', body: fd })
     },
-    /** Kaynak dosyadan seçilen paftaları kırpıp ayrı çizimler olarak ekler */
-    fromSource: (pid: number, token: string, sheets: SheetPick[], unitOverride: string, discipline: Discipline, whole = false) =>
+    /** Kaynak dosyadan seçilen paftaları kırpıp ayrı çizimler olarak ekler (disiplin 'auto': her pafta kendi plan tipinden) */
+    fromSource: (pid: number, token: string, sheets: SheetPick[], unitOverride: string, discipline: DisciplineChoice = 'auto', whole = false) =>
       request<Drawing[]>(`/api/projects/${pid}/drawings/from-source`, {
         method: 'POST', body: json({ token, sheets, whole, unit_override: unitOverride || null, discipline }),
       }),

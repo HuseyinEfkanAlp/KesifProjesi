@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from ..db import get_session
 from ..models import Drawing, Element, PriceItem, Project
 from ..parser.layer_profile import ALL_TYPES, DEFAULT_PROFILE, DISCIPLINES, TYPES_BY_DISCIPLINE, LayerProfile
+from ..planset import LEVELS, PLAN_GROUPS, PLAN_TYPE_BY_CODE, PLAN_TYPES, effective_levels, plan_check
 from ..quantity.boq import DEFAULT_PARAMS, KIND_META
 from ..quantity.engine import DEFAULT_REBAR_RATIOS
 from ..services import analyze_and_store, project_params
@@ -64,9 +65,14 @@ def get_project(project_id: int, session: Session) -> Project:
 
 def project_out(p: Project, session: Session) -> dict:
     n = len(session.exec(select(Drawing.id).where(Drawing.project_id == p.id)).all())
+    ds = session.exec(select(Drawing).where(Drawing.project_id == p.id)).all()
+    check = plan_check(ds, p.plan_set)
     return {**p.model_dump(), "drawing_count": n,
             "rebar_ratios": {**DEFAULT_REBAR_RATIOS, **(p.rebar_ratios or {})},
-            "params": project_params(p)}
+            "params": project_params(p),
+            "plan_check": {"missing_required": check["missing_required"], "present": check["present"],
+                           "total_required": check["total_required"], "complete": check["complete"],
+                           "warnings": check["warnings"]}}
 
 
 @router.get("")
@@ -166,6 +172,40 @@ def map_layer(project_id: int, body: LayerMap, session: Session = Depends(get_se
 def _reanalyze_all(p: Project, session: Session) -> None:
     for d in session.exec(select(Drawing).where(Drawing.project_id == p.id)):
         analyze_and_store(d, p, session)
+
+
+@router.get("/{project_id}/plan-check")
+def read_plan_check(project_id: int, session: Session = Depends(get_session)):
+    """Plan seti kontrolü: hangi plan tipleri yüklü, hangileri eksik (uyarı), hangileri bu projede yok sayıldı."""
+    p = get_project(project_id, session)
+    ds = session.exec(select(Drawing).where(Drawing.project_id == p.id)).all()
+    return {**plan_check(ds, p.plan_set), "plan_set": effective_levels(p.plan_set), "levels": list(LEVELS)}
+
+
+@router.put("/{project_id}/plan-set")
+def update_plan_set(project_id: int, body: dict[str, str], session: Session = Depends(get_session)):
+    """Plan tipi gerekliliklerini değiştirir: {code: required | optional | skip}. Verilmeyenler olduğu gibi kalır."""
+    p = get_project(project_id, session)
+    cur = dict(p.plan_set or {})
+    for code, level in body.items():
+        if code not in PLAN_TYPE_BY_CODE:
+            raise HTTPException(400, f"Geçersiz plan tipi: {code}")
+        if level not in LEVELS:
+            raise HTTPException(400, f"Geçersiz gereklilik: {level} ({' / '.join(LEVELS)})")
+        if PLAN_TYPE_BY_CODE[code].level == level:
+            cur.pop(code, None)      # varsayılana döndü
+        else:
+            cur[code] = level
+    p.plan_set = cur
+    session.add(p)
+    session.commit()
+    return read_plan_check(project_id, session)
+
+
+@router.get("/meta/plan-types")
+def plan_types_meta():
+    """Plan seti kataloğu: gruplar ve plan tipleri (başlık tanıma, disiplin önerisi, varsayılan gereklilik)."""
+    return {"groups": PLAN_GROUPS, "types": [t.to_dict() for t in PLAN_TYPES], "levels": list(LEVELS)}
 
 
 @router.get("/meta/disciplines")

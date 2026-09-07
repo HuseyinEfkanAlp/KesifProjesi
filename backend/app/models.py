@@ -18,6 +18,8 @@ class Project(SQLModel, table=True):
     layer_profile: dict[str, list[str]] = Field(default_factory=dict, sa_column=Column(JSON))
     # Disiplin parametreleri (duvar yüksekliği, sıva/boya yüzü, kablo iniş payı, günlük çalışma saati...)
     params: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    # Plan seti: plan tipi kodu -> required / optional / skip (varsayılandan farklı olanlar; bkz. planset.py)
+    plan_set: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -27,7 +29,8 @@ class Drawing(SQLModel, table=True):
     filename: str
     stored_path: str
     label: str = ""                 # "Zemin Kat", "Temel" vb.
-    discipline: str = "structural"  # structural | architectural | electrical
+    discipline: str = "structural"  # structural | architectural | electrical | rebar | standard | mapped
+    plan_type: str = ""             # plan seti tipi (sta_kat_kalip, elk_tava, mim_tavan ...; bkz. planset.py)
     storey_count: int = 1           # bu planın temsil ettiği kat sayısı
     storey_height: float | None = None   # bu katın yüksekliği (m); None -> projenin H değeri
     unit: str = "m"

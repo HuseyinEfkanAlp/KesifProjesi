@@ -5,23 +5,10 @@ import type { Project } from '../types'
 
 export default function Projects() {
   const [projects, setProjects] = useState<Project[]>([])
-  const [name, setName] = useState('')
-  const [storeyHeight, setStoreyHeight] = useState(3.0)
-  const [slab, setSlab] = useState(0.15)
   const [error, setError] = useState('')
 
   const load = () => Api.projects.list().then(setProjects).catch((e) => setError(e.message))
   useEffect(() => { load() }, [])
-
-  const create = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!name.trim()) return
-    try {
-      await Api.projects.create({ name: name.trim(), storey_height: storeyHeight, slab_thickness: slab })
-      setName('')
-      load()
-    } catch (err) { setError((err as Error).message) }
-  }
 
   const remove = async (p: Project) => {
     if (!confirm(`"${p.name}" projesi ve tüm çizimleri silinsin mi?`)) return
@@ -31,25 +18,24 @@ export default function Projects() {
 
   return (
     <>
-      <h1>Projeler</h1>
-      <div className="panel">
-        <h3>Yeni proje</h3>
-        <form className="row" onSubmit={create}>
-          <label className="field">Proje adı<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Örn. Ataşehir Konut Bloğu" style={{ width: 260 }} /></label>
-          <label className="field">Kat yüksekliği (m)<input type="number" step="0.05" value={storeyHeight} onChange={(e) => setStoreyHeight(+e.target.value)} /></label>
-          <label className="field">Döşeme kalınlığı (m)<input type="number" step="0.01" value={slab} onChange={(e) => setSlab(+e.target.value)} /></label>
-          <button type="submit">Oluştur</button>
-        </form>
-        {error && <div className="error">{error}</div>}
+      <div className="row between">
+        <h1>Projeler</h1>
+        <Link className="btn" to="/projects/new">+ Yeni proje</Link>
       </div>
+      {error && <div className="error">{error}</div>}
       <div className="panel">
-        {projects.length === 0 && <p className="muted">Henüz proje yok.</p>}
+        {projects.length === 0 && (
+          <p className="muted">Henüz proje yok. <Link to="/projects/new">Yeni proje</Link> açın: ad ve kat yüksekliğini girin, planlarınızı (ya da bütün ruhsat projesini) bırakın.</p>
+        )}
         <ul className="list">
           {projects.map((p) => (
             <li key={p.id}>
               <div>
                 <Link to={`/projects/${p.id}`}><strong>{p.name}</strong></Link>
-                <div className="muted">{p.drawing_count} çizim · Kat yük. {p.storey_height} m · Döşeme {Math.round(p.slab_thickness * 100)} cm</div>
+                {p.plan_check && (p.plan_check.complete
+                  ? <span className="badge st-present" style={{ marginLeft: 8 }}>plan seti tamam</span>
+                  : <span className="badge st-missing" style={{ marginLeft: 8 }} title={p.plan_check.warnings.join('\n')}>{p.plan_check.missing_required} plan eksik</span>)}
+                <div className="muted">{p.drawing_count} çizim · Kat yük. {p.storey_height} m · Döşeme {Math.round(p.slab_thickness * 100)} cm{p.description ? ` · ${p.description}` : ''}</div>
               </div>
               <div className="row">
                 <Link className="btn" to={`/projects/${p.id}`}>Aç</Link>

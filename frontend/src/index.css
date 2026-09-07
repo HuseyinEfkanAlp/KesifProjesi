@@ -104,3 +104,36 @@ td input.wide { width: 110px; }
 .badge.disc-standard { background: #444; }
 code.layer { font-family: Consolas, monospace; font-size: 12px; background: #eef2f6; padding: 1px 5px; border-radius: 4px; }
 .ok { color: var(--ok); }
+
+/* disiplin rozetleri (ek) */
+.badge.disc-rebar { background: #6d4c41; }
+.badge.disc-mapped { background: #5c6bc0; }
+/* plan seti durumu */
+.badge.st-present { background: var(--ok); }
+.badge.st-missing { background: var(--danger); }
+.badge.st-skipped { background: #9a9a9a; }
+.badge.st-optional_missing { background: #e5e9ee; color: var(--muted); }
+.plan-table tr.st-missing td { background: #fff5f4; }
+.plan-table tr.st-skipped td { color: var(--muted); }
+.plan-table td.group-cell { vertical-align: top; background: #f7f9fb; }
+.plan-table .hint { font-size: 11px; }
+.chip { display: inline-block; background: #e8f1fb; border-radius: 10px; padding: 1px 8px; margin: 1px 4px 1px 0; font-size: 12px; }
+/* plan yükleme */
+.dropzone { border: 2px dashed var(--border); border-radius: 8px; padding: 18px; text-align: center; cursor: pointer; background: #fafbfc; }
+.dropzone.over { border-color: var(--primary); background: #e8f1fb; }
+.dropzone .dz-title { font-weight: 600; margin-bottom: 4px; }
+.busy { color: var(--primary); font-weight: 600; }
+.intake-log { list-style: none; margin: 10px 0 0; padding: 0; font-size: 13px; }
+.intake-log li { padding: 3px 0; border-bottom: 1px dotted var(--border); }
+.intake-log li .mark { display: inline-block; width: 18px; }
+.intake-log li.ok .mark { color: var(--ok); }
+.intake-log li.error { color: var(--danger); }
+.intake-log li.warn .mark { color: #e0a800; }
+.sheet-picker { margin-top: 12px; }
+select.unset { border-color: var(--warn-border); background: var(--warn-bg); }
+/* sihirbaz adımları */
+.steps { display: flex; gap: 8px; list-style: none; padding: 0; margin: 0 0 14px; }
+.steps li { padding: 6px 12px; border-radius: 6px; background: #e5e9ee; color: var(--muted); font-size: 13px; }
+.steps li.active { background: var(--primary); color: #fff; font-weight: 600; }
+.steps li.done { background: #d9efd9; color: #1e5e1e; }
+.btn.secondary-link { background: #e5e9ee; color: var(--text); }

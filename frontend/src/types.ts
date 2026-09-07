@@ -1,4 +1,6 @@
 export type Discipline = 'structural' | 'architectural' | 'electrical' | 'standard' | 'rebar' | 'mapped'
+/** Yüklerken "auto": disiplin, başlıktan tanınan plan tipinden gelir */
+export type DisciplineChoice = Discipline | 'auto'
 
 export const DISCIPLINES: Record<Discipline, string> = {
   structural: 'Statik (kalıp planı)',
@@ -92,6 +94,44 @@ export interface Project {
   params: ProjectParams
   drawing_count: number
   created_at: string
+  plan_check: PlanCheckSummary
+}
+
+/** Plan seti: proje için gerekli pafta tipleri (planset.py) */
+export type PlanLevel = 'required' | 'optional' | 'skip'
+export type PlanStatus = 'present' | 'missing' | 'skipped' | 'optional_missing'
+
+export interface PlanType {
+  code: string
+  group: string
+  group_label: string
+  label: string
+  discipline: Discipline
+  level: PlanLevel
+  hint: string
+  analyze: boolean
+  satisfies: string[]
+}
+
+export interface PlanTypeStatus extends PlanType {
+  status: PlanStatus
+  drawings: { id: number; label: string; discipline: Discipline }[]
+  via: string | null
+}
+
+export interface PlanCheckSummary {
+  missing_required: number
+  present: number
+  total_required: number
+  complete: boolean
+  warnings: string[]
+}
+
+export interface PlanCheck extends PlanCheckSummary {
+  groups: { code: string; label: string; types: PlanTypeStatus[]; missing: number; present: number }[]
+  unknown: { id: number; label: string; discipline: Discipline }[]
+  plan_set: Record<string, PlanLevel>
+  levels: PlanLevel[]
 }
 
 export interface LayerInfo {
@@ -110,6 +150,7 @@ export interface Drawing {
   filename: string
   label: string
   discipline: Discipline
+  plan_type: string
   storey_count: number
   storey_height: number | null
   unit: string
@@ -131,6 +172,12 @@ export interface SheetInfo {
   source: 'frame' | 'cluster'
   /** Paftadaki diğer başlık adayları (ana başlık yanlış yazılmışsa kalıp planını bunlardan tanırız) */
   titles: string[]
+  /** Başlıktan tanınan plan tipi ve disiplin önerisi ("" = tanınamadı) */
+  plan_type: string
+  plan_type_label: string
+  discipline: Discipline | ''
+  /** false: kesit / detay gibi metraja girmeyen pafta (önceden işaretlenmez) */
+  analyze: boolean
 }
 
 export interface SourceInfo {

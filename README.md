@@ -59,15 +59,26 @@ Tarayıcı: http://127.0.0.1:5173  (API dokümantasyonu: http://127.0.0.1:8000/d
 
 ## Kullanım akışı
 
-1. **Proje oluştur**: kat yüksekliği (H) ve varsayılan döşeme kalınlığı (d) gir. Proje sayfasında mimari / elektrik / süre
-   parametreleri: duvar yüksekliği (boşsa H − d), sıva ve boya yüzü sayısı, kablo iniş payı (m/hat), kablo ve tava fire %, günlük çalışma saati.
-2. **DXF yükle**: AutoCAD'de DWG'yi *Farklı Kaydet → AutoCAD DXF* ile dönüştür. Yüklerken **disiplin** seç (statik / mimari / elektrik);
-   çizim o disiplinin dedektörleriyle analiz edilir. Disiplin sonradan çizim listesinden değiştirilebilir (yeniden analiz edilir).
-   - Her plan ayrı dosya olabilir, ya da **bütün paftaların yan yana durduğu tek ruhsat projesi dosyası** yüklenir:
-     paftalar otomatik bulunur (çerçeve dikdörtgenleri; yoksa nesne kümeleri), listeden **kalıp planları** seçilir,
-     her pafta ayrı plan olarak kırpılıp analiz edilir. 40 MB üstü dosyalar hiç bir zaman bütün olarak açılmaz.
+1. **Yeni proje** (sihirbaz, `/projects/new`): ad, kat yüksekliği (H) ve varsayılan döşeme kalınlığı (d) gir; ikinci adımda
+   **planlarını bırak**. Proje sayfasında mimari / elektrik / süre parametreleri: duvar yüksekliği (boşsa H − d), sıva ve boya
+   yüzü sayısı, kablo iniş payı (m/hat), kablo ve tava fire %, günlük çalışma saati.
+2. **Planları yükle**: DXF ya da DWG (ODA File Converter kuruluysa), birden çok dosya birlikte bırakılabilir. Her dosyanın
+   **plan tipi** (temel kalıp, kat kalıp, donatı, kolon / kiriş detay, mimari kat / tavan / döşeme kaplama / çatı / cephe,
+   elektrik tava / aydınlatma / kuvvet / zayıf akım, mekanik ısıtma / havalandırma / sıhhi / yangın, altyapı, peyzaj…)
+   dosya adı ve paftadaki başlıktan tanınır; analiz **disiplini** plan tipinden gelir (`planset.py`). Başlık zayıfsa
+   ("ZEMİN KAT PLANI") katman adları karar verir: KOLON / KİRİŞ katmanları → statik kalıp planı, DUVAR / KAPI → mimari,
+   TAVA / KABLO → elektrik, `KSF-` → KÇS standart. Disiplin ve plan tipi sonradan çizim listesinden değiştirilebilir
+   (disiplin değişince yeniden analiz edilir).
+   - **Ruhsat projesi** (bütün paftalar yan yana tek dosya): paftalar otomatik bulunur (çerçeve dikdörtgenleri; yoksa nesne
+     kümeleri), her paftanın plan tipi başlığından tanınıp önceden işaretlenir (kesit / detay paftaları işaretlenmez);
+     onaylanan paftalar ayrı plan olarak kırpılıp kendi disipliniyle analiz edilir. 40 MB üstü dosyalar hiçbir zaman bütün olarak açılmaz.
    - "Kaç kat temsil ediyor" alanı tip kat çarpanıdır; temel elemanları hiçbir zaman çarpılmaz.
    - Her planın kendi **kat yüksekliği** girilebilir (boşsa projenin H değeri).
+   - **Plan seti kontrolü**: proje sayfası ve sihirbaz, hangi plan tiplerinin yüklendiğini gösterir; yüklenmemiş zorunlu planlar
+     için uyarı verir ("Altyapı: Altyapı planı yüklenmedi", "Elektrik: Elektrik kablo tava planı yüklenmedi",
+     "Mimari: Mimari tavan planı yüklenmedi" …). Projede gerçekten olmayan bir plan satırında **Bu projede yok** seçilir;
+     gereklilik projeye kaydedilir (`plan_set`). Plan tipi tanınamayan çizimler ayrıca uyarılır. API:
+     `GET /api/projects/{id}/plan-check`, `PUT /api/projects/{id}/plan-set`, `GET /api/projects/meta/plan-types`.
 3. **Elemanlar** sayfası: plan önizlemede tespit edilen elemanlar renkli görünür.
    - **Katman eşleme**: hangi katmanın kolon / duvar / tava / … çizdiğini seç; yalnızca çizimin disiplinine ait tipler seçilebilir.
      Eşlenmemiş katmanlar metraja girmez.
@@ -98,7 +109,9 @@ Tarayıcı: http://127.0.0.1:5173  (API dokümantasyonu: http://127.0.0.1:8000/d
 - **Birim**: `$INSUNITS` başlığından (mm/cm/m); yoksa çizim boyutundan tahmin edilir ve uyarı verilir. Çizim bazında elle seçilebilir.
 - **Çok paftalı dosya** (`sheets.py`): dosya ezdxf'siz satır satır taranır (500 MB ≈ 20 s). Pafta çerçeveleri = büyük
   dikdörtgenler (kapalı polyline, 4 çizgi ya da büyük antet bloğu); iç içe olanlardan dıştaki alınır. Her paftanın başlığı
-  içindeki en büyük "… PLANI / KESİTİ / DETAYI" yazısıdır. Seçilen paftalar tek geçişte küçük DXF'lere kırpılır
+  içindeki en büyük "… PLANI / KESİTİ / DETAYI" yazısıdır. Tarama her pafta için en kalabalık 40 katmanı da sayar
+  (plan tipi / disiplin ipucu). Başlık bir blok tanımının içindeyse (antet bloğu ATTRIB değil, blok içi TEXT) bulunamaz;
+  pafta "başlıksız" görünür ve plan tipi elle seçilir. Seçilen paftalar tek geçişte küçük DXF'lere kırpılır
   (çizgi, polyline, yazı, daire, yay, solid; blok ve tarama alınmaz).
 - **Radye**: temel katmanındaki çokgenler kalınlık bölgeleridir (`RD1` + `70cm`); pafta kesiminde açık kalan sınır kapatılır.
   Çokgen dışında kalan radye etiketleri varsa (`RD2 40cm`, sınırı çizilmemiş ince bölge) bina oturumu kolon/perde dış
@@ -278,6 +291,16 @@ Mimari ve elektrik dedektörleri şimdilik sentetik çizimlerle (`tests/fixtures
 2. Firma katman standardını `layer_profile.py` içindeki `DEFAULT_PROFILE`'a ekle (`wall`, `door`, `window`, `tray`, `cable`, `conduit`, `fixture`).
 3. Etiket biçimleri farklıysa `labels_ext.py` regex'lerini genişlet, `tests/test_disciplines.py`'ye örnek ekle.
 4. Blok adlarından kategori/ölçü çıkarımı için `labels_ext.py` içindeki `FIXTURE_CATEGORIES`, `opening_type_from_name`, `size_from_name`.
+
+## Plan seti (`planset.py`)
+
+`PLAN_TYPES`: 7 grupta (statik, mimari, elektrik, mekanik, altyapı, peyzaj, asansör) ~30 plan tipi; her biri için başlık
+düzenli ifadesi (Türkçe harfler ASCII'ye indirgenir, sıra önemli: özel olanlar önce), analiz disiplini, varsayılan
+gereklilik (`required` / `optional`), `analyze` (kesit / detay: yüklenir ama metraja girmez) ve `satisfies`
+(genel elektrik tesisat planı aydınlatma + kuvveti karşılar). `classify_title()` başlıklardan ilk tanınan tipi verir
+(plan başlığı kesit / detay başlığına tercih edilir); `discipline_from_layers()` katman sayımından baskın disiplini bulur;
+`resolve_plan()` ikisini birleştirir. `plan_check()` projenin çizimlerine göre durum listesi ve uyarıları üretir.
+Yeni bir plan tipi eklemek `PLAN_TYPES` listesine bir satırdır.
 
 ## Yol haritası
 

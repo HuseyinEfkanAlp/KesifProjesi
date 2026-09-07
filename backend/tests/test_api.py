@@ -143,9 +143,9 @@ def test_multi_discipline_flow(client, storey_dxf, arch_dxf, elec_dxf):
     # yanlış disiplinle yüklenen elektrik paftası -> disiplin değiştirilince yeniden analiz
     with open(elec_dxf, "rb") as f:
         r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("elektrik.dxf", f, "application/dxf")},
-                        data={"label": "Tava planı"})
+                        data={"label": "Tava planı", "discipline": "structural"})   # yanlış disiplin elle seçildi
     elec = r.json()
-    assert elec["element_count"] == 0
+    assert elec["element_count"] == 0 and elec["plan_type"] == "elk_tava"
     r = client.patch(f"/api/drawings/{elec['id']}", json={"discipline": "electrical"})
     assert r.status_code == 200 and r.json()["element_count"] > 0
     assert client.patch(f"/api/drawings/{elec['id']}", json={"discipline": "makine"}).status_code == 400
