@@ -334,7 +334,10 @@ astar / mantolama), pencere var ama söve / denizlik / silme yok, cam m² yok, �
 ve yalıtımı yok, temel drenajı, döşeme kaplaması tipi. API: `GET /api/projects/{id}/systems` → `roof`, `derived`, `checklist`.
 
 **Çerçevesiz paftalar**: çerçeve yoksa ve kümeleme başlık sayısından az pafta bulursa, aynı hizadaki pafta başlıklarının x
-konumlarından bantlar üretilir (`sheets.py: boxes_from_titles`, kaynak "title"); B2 BLOK 11 paftaya ayrıldı.
+konumlarından bantlar üretilir (`sheets.py: boxes_from_titles`, kaynak "title"): başlık satırındaki aynı boy yazılar da pafta
+başlığıdır ("DOĞRAMALAR", "PREKAST KALIP"), pafta adı satırdaki başlıktır (daha büyük alt görünüş başlığı aday listesine gider), aykırı
+noktalar yüzdelik yayılımla elenir. B2 BLOK 11 paftaya ayrıldı ve her pafta doğru tipe (kat planı / kesit / görünüş / doğrama / prekast) atandı.
+Plan tipleri: `mim_dograma` (poz listesi) ve `mim_prekast` eklendi; "… KAT PLANI" başlığı statik xref katmanları olsa da mimari sayılır.
 
 ## Gerçek çizimde öğrenilenler (B2 BLOK mimari uygulama seti, 520 MB DXF, 7 Eyl 2026)
 

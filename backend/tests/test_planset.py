@@ -165,7 +165,8 @@ def test_layers_override_weak_title():
     assert discipline_from_layers({"YAZI": 100, "AKS": 50}) is None
     assert discipline_from_layers({"KOLON": 3}) is None   # çok az nesne
 
-    assert resolve_plan(["ZEMİN KAT PLANI"], sta) == ("sta_kat_kalip", "structural")
+    assert resolve_plan(["ZEMİN PLANI"], sta) == ("sta_kat_kalip", "structural")          # genel "PLAN": katmanlar karar verir
+    assert resolve_plan(["ZEMİN KAT PLANI"], sta) == ("mim_kat_plani", "architectural")   # "KAT PLANI" açıkça mimari (statik xref olsa da)
     assert resolve_plan(["ZEMİN KAT PLANI"], arch) == ("mim_kat_plani", "architectural")
     assert resolve_plan(["ZEMİN KAT PLANI"], None) == ("mim_kat_plani", "architectural")
     assert resolve_plan(["Pafta 3 (başlıksız)"], sta) == ("sta_kat_kalip", "structural")
@@ -183,6 +184,6 @@ def test_layers_override_weak_title():
 def test_api_weak_title_uses_layers(client, storey_dxf):
     pid = client.post("/api/projects", json={"name": "Katman ipucu"}).json()["id"]
     with open(storey_dxf, "rb") as f:
-        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("ZEMIN KAT PLANI.dxf", f, "application/dxf")})
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("ZEMIN PLANI.dxf", f, "application/dxf")})
     assert r.status_code == 201, r.text
     assert r.json()["plan_type"] == "sta_kat_kalip" and r.json()["discipline"] == "structural" and r.json()["element_count"] > 0

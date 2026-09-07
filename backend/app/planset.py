@@ -49,6 +49,11 @@ class PlanType:
 
 # Sıra önemli: ilk eşleşen kazanır. Özel olanlar (donatı, tava, yangın...) genel "kat planı"ndan önce gelir.
 PLAN_TYPES: list[PlanType] = [
+    # --- Prekast / doğrama paftaları (statik KALIP kuralından önce: "PREKAST KALIP" kalıp planı değildir)
+    PlanType("mim_prekast", "MIM", "Prekast panel / kalıp paftası", "mapped", level=OPTIONAL,
+             pattern=r"PREKAST|PRECAST", hint="Panel kodları etiket sayımıyla (PREKAST_PANEL) sayılır."),
+    PlanType("mim_dograma", "MIM", "Doğrama listesi / detayları", "mapped", level=OPTIONAL,
+             pattern=r"DOGRAMA", hint="Poz listesi (Poz / Adet) otomatik okunur."),
     # --- Statik
     PlanType("sta_temel_donati", "STA", "Temel donatı planı", "rebar",
              pattern=r"(TEMEL|RADYE).*DONATI|DONATI.*(TEMEL|RADYE)", hint="Temel demir metraj tablosu buradan okunur."),
@@ -205,7 +210,9 @@ def resolve_plan(titles: list[str], layers: dict[str, int] | None = None, explic
         return explicit, discipline_for(explicit)
     found = classify_title(*titles)
     code = found.code if found else ""
-    if found is None or found.code in WEAK_TYPES:
+    # "… KAT PLANI" açıkça mimari kat planıdır (statik ofis "KALIP PLANI" yazar); yalnız genel "PLAN" eşleşmesi zayıftır
+    strong_arch = any(re.search(r"KAT\s*PLAN|MIMARI", normalize_title(t)) for t in titles if t)
+    if found is None or (found.code in WEAK_TYPES and not strong_arch):
         ld = discipline_from_layers(layers)
         if ld and (found is None or found.discipline != ld):
             code = DEFAULT_TYPE_FOR_DISCIPLINE.get(ld, "")

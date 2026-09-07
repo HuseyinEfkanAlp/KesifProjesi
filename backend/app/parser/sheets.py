@@ -414,12 +414,16 @@ def _top_layers(ids: np.ndarray, names: list[str]) -> dict[str, int]:
 
 
 def boxes_from_titles(titles: list[tuple[float, float, float, str]], xs: np.ndarray, ys: np.ndarray,
-                      extent: float) -> list[Bbox]:
+                      extent: float, big_texts: list[tuple[float, float, float, str]] | None = None,
+                      names_out: list[str] | None = None) -> list[Bbox]:
     """Çerçevesiz, yan yana dizilmiş paftalar: aynı hizada (aynı y) duran pafta başlıklarının x konumlarından
     pafta bantları üretir. Başlıklar pafta sol kenarına yakın yazılır; bant = [başlık x − pay, sonraki başlık x − pay].
     Bandın y aralığı içindeki nesnelerden (uzak aykırılar hariç) alınır. En az 3 başlık aynı satırda olmalı."""
-    if len(titles) < 3 or extent <= 0:
+    if len(titles) < 3 or extent <= 0 or len(xs) == 0:
         return []
+    # aykırı noktalar (doku / uzak nesneler) yayılımı şişirir: yüzdelik tabanlı sağlam yayılım
+    px = np.percentile(xs, [1, 99]); py = np.percentile(ys, [1, 99])
+    extent = min(extent, max(float(px[1] - px[0]), float(py[1] - py[0]), 1e-9))
     rows: list[list[tuple[float, float, float, str]]] = []
     for t in sorted(titles, key=lambda t: t[1]):
         if rows and abs(rows[-1][0][1] - t[1]) <= 0.02 * extent:
@@ -427,11 +431,26 @@ def boxes_from_titles(titles: list[tuple[float, float, float, str]], xs: np.ndar
         else:
             rows.append([t])
     row = max(rows, key=len)
+    # başlık satırındaki aynı boy diğer yazılar da pafta başlığıdır ("DOĞRAMALAR", "PREKAST KALIP": PLAN/KESİT geçmez)
+    if big_texts:
+        ty0 = float(np.median([t[1] for t in row]))
+        h0 = float(np.median([t[2] for t in row]))
+        seen = {(round(t[0]), round(t[1])) for t in row}
+        for t in big_texts:
+            if abs(t[1] - ty0) <= 0.02 * extent and h0 > 0 and 0.7 <= t[2] / h0 <= 1.4 and (round(t[0]), round(t[1])) not in seen:
+                row.append(t)
+    # satırdaki yazı boyu başlık boyundan çok farklıysa (küçük alt başlık / not) pafta başlığı değildir
+    h_med = float(np.median([t[2] for t in row]))
+    same = [t for t in row if h_med > 0 and 0.7 <= t[2] / h_med <= 1.4]
+    if len(same) >= 3:
+        row = same
     # aynı x'e çok yakın başlıklar (alt başlık) tek sayılır
     xs_t: list[float] = []
+    names: list[str] = []
     for t in sorted(row, key=lambda t: t[0]):
         if not xs_t or t[0] - xs_t[-1] > 0.01 * extent:
             xs_t.append(t[0])
+            names.append(t[3])
     if len(xs_t) < 3:
         return []
     gaps = np.diff(np.array(xs_t))
@@ -448,6 +467,8 @@ def boxes_from_titles(titles: list[tuple[float, float, float, str]], xs: np.ndar
         band = ys[m]
         lo, hi = np.percentile(band, [0.5, 99.5])
         out.append((x0, float(min(lo, ty)) - 0.03 * gap, x1, float(max(hi, ty)) + 0.03 * gap))
+        if names_out is not None:
+            names_out.append(names[i])
     return out
 
 
@@ -513,6 +534,7 @@ def scan_sheets(path: str | Path) -> SheetScan:
     inserts: list[tuple[str, float, float, float, float]] = []   # ad, x, y, sx, sy
     blocks: dict[str, Bbox] = {}
     texts: list[tuple[float, float, float, str]] = []
+    other_texts: list[tuple[float, float, float, str]] = []   # başlık deseni geçmeyen yazılar (başlık satırı tamamlama)
     layer_ids = array("i")
     layer_names: list[str] = []
     layer_index: dict[str, int] = {}
@@ -554,8 +576,8 @@ def scan_sheets(path: str | Path) -> SheetScan:
                 txt = _clean_text(ent.get("1", "") + "".join(ent.get("3", [])))
                 if h > 0 and txt:
                     heights.append(h)
-                    if len(txt) <= 120 and TITLE_RE.search(txt):
-                        texts.append((ent["xs"][0], ent["ys"][0], h, txt))
+                    if len(txt) <= 120:
+                        (texts if TITLE_RE.search(txt) else other_texts).append((ent["xs"][0], ent["ys"][0], h, txt))
     npx = np.frombuffer(xs, dtype="d").copy() if len(xs) else np.zeros(0)
     npy = np.frombuffer(ys, dtype="d").copy() if len(ys) else np.zeros(0)
     if len(npx) == 0:
@@ -563,9 +585,11 @@ def scan_sheets(path: str | Path) -> SheetScan:
     extent_box = (float(npx.min()), float(npy.min()), float(npx.max()), float(npy.max()))
     extent = max(extent_box[2] - extent_box[0], extent_box[3] - extent_box[1])
     titles: list[tuple[float, float, float, str]] = []
+    big_other: list[tuple[float, float, float, str]] = []
     if len(heights):
         med = median(heights)
         titles = [t for t in texts if t[2] >= 1.8 * med]
+        big_other = [t for t in other_texts if t[2] >= 1.8 * med]
 
     # 1) çerçeveler
     cands: list[Bbox] = list(rects)
@@ -601,13 +625,25 @@ def scan_sheets(path: str | Path) -> SheetScan:
                 boxes.append((b, "cluster"))
     else:
         boxes = [(b, "cluster") for b in cluster_sheets(npx, npy, extent)]
-    # çerçeve yok ve kümeleme başlık sayısından az pafta buldu: aynı hizadaki pafta başlıklarından bantlar
-    if len(frames) < 2:
-        tb = boxes_from_titles(titles, npx, npy, extent)
-        if len(tb) >= 3 and len(tb) > len(boxes):
-            boxes = [(b, "title") for b in tb]
+    # çerçeve / küme sayısı aynı hizadaki pafta başlıklarından belirgin azsa (çerçevesiz dizilim ya da birkaç büyük layout
+    # dikdörtgeni çerçeve sanıldıysa): bantlar başlık x konumlarından
+    band_names: list[str] = []
+    tb = boxes_from_titles(titles, npx, npy, extent, big_other, band_names)
+    title_bands = False
+    if len(tb) >= 3 and (len(tb) > len(boxes) if len(frames) < 2 else len(tb) >= len(boxes) + 2):
+        boxes = [(b, "title") for b in tb]
+        title_bands = True
     npl = np.frombuffer(layer_ids, dtype="i").copy() if len(layer_ids) else np.zeros(0, dtype="i")
     sheets = _build_sheets(boxes, npx, npy, titles, extent, npl, layer_names) if len(boxes) >= 2 else []
+    if title_bands and len(band_names) == len(tb):
+        # pafta adı = başlık satırındaki yazı; paftadaki daha büyük alt başlıklar (ÖN GÖRÜNÜŞ…) aday listesine
+        by_box = {tuple(round(v, 3) for v in b): n for b, n in zip(tb, band_names)}
+        for sh in sheets:
+            n = by_box.get(tuple(round(v, 3) for v in sh.bbox))
+            if n and sh.title != n:
+                if sh.titled and sh.title not in sh.titles:
+                    sh.titles.insert(0, sh.title)
+                sh.title, sh.titled = n, True
     top: list[str] = []
     for t in sorted(titles, key=lambda t: -t[2]):
         if t[3] not in top:
