@@ -107,6 +107,22 @@ def check_unit_against_labels(drawing: Drawing, profile: LayerProfile, params: D
     return None
 
 
+def check_unit_by_text_height(drawing: Drawing) -> str | None:
+    """Yazı yüksekliği ile birim sağlaması (mimari / eşlemeli çizimler): plan yazıları gerçek ölçekte 10–60 cm'dir.
+    Medyan yazı yüksekliği bunun 10 katı altında ya da üstündeyse birim yanlış yazılmıştır (mm yazılmış, cm çizilmiş)."""
+    hs = sorted(e.height for e in drawing.entities if e.kind == "text" and e.height and e.height > 0)
+    if len(hs) < 20:
+        return None
+    med = hs[len(hs) // 2]
+    for factor in (10.0, 100.0, 0.1, 0.01):
+        if 0.10 <= med * factor <= 0.60 and not (0.10 <= med <= 0.60):
+            new_scale = drawing.scale * factor
+            for name, sc in UNIT_SCALE.items():
+                if abs(new_scale - sc) / sc < 1e-6:
+                    return name
+    return None
+
+
 def _structural(drawing: Drawing, layers_by_type: dict[str, list[str]], params: DetectParams,
                 result: AnalysisResult) -> list[DetectedElement]:
     labels = LabelIndex(drawing, params)
@@ -228,9 +244,22 @@ def schedule_elements(drawing: Drawing, catalog: Catalog | None, label: str = ""
     return els, [f"Doğrama poz listesi okundu: {len(rows)} poz, {total} adet (" + ", ".join(f"{r.poz} {r.count}" for r in rows[:8]) + ("…" if len(rows) > 8 else "") + ")"]
 
 
-def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, params: DetectParams) -> AnalysisResult:
+def _unit_only_result(drawing: Drawing, discipline: str, suggested: str) -> AnalysisResult:
+    """Birim yanlış: dedektörler çalıştırılmadan yalnız birim önerisi döner (analyze_file doğru birimle yeniden okur)."""
+    r = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected, discipline=discipline)
+    r.suggested_unit = suggested
+    r.warnings.append(f"Çizim birimi '{drawing.unit}' yazılı ama yazı yükseklikleri '{suggested}' ile uyuşuyor. "
+                      f"Birim '{suggested}' olarak alındı; gerekirse çizim ayarlarından değiştirin.")
+    return r
+
+
+def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, params: DetectParams,
+                   defer_on_unit: bool = False) -> AnalysisResult:
     """Katman eşlemeli çizim (cephe görünüşü, çatı, peyzaj…): katman -> katalog kalemi + ölçüm kuralı."""
     counts = drawing.layer_counts()
+    suggested = check_unit_by_text_height(drawing)
+    if defer_on_unit and suggested and suggested != drawing.unit:
+        return _unit_only_result(drawing, MAPPED_DISCIPLINE, suggested)
     materials = scan_materials(drawing)
     elements, warns, info = detect_mapped(drawing, profile, catalog, params, materials)
     infos = []
@@ -245,6 +274,10 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
     result.elements = elements + sched
     result.warnings.extend(sw)
     result.materials = materials
+    if suggested and suggested != drawing.unit:
+        result.suggested_unit = suggested
+        result.warnings.append(f"Çizim birimi '{drawing.unit}' yazılı ama yazı yükseklikleri '{suggested}' ile uyuşuyor. "
+                               f"Birim '{suggested}' olarak alındı; gerekirse çizim ayarlarından değiştirin.")
     sugg = [f"{l.name} → {l.suggested}" for l in infos if l.suggested and not l.mapped_code and l.count > 0]
     if sugg:
         result.warnings.append("Öneri (onaylamak için katmanı eşleyin): " + "; ".join(sugg[:12]) + (" …" if len(sugg) > 12 else ""))
@@ -253,7 +286,8 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
 
 def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
                     params: DetectParams | None = None, discipline: str = DEFAULT_DISCIPLINE,
-                    catalog: Catalog | None = None, label: str = "") -> AnalysisResult:
+                    catalog: Catalog | None = None, label: str = "", defer_on_unit: bool = False) -> AnalysisResult:
+    """defer_on_unit: birim yanlış görünüyorsa dedektörleri çalıştırmadan yalnız öneriyi döndür (analyze_file ilk geçişi)."""
     profile = profile or LayerProfile()
     params = params or DetectParams()
     if discipline == STANDARD_DISCIPLINE:
@@ -261,7 +295,7 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
         result.materials = scan_materials(drawing)
         return result
     if discipline == MAPPED_DISCIPLINE:
-        return analyze_mapped(drawing, profile, catalog or Catalog(), params)
+        return analyze_mapped(drawing, profile, catalog or Catalog(), params, defer_on_unit=defer_on_unit)
     if discipline == REBAR_DISCIPLINE:
         result = analyze_rebar(drawing, label)
         result.materials = scan_materials(drawing)
@@ -285,6 +319,16 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
             result.suggested_unit = suggested
             result.warnings.append(
                 f"Çizim birimi '{drawing.unit}' görünüyor ama kolon etiketleri '{suggested}' ile uyuşuyor. "
+                f"Birim '{suggested}' olarak alındı; gerekirse çizim ayarlarından değiştirin."
+            )
+    else:
+        suggested = check_unit_by_text_height(drawing)
+        if suggested and suggested != drawing.unit:
+            if defer_on_unit:
+                return _unit_only_result(drawing, discipline, suggested)
+            result.suggested_unit = suggested
+            result.warnings.append(
+                f"Çizim birimi '{drawing.unit}' yazılı ama yazı yükseklikleri '{suggested}' ile uyuşuyor. "
                 f"Birim '{suggested}' olarak alındı; gerekirse çizim ayarlarından değiştirin."
             )
 
@@ -313,12 +357,13 @@ def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectP
                  discipline: str = DEFAULT_DISCIPLINE, catalog: Catalog | None = None, label: str = "") -> AnalysisResult:
     """Dosyayı analiz eder; etiketler birimi yalanlıyorsa (ve kullanıcı birim seçmediyse) doğru birimle yeniden okur."""
     drawing = load_dxf(path, unit_override=unit_override)
-    result = analyze_drawing(drawing, profile, params, discipline, catalog, label)
+    defer = bool(auto_unit and not unit_override)
+    result = analyze_drawing(drawing, profile, params, discipline, catalog, label, defer_on_unit=defer)
     if auto_unit and not unit_override and result.suggested_unit and result.suggested_unit != drawing.unit:
         drawing2 = load_dxf(path, unit_override=result.suggested_unit)
-        warn = [w for w in result.warnings if "kolon etiketleri" in w]
-        result = analyze_drawing(drawing2, profile, params, discipline, catalog)
+        warn = [w for w in result.warnings if "kolon etiketleri" in w or "yazı yükseklikleri" in w]
+        result = analyze_drawing(drawing2, profile, params, discipline, catalog, label)
         result.unit_detected = False
-        result.warnings = warn + [w for w in result.warnings if "kolon etiketleri" not in w]
+        result.warnings = warn + [w for w in result.warnings if "kolon etiketleri" not in w and "yazı yükseklikleri" not in w]
         result.suggested_unit = drawing2.unit
     return result

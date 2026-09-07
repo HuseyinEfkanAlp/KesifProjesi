@@ -177,3 +177,45 @@ def test_elec_boq_and_cost(elec_dxf):
     assert d["total_hours"] > 0 and d["sequential_days"] >= d["parallel_days"] > 0
     elec = next(x for x in cost["by_discipline"] if x["discipline"] == "electrical")
     assert elec["days"] == pytest.approx(d["parallel_days"], abs=0.1)
+
+
+def test_unit_fix_by_text_height_and_xref_layers(arch_dxf, tmp_path):
+    """mm yazılmış ama cm çizilmiş mimari plan: yazı yüksekliğinden birim düzeltilir; xref önekli katmanlar tanınır."""
+    import ezdxf
+    from app.parser.analyzer import analyze_file
+    from app.parser.layer_profile import LayerProfile
+    ref = analyze_file(str(arch_dxf), discipline="architectural")
+    doc = ezdxf.readfile(str(arch_dxf))
+    doc.header["$INSUNITS"] = 4       # mm yazılı (çizim cm)
+    msp = doc.modelspace()
+    for i in range(25):                # yeterli yazı olsun (gerçek ölçekte 20 cm yazı = 20 çizim birimi)
+        msp.add_text(f"MAHAL {i}", dxfattribs={"layer": "YAZI", "height": 20}).set_placement((i * 50, -100))
+    bad = tmp_path / "mm_yazili.dxf"
+    doc.saveas(bad)
+    r = analyze_file(str(bad), discipline="architectural")
+    assert r.unit == "cm" and not r.unit_detected and any("yazı yükseklikleri" in w for w in r.warnings)
+    assert len(r.by_type("wall")) == len(ref.by_type("wall"))
+    assert abs(sum(e.length for e in r.by_type("wall")) - sum(e.length for e in ref.by_type("wall"))) < 0.05
+    r2 = analyze_file(str(bad), discipline="architectural", unit_override="mm")   # kullanıcı zorlarsa düzeltme yok
+    assert r2.unit == "mm" and r2.suggested_unit == "cm"
+    prof = LayerProfile()
+    assert prof.classify("PROJE-01$0$brn_doors", "architectural") == "door"       # xref öneki + AKS geçse de son parça
+    assert prof.classify("BRN-C3-AKS SISTEMI$0$brn_windows", "architectural") == "window"
+    assert prof.classify("brn_windows", "architectural") == "window" and prof.classify("brn_doors", "architectural") == "door"
+    assert prof.classify("AKS", "architectural") is None
+
+
+def test_region_polygon_is_not_wall(tmp_path):
+    """Duvar katmanına çizilmiş büyük bölge çokgeni (bina sınırı) duvar sayılmaz."""
+    import ezdxf
+    from app.parser.analyzer import analyze_file
+    from tests.fixtures.make_dxf import _rect
+    doc = ezdxf.new("R2010"); doc.header["$INSUNITS"] = 5
+    doc.layers.add("DUVAR")
+    msp = doc.modelspace()
+    msp.add_lwpolyline(_rect(0, 0, 2000, 1500), close=True, dxfattribs={"layer": "DUVAR"})   # 20 x 15 m bölge
+    msp.add_lwpolyline(_rect(0, 0, 500, 20), close=True, dxfattribs={"layer": "DUVAR"})      # 5 m x 20 cm duvar
+    p = tmp_path / "bolge.dxf"; doc.saveas(p)
+    r = analyze_file(str(p), discipline="architectural")
+    walls = r.by_type("wall")
+    assert len(walls) == 1 and abs(walls[0].length - 5.0) < 0.01 and abs(walls[0].b - 0.2) < 0.01

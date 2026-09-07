@@ -84,8 +84,8 @@ DEFAULT_PROFILE: dict[str, list[str]] = {
     # mimari
     "wall": [r"DUVAR", r"\bWALL", r"A[-_]?WALL", r"YTONG", r"GAZBETON", r"TU[GĞ]LA", r"B[Iİ]MS", r"AL[CÇ][Iİ]PAN",
              r"DRYWALL", r"PARTITION", r"BÖLME", r"BOLME"],
-    "door": [r"KAPI", r"\bDOOR", r"A[-_]?DOOR", r"KAPILAR"],
-    "window": [r"PENCERE", r"\bWINDOW", r"A[-_]?WIND", r"A[-_]?GLAZ", r"DO[GĞ]RAMA", r"CAM\b"],
+    "door": [r"KAPI", r"(?<![A-Z])DOOR", r"A[-_]?DOOR", r"KAPILAR"],
+    "window": [r"PENCERE", r"(?<![A-Z])WINDOW", r"A[-_]?WIND", r"A[-_]?GLAZ", r"DO[GĞ]RAMA", r"CAM\b"],
     # elektrik
     "tray": [r"TAVA", r"\bTRAY", r"KABLO\s*KANAL", r"CABLE\s*TRAY", r"\bKT\b", r"BUSBAR", r"MERDIVEN\s*TAVA"],
     "cable": [r"KABLO", r"\bCABLE", r"\bWIRE", r"E[-_]?WIRE", r"BESLEME", r"L[Iİ]NYE", r"SORT[Iİ]", r"KOLON\s*HAT",
@@ -146,8 +146,11 @@ class LayerProfile:
         self._ignore_elec = _compile([p for p in ignore_list if p not in ELEC_KEEP])
 
     def classify(self, layer: str, discipline: str = DEFAULT_DISCIPLINE) -> str | None:
-        """Katmanı disiplinin eleman tiplerinden birine atar; eşleşmezse None (yok sayılır)."""
+        """Katmanı disiplinin eleman tiplerinden birine atar; eşleşmezse None (yok sayılır).
+        Bağlanmış xref katmanları ("PROJE$0$brn_doors") son parçasıyla değerlendirilir."""
         name = _upper(layer)
+        if "$" in name:
+            name = name.rsplit("$", 1)[-1] or name
         allowed = set(types_for(discipline))
         order = [t for t in MATCH_ORDER if t in allowed]
         # Kullanıcının tam ad eşlemesi (^...$) yok-sayma listesinden ve disiplin kısıtından önce gelir

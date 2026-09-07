@@ -207,6 +207,7 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("CATI_LATA", "CAT", "Lata / kontrlata", "length", "kesit", "KSF-CAT-CATI_LATA-3x5"),
     _i("EGIM_BETONU", "CAT", "Eğim betonu / eğim şapı", "area", "ort. kalınlık (cm)", "KSF-CAT-EGIM_BETONU-8"),
     _i("CATI_CAKIL", "CAT", "Çakıl / balast", "area", "kalınlık (cm)", "KSF-CAT-CATI_CAKIL-5"),
+    _i("KORUMA_BETONU", "CAT", "Koruma betonu / koruma şapı", "area", "kalınlık (cm)", "KSF-CAT-KORUMA_BETONU-5"),
     _i("KENET_CATI", "CAT", "Kenet çatı sistemi (katmanlı)", "area", "kaplama malzemesi", "KSF-CAT-KENET_CATI-ALU",
        [_c("KENET_KAPLAMA"), _c("AYIRICI_KECE"), _c("OSB", 1.0, "11"), _c("SU_YALITIM_MEMBRAN", 1.0, "NEFES_ALAN"),
         _c("TASYUNU", 1.0, "10"), _c("BUHAR_KESICI"), _c("MERTEK", 1.7, "5x10"), _c("ASIK", 0.8)]),
@@ -215,7 +216,7 @@ DEFAULT_ITEMS: list[CatalogItem] = [
         _c("TASYUNU", 1.0, "10"), _c("BUHAR_KESICI"), _c("MERTEK", 1.7, "5x10"), _c("ASIK", 0.8)]),
     _i("TERAS_CATI", "CAT", "Teras çatı sistemi (katmanlı)", "area", "tip (GEZILEN / GEZILMEYEN)", "KSF-CAT-TERAS_CATI-GEZILMEYEN",
        [_c("EGIM_BETONU", 1.0, "8"), _c("BUHAR_KESICI"), _c("XPS", 1.0, "8"), _c("SU_YALITIM_MEMBRAN", 1.0, "BITUMLU_3MM"),
-        _c("GEOTEKSTIL"), _c("CATI_CAKIL", 1.0, "5")]),
+        _c("GEOTEKSTIL"), _c("CATI_CAKIL", 1.0, "5"), _c("KORUMA_BETONU", 1.0, "5")]),
     # IZO
     _i("XPS", "IZO", "XPS ısı yalıtımı", "area", "kalınlık (cm)", "KSF-IZO-XPS-5"),
     _i("EPS", "IZO", "EPS ısı yalıtımı", "area", "kalınlık (cm)", "KSF-IZO-EPS-5"),

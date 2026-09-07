@@ -56,6 +56,9 @@ def detect_walls(drawing: Drawing, layers: list[str], params: DetectParams) -> l
         if area < params.min_wall_area:
             continue
         long_side, short_side, _ = min_area_rect(ent.points)
+        per = perimeter(ent.points)
+        if per > 0 and 2 * area / per > hi and short_side > hi:
+            continue   # kalın "duvar" değil, bölge çokgeni (bina sınırı / mahal); duvar sayılmaz
         el = DetectedElement(etype="wall", layer=ent.layer, points=list(ent.points), area=area,
                              perimeter=perimeter(ent.points), source=ent.source, handle=ent.handle, confidence=0.6)
         lab = wall_labels.find(ent.points, params.label_search_radius)
