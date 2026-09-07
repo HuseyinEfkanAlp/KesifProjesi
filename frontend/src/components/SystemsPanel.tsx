@@ -69,6 +69,17 @@ export default function SystemsPanel({ projectId, refreshKey, onChanged }: Props
       <div className="muted hint">{data.roof.detail}{data.roof.candidates.length > 0 && <> · notlarda: {data.roof.candidates.join(', ')}</>} Çatı alanı ve sistemi proje parametrelerinden düzeltilir.</div>
     </div>
   ) : null
+  const finish = data.finish ? (
+    <div className="facade-info">
+      <b>Şap / döşeme kaplaması alanı:</b> {data.finish.area > 0 ? <>{fmt(data.finish.area)} m² <span className="muted">({data.finish.detail})</span></> : <span className="badge st-missing">alan yok</span>}
+      <div className="muted hint">Mahal türleri: {data.finish.keywords.join(', ')} · proje parametrelerinden değiştirilir; alan elle de girilir.</div>
+      {data.finish.rooms.length > 0 && (
+        <div className="hint" style={{ marginTop: 4 }}>
+          {data.finish.rooms.map((r, i) => <span key={i} className={`chip${r.included ? '' : ' muted'}`} title={r.drawing}>{r.included ? '✔ ' : '– '}{r.name} {fmt(r.area_m2, 1)} m²</span>)}
+        </div>
+      )}
+    </div>
+  ) : null
   const checklist = (
     <>
       {data.checklist.length > 0 && (
@@ -97,7 +108,7 @@ export default function SystemsPanel({ projectId, refreshKey, onChanged }: Props
     return (
       <div className="systems">
         <h3>Katmanlı sistemler <span className="muted" style={{ fontWeight: 400 }}>(kenet / kiremit / teras çatı, mantolama)</span></h3>
-        {facade}{roof}{checklist}
+        {facade}{roof}{finish}{checklist}
         <p className="muted">
           Bu projede henüz katmanlı sistem ölçülmedi. Çatı ya da cephe paftasında ilgili katmanı bir sistem kalemine eşleyin
           (Elemanlar sayfası, katman eşleme: örn. <code className="layer">ÇATI → Kenet çatı sistemi</code>); program çizim yazılarından
@@ -118,7 +129,7 @@ export default function SystemsPanel({ projectId, refreshKey, onChanged }: Props
           ? <span className="badge st-missing">{data.missing} bileşen projede yazmıyor</span>
           : <span className="badge st-present">bileşenler tamam</span>}
       </h3>
-      {facade}{roof}{checklist}
+      {facade}{roof}{finish}{checklist}
       {data.warnings.length > 0 && (
         <div className="warn">
           <b>Projede yazmayan bileşenler var.</b> Sistem bu bileşenleri keşfe almadı. Projede var olduğunu biliyorsanız <i>Ekle</i> deyin,

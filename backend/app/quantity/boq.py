@@ -64,7 +64,9 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "roof_area_m2": None,         # çatı alanı (m²); None -> ölçülen çatı kalemi, yoksa en üst kat planı oturumu
     "roof_system": "",            # çatı sistemi kodu (KENET_CATI / KIREMIT_CATI / TERAS_CATI …); boş -> kesit notlarından
     # türetilmiş kalemler
-    "screed_cm": 5.0,             # şap kalınlığı (cm) — döşeme alanından türetilir
+    "finish_rooms": "",           # şap / kaplama yapılan mahal türleri (virgülle; boş -> LOBİ, VİTRİN, GİRİŞ, HOL, KORİDOR, FUAYE)
+    "finish_area_m2": None,       # şap / kaplama alanı elle (m²); doluysa mahal yazıları kullanılmaz
+    "screed_cm": 5.0,             # şap kalınlığı (cm) — seçili mahal alanından türetilir
     "lean_concrete_cm": 10.0,     # grobeton kalınlığı (cm) — temel alanından türetilir
     "derived_off": "",            # kapatılan türetme kuralları (virgülle: astar,tavan,sap,kaplama,temel_yalitim,grobeton,koruma_sapi)
 }

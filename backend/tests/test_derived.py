@@ -49,14 +49,23 @@ def test_roof_and_derived_via_api(client, storey_dxf, foundation_dxf, roof_dxf):
     codes = {c["code"] for c in sy["checklist"]}
     assert {"cati_sistemi", "cephe_sistemi", "korkuluk", "drenaj"} <= codes
     rules = {d["rule"] for d in sy["derived"]}
-    assert {"tavan", "sap", "kaplama", "temel_yalitim", "grobeton", "koruma_sapi"} <= rules
+    assert {"tavan", "temel_yalitim", "grobeton", "koruma_sapi"} <= rules
+    assert "sap" not in rules and "kaplama" not in rules            # mahal yazısı yok: şap / kaplama oturumdan türetilmez
+    assert "kaplama_alani" in codes and sy["finish"]["source"] == "none"
     by = {i["key"]: i for i in client.get(f"/api/projects/{pid}/quantities").json()["boq"]["items"]}
-    assert by["tavan_siva_boya:*"]["detail"]["derived"] is True and by["sap:5"]["unit"] == "m³"
+    assert by["tavan_siva_boya:*"]["detail"]["derived"] is True
     assert by["grobeton:10"]["quantity"] == pytest.approx(by["temel_su_yalitimi:*"]["quantity"] * 0.10, rel=1e-3)
+    # şap / kaplama alanı elle
+    client.patch(f"/api/projects/{pid}", json={"params": {"finish_area_m2": 120}})
+    sy = client.get(f"/api/projects/{pid}/systems").json()
+    assert sy["finish"]["source"] == "manual" and sy["finish"]["area"] == 120
+    by = {i["key"]: i for i in client.get(f"/api/projects/{pid}/quantities").json()["boq"]["items"]}
+    assert by["sap:5"]["quantity"] == pytest.approx(6.0) and by["doseme_kaplama:*"]["quantity"] == 120
     # kural kapatma
     client.patch(f"/api/projects/{pid}", json={"params": {"derived_off": "kaplama, sap"}})
     by = {i["key"]: i for i in client.get(f"/api/projects/{pid}/quantities").json()["boq"]["items"]}
     assert "doseme_kaplama:*" not in by and "sap:5" not in by and "tavan_siva_boya:*" in by
+    client.patch(f"/api/projects/{pid}", json={"params": {"derived_off": "", "finish_area_m2": None}})
     # çatı sistemi: kesit notlarındaki kanıttan otomatik (roof_dxf yazılarında KENET)
     with open(roof_dxf, "rb") as f:
         r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("CATI DETAYI.dxf", f, "application/dxf")}, data={"discipline": "mapped"})
@@ -75,3 +84,39 @@ def test_roof_and_derived_via_api(client, storey_dxf, foundation_dxf, roof_dxf):
     assert by["teras_cati:*"]["quantity"] == 250 and "kenet_cati:*" not in by
     cost = client.get(f"/api/projects/{pid}/cost").json()["cost"]
     assert not any(l["key"] in ("cati_alani:*", "teras_cati:*") for l in cost["lines"])
+
+
+def test_rooms_finish_area(client, tmp_path):
+    """Mahal alanı yazıları: yalnız seçili mahal türleri (lobi, vitrin…) şap / kaplama alır; mağazalar dışarıda kalır."""
+    import ezdxf
+    from app.parser.schedules import parse_room_area, parse_rooms
+    r = parse_room_area("CALZEDONIA\n106.60m2"); assert r.name == "CALZEDONIA" and r.area_m2 == 106.6
+    r = parse_room_area("LOBİ 45,20 m²"); assert r.name == "LOBİ" and r.area_m2 == 45.2
+    assert parse_room_area("14.93m2").name == "MAHAL" and parse_room_area("S1 30/60") is None and parse_room_area("+4.15") is None
+    assert len(parse_rooms(["LOBİ 45.20 m2", "LOBİ 45.20 m2", "VİTRİN 12 m2"])) == 2
+    doc = ezdxf.new("R2010"); doc.header["$INSUNITS"] = 5
+    for n in ("DUVAR", "YAZI"):
+        doc.layers.add(n)
+    msp = doc.modelspace()
+    for y in (0, 400):
+        msp.add_lwpolyline(_rect(0, y, 600, 20), close=True, dxfattribs={"layer": "DUVAR"})      # 6 m duvarlar
+    for i, t in enumerate(("LOBİ\\P45.20 m2", "VİTRİN 1\\P12.50 m2", "CALZEDONIA\\P106.60m2", "TWIST\\P199.85m2")):
+        msp.add_mtext(t, dxfattribs={"layer": "YAZI", "char_height": 15}).set_location((60 + i * 120, 200))
+    for i in range(22):   # birim sağlaması için yeterli yazı (20 cm)
+        msp.add_text(f"M{i}", dxfattribs={"layer": "YAZI", "height": 20}).set_placement((20 + i * 25, 100))
+    p = tmp_path / "mahal.dxf"; doc.saveas(p)
+    pid = client.post("/api/projects", json={"name": "Mahal"}).json()["id"]
+    with open(p, "rb") as f:
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("ZEMIN KAT PLANI.dxf", f, "application/dxf")}, data={"storey_count": "2"})
+    assert r.status_code == 201 and r.json()["discipline"] == "architectural" and any("Mahal alanı" in w for w in r.json()["warnings"])
+    sy = client.get(f"/api/projects/{pid}/systems").json()
+    fin = sy["finish"]
+    assert fin["source"] == "rooms" and fin["area"] == pytest.approx((45.2 + 12.5) * 2)
+    assert {r["name"] for r in fin["rooms"] if r["included"]} == {"LOBİ", "VİTRİN 1"} and len(fin["excluded"]) == 2
+    assert any(c["code"] == "kaplama_disi" for c in sy["checklist"])
+    by = {i["key"]: i for i in client.get(f"/api/projects/{pid}/quantities").json()["boq"]["items"]}
+    assert by["sap:5"]["quantity"] == pytest.approx((45.2 + 12.5) * 2 * 0.05, rel=1e-3) and by["doseme_kaplama:*"]["quantity"] == pytest.approx(115.4)
+    # mağazaları da dahil et
+    client.patch(f"/api/projects/{pid}", json={"params": {"finish_rooms": "LOBİ, VİTRİN, CALZEDONIA, TWIST"}})
+    fin = client.get(f"/api/projects/{pid}/systems").json()["finish"]
+    assert fin["area"] == pytest.approx((45.2 + 12.5 + 106.6 + 199.85) * 2) and not fin["excluded"]

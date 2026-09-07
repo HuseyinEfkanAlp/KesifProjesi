@@ -36,6 +36,7 @@ _ADDED_COLUMNS = [
     ("drawing", "plan_type", "VARCHAR DEFAULT ''"),
     ("project", "systems", "JSON"),
     ("drawing", "materials", "JSON"),
+    ("drawing", "rooms", "JSON"),
 ]
 
 

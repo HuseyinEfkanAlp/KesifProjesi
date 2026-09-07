@@ -68,7 +68,7 @@ export default function ProjectDetail() {
     setBusy(true); setError('')
     try {
       const cleaned: Record<string, number | null> = {}
-      for (const [k, v] of Object.entries(dparams)) cleaned[k] = v === '' ? null : (['facade_system', 'roof_system', 'derived_off'].includes(k) ? (v as unknown as number) : +v)
+      for (const [k, v] of Object.entries(dparams)) cleaned[k] = v === '' ? null : (['facade_system', 'roof_system', 'derived_off', 'finish_rooms'].includes(k) ? (v as unknown as number) : +v)
       await Api.projects.patch(id, { ...params, rebar_ratios: ratios, params: cleaned as unknown as ProjectParams })
       await load()
     } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
@@ -169,6 +169,11 @@ export default function ProjectDetail() {
                 {roofItems.map((i) => <option key={i.code} value={i.code}>{i.name}{i.is_system ? ' (katmanlı)' : ''}</option>)}
               </select>
             </label>
+            <label className="field" title="Şap ve döşeme kaplaması yalnız bu mahal türlerine uygulanır (plandaki mahal alanı yazılarından). Boş: LOBİ, VİTRİN, GİRİŞ, HOL, KORİDOR, FUAYE">
+              Şap / kaplama mahalleri
+              <input style={{ width: 240 }} value={dparams.finish_rooms ?? ''} placeholder="LOBİ, VİTRİN, GİRİŞ, HOL, KORİDOR" onChange={(e) => setDparams({ ...dparams, finish_rooms: e.target.value })} />
+            </label>
+            <label className="field" title="Doluysa mahal yazıları kullanılmaz">Şap / kaplama alanı (m²)<input type="number" step="1" value={dparams.finish_area_m2 ?? ''} placeholder="mahallerden" onChange={(e) => setDparams({ ...dparams, finish_area_m2: e.target.value })} /></label>
             <label className="field">Şap kalınlığı (cm)<input type="number" step="0.5" value={dparams.screed_cm ?? ''} placeholder="5" onChange={(e) => setDparams({ ...dparams, screed_cm: e.target.value })} /></label>
             <label className="field">Grobeton (cm)<input type="number" step="1" value={dparams.lean_concrete_cm ?? ''} placeholder="10" onChange={(e) => setDparams({ ...dparams, lean_concrete_cm: e.target.value })} /></label>
           </div>

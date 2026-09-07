@@ -26,7 +26,7 @@ from .layer_profile import (ALL_TYPES, DEFAULT_DISCIPLINE, MAPPED_DISCIPLINE, RE
 from .rebar_tables import kot_from_label, parse_rebar_labels, parse_rebar_tables, target_from_label
 from .loader import UNIT_SCALE, Drawing, load_dxf
 from .materials import scan_materials
-from .schedules import parse_schedule
+from .schedules import parse_rooms, parse_schedule
 from ..standard.catalog import Catalog
 
 
@@ -60,6 +60,7 @@ class AnalysisResult:
     warnings: list[str] = field(default_factory=list)
     suggested_unit: str | None = None     # etiketler başka bir birime işaret ediyorsa
     materials: dict = field(default_factory=dict)   # yazılardan tanınan malzeme / sistem kanıtı (parser/materials.py)
+    rooms: list[dict] = field(default_factory=list)  # mahal alanı yazıları (parser/schedules.py: parse_rooms)
 
     def by_type(self, etype: str) -> list[DetectedElement]:
         return [e for e in self.elements if e.etype == etype]
@@ -228,6 +229,10 @@ def analyze_rebar(drawing: Drawing, label: str = "") -> AnalysisResult:
     return result
 
 
+def room_rows(drawing: Drawing) -> list[dict]:
+    return [r.to_dict() for r in parse_rooms([e.text for e in drawing.entities if e.kind == "text" and e.text])]
+
+
 def schedule_elements(drawing: Drawing, catalog: Catalog | None, label: str = "") -> tuple[list[DetectedElement], list[str]]:
     """Çizimdeki 'Poz: EMP1 / Adet: 82' yazılarını doğrama kalemine çevirir (etype dograma, alt tip poz, adet)."""
     rows = parse_schedule([e.text for e in drawing.entities if e.kind == "text" and e.text], label)
@@ -274,6 +279,7 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
     result.elements = elements + sched
     result.warnings.extend(sw)
     result.materials = materials
+    result.rooms = room_rows(drawing)
     if suggested and suggested != drawing.unit:
         result.suggested_unit = suggested
         result.warnings.append(f"Çizim birimi '{drawing.unit}' yazılı ama yazı yükseklikleri '{suggested}' ile uyuşuyor. "
@@ -337,6 +343,10 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
         sched, sw = schedule_elements(drawing, catalog or Catalog())
         result.elements += sched
         result.warnings.extend(sw)
+        result.rooms = room_rows(drawing)
+        if result.rooms:
+            result.warnings.append(f"Mahal alanı yazıları okundu: {len(result.rooms)} mahal, "
+                                   f"{sum(r['area_m2'] for r in result.rooms):,.0f} m² (şap / kaplama mahal bazında türetilir)")
 
     unmapped = [li.name for li in layer_infos if li.etype is None and li.count > 0]
     if unmapped:

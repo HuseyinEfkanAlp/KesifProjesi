@@ -87,6 +87,9 @@ export interface ProjectParams {
   facade_system: string
   roof_area_m2: number | null
   roof_system: string
+  /** şap / kaplama yapılan mahal türleri (virgülle) */
+  finish_rooms: string
+  finish_area_m2: number | null
   screed_cm: number
   lean_concrete_cm: number
   /** kapatılan türetme kuralları (virgülle) */
@@ -412,6 +415,16 @@ export interface RoofInfo {
   candidates: string[]
 }
 
+export interface FinishArea {
+  area: number
+  source: 'manual' | 'rooms' | 'none'
+  detail: string
+  keywords: string[]
+  rooms: { drawing: string; name: string; area_m2: number; included: boolean }[]
+  excluded: string[]
+  excluded_area: number
+}
+
 export interface DerivedItem { key: string; label: string; quantity: number; unit: string; rule: string; note: string }
 export interface ChecklistItem { code: string; text: string; level: 'required' | 'optional' }
 
@@ -422,6 +435,7 @@ export interface ProjectSystems {
   evidence_codes: string[]
   facade: FacadeArea
   roof: RoofInfo
+  finish: FinishArea
   derived: DerivedItem[]
   derived_off: string[]
   checklist: ChecklistItem[]

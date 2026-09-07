@@ -42,6 +42,8 @@ class Drawing(SQLModel, table=True):
     warnings: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     # Çizim yazılarından tanınan malzeme / sistem kanıtı: {"OSB": {"evidence": [...], "spec": "11MM"}} (parser/materials.py)
     materials: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    # Mahal alanı yazıları: [{"name": "LOBİ", "area_m2": 45.2}] (parser/schedules.py: parse_rooms)
+    rooms: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
     analyzed_at: datetime | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

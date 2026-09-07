@@ -69,6 +69,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.layers = [l.to_dict() for l in result.layers]
     drawing.warnings = result.warnings
     drawing.materials = result.materials or {}
+    drawing.rooms = result.rooms or []
     drawing.analyzed_at = datetime.utcnow()
     session.add(drawing)
     session.commit()
@@ -253,6 +254,37 @@ def roof_items(project: Project, session: Session, catalog: Catalog, items: list
 
 
 DERIVED_RULES = ("astar", "tavan", "sap", "kaplama", "temel_yalitim", "grobeton", "koruma_sapi")
+DEFAULT_FINISH_KEYWORDS = "LOBİ,LOBI,VİTRİN,VITRIN,GİRİŞ,GIRIS,HOL,KORİDOR,KORIDOR,FUAYE"
+
+
+def finish_area(project: Project, drawings: list[Drawing], params: dict | None = None) -> dict:
+    """Şap / döşeme kaplaması alanı: (1) finish_area_m2 parametresi, (2) planlardaki mahal alanı yazılarından seçili
+    mahal türleri (finish_rooms anahtar kelimeleri; kiracı mağazaları gibi diğerleri dışarıda kalır)."""
+    from .planset import normalize_title
+    params = params or project_params(project)
+    kws = [k.strip() for k in str(params.get("finish_rooms") or DEFAULT_FINISH_KEYWORDS).split(",") if k.strip()]
+    kws_n = [normalize_title(k) for k in kws]
+    out = {"area": 0.0, "source": "none", "detail": "", "keywords": kws, "rooms": [], "excluded": [], "excluded_area": 0.0}
+    if params.get("finish_area_m2"):
+        out.update(area=float(params["finish_area_m2"]), source="manual", detail="şap / kaplama alanı (elle girildi)")
+        return out
+    total = 0.0
+    for d in drawings:
+        mult = max(1, d.storey_count or 1)
+        for r in (d.rooms or []):
+            name_n = normalize_title(r.get("name") or "")
+            hit = any(k and k in name_n for k in kws_n)
+            row = {"drawing": d.label or d.filename, "name": r.get("name"), "area_m2": r.get("area_m2", 0.0), "included": hit}
+            out["rooms"].append(row)
+            if hit:
+                total += float(r.get("area_m2") or 0.0) * mult
+            else:
+                out["excluded"].append(f"{r.get('name')} {r.get('area_m2', 0):,.0f} m²")
+                out["excluded_area"] += float(r.get("area_m2") or 0.0) * mult
+    if total > 0:
+        n = sum(1 for r in out["rooms"] if r["included"])
+        out.update(area=round(total, 2), source="rooms", detail=f"seçili mahaller ({n} mahal: {', '.join(kws[:4])}…) toplamı")
+    return out
 
 
 def derived_items(project: Project, session: Session, catalog: Catalog, items: list[BoqItem],
@@ -286,19 +318,25 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
     boya = qty("boya")
     if boya > 0 and "astar" not in kinds:
         add("ASTAR", "", boya, "boya alanı kadar astar (duvar)", "astar")
-    # 2) kat planı oturumu -> tavan, şap, döşeme kaplaması
+    # 2) kat planı oturumu -> tavan; şap ve döşeme kaplaması yalnız seçili mahallerde (lobi, vitrin…)
     fps = _plan_footprints(project, session, drawings)
     floor = sum(fp["area"] * max(1, fp["storey_count"]) for fp in fps)
-    if floor > 0:
+    if floor > 0 and "tavan_siva_boya" not in kinds:
         src = ", ".join(f"{fp['drawing']} {fp['area']:,.0f} m²" for fp in fps[:4]) + ("…" if len(fps) > 4 else "")
-        if "tavan_siva_boya" not in kinds:
-            add("TAVAN_SIVA_BOYA", "", floor, f"kat oturumu × kat sayısı ({src})", "tavan")
+        add("TAVAN_SIVA_BOYA", "", floor, f"kat oturumu × kat sayısı ({src}); asma tavanlı mahalleri düşün", "tavan")
+    fin = finish_area(project, drawings, params)
+    if fin["area"] > 0:
         if "sap" not in kinds:
             t = float(params.get("screed_cm") or 5.0)
-            add("SAP", f"{t:g}", floor * t / 100.0, f"kat oturumu × {t:g} cm ({src})", "sap")
+            add("SAP", f"{t:g}", fin["area"] * t / 100.0, f"{fin['detail']} × {t:g} cm", "sap")
         if "doseme_kaplama" not in kinds and not any(k in kinds for k in ("seramik_zemin", "laminat", "epoksi")):
-            add("DOSEME_KAPLAMA", "", floor, f"kat oturumu ({src}); tip seçin (seramik / parke / epoksi)", "kaplama")
-            ask("kaplama_tipi", f"Döşeme kaplaması türetildi ({floor:,.0f} m²): tipi (seramik / parke / epoksi) ve ıslak hacim payını belirleyin.", "optional")
+            add("DOSEME_KAPLAMA", "", fin["area"], f"{fin['detail']}; tip seçin (seramik / parke / epoksi)", "kaplama")
+    if fin["source"] == "none":
+        ask("kaplama_alani", "Şap / döşeme kaplaması için alan yok: planda mahal alanı yazısı (LOBİ 45 m²) bulunamadı ya da seçili mahal "
+                            "türleri (" + ", ".join(fin["keywords"]) + ") geçmiyor. Proje parametrelerinden mahal türlerini ya da alanı elle girin.")
+    elif fin["excluded"]:
+        ask("kaplama_disi", f"Şap / kaplama dışı bırakılan mahaller ({fin['excluded_area']:,.0f} m²): " + ", ".join(fin["excluded"][:8])
+                            + ("…" if len(fin["excluded"]) > 8 else "") + " — kiracı işi değilse mahal türlerine ekleyin.", "optional")
     # 3) temel -> su yalıtımı, grobeton, koruma şapı
     found_area = 0.0
     for d in drawings:
@@ -538,6 +576,7 @@ def project_systems(project: Project, session: Session, catalog: Catalog | None 
             "evidence_codes": sorted(evidence),
             "facade": facade_area(project, session, items, drawings, params),
             "roof": roof_area(project, session, items, drawings, params),
+            "finish": finish_area(project, drawings, params),
             "derived": [{"key": it.key, "label": it.label, "quantity": it.quantity, "unit": it.unit, "rule": it.detail.get("rule"),
                          "note": it.notes[0] if it.notes else ""} for it in derived],
             "derived_off": sorted({x.strip() for x in str(params.get("derived_off") or "").split(",") if x.strip()}),

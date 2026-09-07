@@ -320,13 +320,17 @@ Detaylı maliyette gözden kaçmasın diye çizimden **türetilen** kalemler ke�
 | Tetik | Türetilen | Miktar |
 |---|---|---|
 | Boya | Boya astarı | boya m² |
-| Kat planı oturumu (statik ya da mimari) | Tavan sıva + astar + boya; şap; döşeme kaplaması (tip seçilecek) | oturum × kat sayısı (şap × kalınlık) |
+| Kat planı oturumu (statik ya da mimari) | Tavan sıva + astar + boya | oturum × kat sayısı |
+| Mahal alanı yazıları ("LOBİ 45,20 m²", "CALZEDONIA 106.60m2") | Şap; döşeme kaplaması (tip seçilecek) — **yalnız seçili mahal türlerinde** (`finish_rooms`: LOBİ, VİTRİN, GİRİŞ, HOL, KORİDOR, FUAYE; ya da `finish_area_m2` elle) | seçili mahaller × kat sayısı (şap × kalınlık) |
 | Temel (radye / sürekli) | Temel su yalıtımı; grobeton; koruma şapı | temel alanı (grobeton × kalınlık) |
 | Çatı sistemi biliniyor (parametre ya da kesit notu) | Çatı alanı bilgi satırı + sistem kalemi → bileşenler | çatı alanı |
 
 **Çatı alanı**: çizimde ölçülen çatı kalemi > parametre > en büyük (bodrum olmayan) kat planı oturumu. **Çatı sistemi**: parametre >
 kesit / detay notlarındaki tek kanıt (KENET / KİREMİT / TERAS). Bina oturumu artık mimari plandaki duvar çokgenlerinden de
 çıkar (`building_footprint`: en büyük parça), cephe brüt alanı için bodrum paftaları atlanır.
+
+Mahal yazıları `drawing.rooms` alanında saklanır (`parser/schedules.py: parse_rooms`); mağaza gibi kapsam dışı mahaller kontrol listesinde
+"kaplama dışı" olarak sayılır, mahal yazısı hiç yoksa "alan yok" uyarısı verilir (bloğun tamamı şaplanmaz; B2'de yalnız vitrin ve lobiler).
 
 **Tamlık kontrol listesi** (miktarı türetilemeyen ama olması gereken işler; sistem panelinde uyarı): çatı sistemi seçilmedi
 (betonarme teras ise eğim betonu + buhar kesici + ısı yalıtımı + su yalıtımı + koruma betonu), cephe sistemi seçilmedi (cephe boyası /

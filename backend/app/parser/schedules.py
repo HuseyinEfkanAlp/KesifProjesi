@@ -81,3 +81,44 @@ def merge_schedules(per_drawing: list[list[ScheduleRow]]) -> list[ScheduleRow]:
             if cur is None or r.count > cur.count:
                 out[r.poz] = r
     return list(out.values())
+
+
+# ---------- Mahal alanları: "LOBİ\n45.20 m2", "CALZEDONIA 106.60m2", "14.93m2"
+_ROOM = re.compile(r"^(?P<name>.*?)\s*(?P<area>\d{1,5}(?:[.,]\d{1,2})?)\s*(?:m2|m²|M2|M²)\s*$", re.IGNORECASE | re.DOTALL)
+
+
+@dataclass
+class RoomRow:
+    name: str
+    area_m2: float
+    raw: str = ""
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "area_m2": round(self.area_m2, 2), "raw": self.raw}
+
+
+def parse_room_area(text: str) -> RoomRow | None:
+    t = (text or "").replace("\\P", "\n").strip()
+    m = _ROOM.match(t)
+    if not m:
+        return None
+    try:
+        area = float(m.group("area").replace(",", "."))
+    except ValueError:
+        return None
+    if area <= 0 or area > 50000:
+        return None
+    name = re.sub(r"\s+", " ", m.group("name").replace("\n", " ")).strip(" -:")
+    return RoomRow(name.upper() if name else "MAHAL", area, re.sub(r"\s+", " ", t)[:60])
+
+
+def parse_rooms(texts: list[str]) -> list[RoomRow]:
+    """Çizimdeki mahal alanı yazıları (aynı yazı tekrar ediyorsa bir kez)."""
+    out: list[RoomRow] = []
+    seen: set[tuple[str, float]] = set()
+    for txt in texts:
+        r = parse_room_area(txt)
+        if r and (r.name, round(r.area_m2, 2)) not in seen:
+            seen.add((r.name, round(r.area_m2, 2)))
+            out.append(r)
+    return out
