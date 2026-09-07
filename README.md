@@ -312,6 +312,20 @@ yeni sistem eklenir.
   ayrı kalem olur (`expand_systems`) ve Birim Fiyatlar'da fiyatlanır. API: `GET/PUT /api/projects/{id}/systems`.
 - Cephe için ayrıca söve, silme, denizlik kalemleri ve katman önerileri eklendi (söve çizgi → m, blok → adet).
 
+## Gerçek çizimde öğrenilenler (B2 BLOK mimari uygulama seti, 520 MB DXF, 7 Eyl 2026)
+
+- 11 pafta çerçevesiz yan yana (vaziyet, bodrum / zemin / 1. kat / çatı katı / +15.65 planları, kesitler, görünüşler, doğramalar,
+  prekast kalıp); küme tespiti prekast dokusu (590 bin nesne, `FB_Prekast`) yüzünden 3 kümede kaldı → paftalar başlık x
+  konumlarından elle tanımlandı. Planlar bağlanmış xref bloklarında; akış tabanlı blok açma ile kırpıldı (5 dk).
+- `$INSUNITS` mm yazılı, çizim cm; yazı yüksekliği sağlaması birimi otomatik düzeltti (1. kat paftasında 20'den az yazı var, düzeltilmedi).
+- Duvarlar `brn_duvar_gazbeton` kapalı çokgenleri (kalınlık 10 / 15 / 20 / 25 cm); kapı-pencere blok değil çizgi, sayılmadı;
+  doğrama **poz listesi** (`Poz: EMP1 / Adet: 82`, 14 poz, 170 adet) keşfe girdi ve plan blok sayımıyla tutuyor (EMP1 kör kasa 81, EMP7 34).
+- Kesit notlarından kenet çatı sistemi (galvaniz kenetli sac, OSB, taşyünü + Z profil, buhar dengeleyici) tanındı; ayırıcı keçe ve
+  mertek sorulur. "Bitümlü çift kat izolasyon" temel notudur, çatı membranı sanılabilir (kontrol edin). Teras katmanları (meyil betonu,
+  su yalıtımı, XPS, koruma betonu) yazıyor ama teras alanı ölçülmedi.
+- Çatı alanı ve cephe brüt alanı için çizimde kapalı çokgen yok: zemin kat duvar / kolon çokgenlerinin dış hattı (1.434 m², çevre 171 m)
+  elle girildi. Cephe prekast; panel kodları bu dosyada yok (prekast kalıp paftası yalnız MN-x monoblok pencere tipleri).
+
 ## Büyük dosyada blok içeriği (akış) ve doğrama poz listesi
 
 - **Blok içinde plan** (bağlanmış xref, doğrama blokları, kolon detay blokları): 100 MB üstü DXF'te pafta kırpma, blok içeriğini
