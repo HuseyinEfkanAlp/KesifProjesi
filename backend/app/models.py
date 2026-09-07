@@ -20,6 +20,8 @@ class Project(SQLModel, table=True):
     params: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     # Plan seti: plan tipi kodu -> required / optional / skip (varsayılandan farklı olanlar; bkz. planset.py)
     plan_set: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
+    # Katmanlı sistem bileşen kararları: {sistem_kodu: {bileşen_kodu: {"include": bool, "spec": str}}} (bkz. services.project_systems)
+    systems: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -38,6 +40,8 @@ class Drawing(SQLModel, table=True):
     unit_detected: bool = True
     layers: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))
     warnings: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    # Çizim yazılarından tanınan malzeme / sistem kanıtı: {"OSB": {"evidence": [...], "spec": "11MM"}} (parser/materials.py)
+    materials: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     analyzed_at: datetime | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

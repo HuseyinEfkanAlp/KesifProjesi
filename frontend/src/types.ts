@@ -346,6 +346,47 @@ export interface CatalogItem {
   spec_label: string
   example: string
   custom: boolean
+  /** Katmanlı sistem: ölçülünce ayrı kalem olarak yazılacak bileşenler (miktar × factor) */
+  components: { code: string; factor: number; spec: string }[]
+  is_system: boolean
+}
+
+/** Projedeki katmanlı sistemler ve bileşen kararları */
+export type ComponentSource = 'project' | 'manual' | 'default' | 'missing' | 'excluded'
+
+export interface SystemComponent {
+  code: string
+  name: string
+  unit: string
+  discipline: string
+  factor: number
+  default_spec: string
+  spec: string
+  include: boolean
+  source: ComponentSource
+  evidence: string[]
+  quantity: number
+}
+
+export interface ProjectSystem {
+  code: string
+  name: string
+  discipline: string
+  discipline_label: string
+  unit: string
+  quantity: number
+  spec: string
+  key: string
+  components: SystemComponent[]
+  missing: string[]
+  system_evidence: string[]
+}
+
+export interface ProjectSystems {
+  systems: ProjectSystem[]
+  warnings: string[]
+  missing: number
+  evidence_codes: string[]
 }
 
 export interface Catalog {

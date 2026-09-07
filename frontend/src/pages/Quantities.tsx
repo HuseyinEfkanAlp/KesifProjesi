@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
 import { ETYPE_LABELS, SUBTYPE_LABELS, type Boq, type Project, type QuantityLine, type QuantitySummary } from '../types'
 import ProjectNav from './ProjectNav'
+import SystemsPanel from '../components/SystemsPanel'
 
 export default function Quantities() {
   const pid = Number(useParams().id)
@@ -12,12 +13,13 @@ export default function Quantities() {
   const [boq, setBoq] = useState<Boq | null>(null)
   const [error, setError] = useState('')
   const [showLines, setShowLines] = useState(false)
+  const [refresh, setRefresh] = useState(0)
 
   useEffect(() => {
     Promise.all([Api.projects.get(pid), Api.quantities(pid)])
       .then(([p, q]) => { setProject(p); setSummary(q.summary); setLines(q.lines); setBoq(q.boq) })
       .catch((e) => setError(e.message))
-  }, [pid])
+  }, [pid, refresh])
 
   if (!project || !summary || !boq) return <p className="muted">{error || 'Yükleniyor...'}</p>
   const hasStructural = summary.groups.length > 0
@@ -30,6 +32,10 @@ export default function Quantities() {
 
       {boq.items.length === 0 && <p className="muted">Henüz metraj yok; çizim yükleyin.</p>}
 
+      <div className="panel">
+        <SystemsPanel projectId={pid} refreshKey={0} onChanged={() => setRefresh((r) => r + 1)} />
+      </div>
+
       {boq.by_discipline.map((d) => (
         <div className="panel" key={d.discipline}>
           <h3><span className={`badge disc-${d.discipline}`}>{d.label}</span> keşif listesi</h3>
@@ -37,9 +43,9 @@ export default function Quantities() {
             <thead><tr><th>Tür</th><th>Kalem</th><th className="num">Miktar</th><th>Birim</th><th className="num">Adet / hat</th><th>Not</th></tr></thead>
             <tbody>
               {d.items.map((it) => (
-                <tr key={it.key}>
-                  <td>{it.kind_label}</td>
-                  <td>{it.label}</td>
+                <tr key={it.key} className={it.detail?.system ? 'system-row' : ''}>
+                  <td>{it.kind_label}{it.detail?.system ? <span className="badge none" style={{ marginLeft: 6 }}>sistem</span> : null}</td>
+                  <td>{it.label}{it.detail?.system_code && !it.detail?.system ? <span className="muted hint"> ← {String(it.detail.system_code)}</span> : null}</td>
                   <td className="num"><b>{fmt(it.quantity, it.unit === 'adet' || it.unit === 'kg' ? 0 : 2)}</b></td>
                   <td>{it.unit}</td>
                   <td className="num">{it.count ? fmt(it.count, 0) : '-'}</td>

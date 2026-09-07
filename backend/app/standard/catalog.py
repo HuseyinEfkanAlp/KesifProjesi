@@ -64,6 +64,9 @@ class CatalogItem:
     spec_label: str = ""      # ÖZELLİK alanının anlamı ("en x yükseklik (mm)")
     example: str = ""         # örnek katman adı
     custom: bool = False      # kullanıcı ekledi
+    # Katmanlı sistem: bu kalem ölçüldüğünde (ör. çatı alanı) ayrı iş kalemi olarak yazılacak bileşenler.
+    # [{"code": "OSB", "factor": 1.0, "spec": "11"}]: miktar = sistem miktarı × factor; spec varsayılan özellik.
+    components: list[dict] = field(default_factory=list)
 
     def __post_init__(self):
         self.code = normalize_code(self.code)
@@ -74,11 +77,52 @@ class CatalogItem:
             self.unit = MEASURES[self.measure][1]
         if not self.example:
             self.example = f"KSF-{self.discipline}-{self.code}"
+        self.components = normalize_components(self.components)
+
+    @property
+    def is_system(self) -> bool:
+        return bool(self.components)
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["measure_label"] = MEASURES[self.measure][0]
+        d["is_system"] = self.is_system
         return d
+
+
+def normalize_components(comps) -> list[dict]:
+    """Bileşen listesini temizler: kod normalize, factor float (>0), spec metin. Metin biçimi de kabul edilir:
+    'OSB×1; TASYUNU×1:5; MERTEK×1.6' (kod × çarpan [: özellik])."""
+    if not comps:
+        return []
+    if isinstance(comps, str):
+        parsed = []
+        for part in re.split(r"[;\n]+", comps):
+            part = part.strip()
+            if not part:
+                continue
+            m = re.match(r"^([^×x*:]+?)\s*(?:[×x*]\s*([0-9.,]+))?\s*(?::\s*(.+))?$", part)
+            if not m:
+                continue
+            parsed.append({"code": m.group(1), "factor": m.group(2) or 1, "spec": (m.group(3) or "").strip()})
+        comps = parsed
+    out: list[dict] = []
+    seen: set[str] = set()
+    for c in comps:
+        if not isinstance(c, dict) or not c.get("code"):
+            continue
+        code = normalize_code(str(c["code"]))
+        if not code or code in seen:
+            continue
+        try:
+            factor = float(str(c.get("factor", 1)).replace(",", "."))
+        except ValueError:
+            factor = 1.0
+        if factor <= 0:
+            continue
+        seen.add(code)
+        out.append({"code": code, "factor": factor, "spec": str(c.get("spec") or "").strip()})
+    return out
 
 
 def normalize_code(code: str) -> str:
@@ -88,8 +132,12 @@ def normalize_code(code: str) -> str:
     return c
 
 
-def _i(code, disc, name, measure, spec_label="", example=""):
-    return CatalogItem(code, disc, name, measure, spec_label=spec_label, example=example)
+def _i(code, disc, name, measure, spec_label="", example="", components=None):
+    return CatalogItem(code, disc, name, measure, spec_label=spec_label, example=example, components=components or [])
+
+
+def _c(code, factor=1.0, spec=""):
+    return {"code": code, "factor": factor, "spec": spec}
 
 
 DEFAULT_ITEMS: list[CatalogItem] = [
@@ -125,6 +173,19 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("MANTOLAMA", "CEP", "Mantolama", "area", "malzeme + kalınlık (EPS_5)", "KSF-CEP-MANTOLAMA-EPS_5"),
     _i("CEPHE_TASI", "CEP", "Cephe taşı / kaplama", "area", "tip", "KSF-CEP-CEPHE_TASI"),
     _i("CEPHE_BOYA", "CEP", "Dış cephe boyası", "area", "tip", "KSF-CEP-CEPHE_BOYA"),
+    # CEP — mantolama sistemi bileşenleri
+    _i("MANTOLAMA_YAPISTIRICI", "CEP", "Mantolama yapıştırıcısı", "area", "", "KSF-CEP-MANTOLAMA_YAPISTIRICI"),
+    _i("MANTOLAMA_DUBEL", "CEP", "Mantolama dübeli", "count", "boy (mm)", "KSF-CEP-MANTOLAMA_DUBEL-120"),
+    _i("MANTOLAMA_FILE", "CEP", "Sıva filesi (donatı filesi)", "area", "gramaj", "KSF-CEP-MANTOLAMA_FILE-160"),
+    _i("MANTOLAMA_SIVA", "CEP", "Mantolama sıvası (file sıvası + dekoratif sıva)", "area", "tip", "KSF-CEP-MANTOLAMA_SIVA"),
+    _i("KOSE_PROFILI", "CEP", "Köşe / subasman profili", "length", "tip", "KSF-CEP-KOSE_PROFILI"),
+    _i("SOVE", "CEP", "Söve", "length", "tip / en (cm)", "KSF-CEP-SOVE-15"),
+    _i("SILME", "CEP", "Silme / kat silmesi", "length", "tip", "KSF-CEP-SILME"),
+    _i("DENIZLIK", "CEP", "Denizlik", "length", "tip (MERMER / ALU)", "KSF-CEP-DENIZLIK-MERMER"),
+    _i("MANTOLAMA_SISTEM", "CEP", "Mantolama sistemi (katmanlı)", "area", "yalıtım + kalınlık (EPS_5)",
+       "KSF-CEP-MANTOLAMA_SISTEM-EPS_5",
+       [_c("EPS", 1.0, "5"), _c("MANTOLAMA_YAPISTIRICI"), _c("MANTOLAMA_DUBEL", 6.0, "120"), _c("MANTOLAMA_FILE"),
+        _c("MANTOLAMA_SIVA"), _c("CEPHE_BOYA"), _c("KOSE_PROFILI", 0.3)]),
     # CAT
     _i("CATI_MEMBRAN", "CAT", "Çatı membranı", "area", "tip", "KSF-CAT-CATI_MEMBRAN-3MM"),
     _i("CATI_SANDVIC_PANEL", "CAT", "Sandviç panel", "area", "kalınlık (mm)", "KSF-CAT-CATI_SANDVIC_PANEL-50"),
@@ -132,12 +193,33 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("CATI_OLUK", "CAT", "Oluk", "length", "tip", "KSF-CAT-CATI_OLUK-PVC"),
     _i("CATI_DERE", "CAT", "Dere / yağmur iniş borusu", "length", "çap (mm)", "KSF-CAT-CATI_DERE-100"),
     _i("CATI_ISIK_BANDI", "CAT", "Çatı ışıklık", "area", "tip", "KSF-CAT-CATI_ISIK_BANDI"),
+    # CAT — katmanlı çatı sistemleri ve bileşenleri
+    _i("KENET_KAPLAMA", "CAT", "Kenet çatı kaplaması (metal)", "area", "malzeme (TITANYUM_CINKO / ALU / GALVANIZ)", "KSF-CAT-KENET_KAPLAMA-ALU"),
+    _i("AYIRICI_KECE", "CAT", "Ayırıcı keçe / yapısal mat", "area", "tip", "KSF-CAT-AYIRICI_KECE"),
+    _i("OSB", "CAT", "OSB levha", "area", "kalınlık (mm)", "KSF-CAT-OSB-11"),
+    _i("CATI_TAHTASI", "CAT", "Çatı tahtası / ahşap kaplama", "area", "kalınlık (mm)", "KSF-CAT-CATI_TAHTASI-22"),
+    _i("MERTEK", "CAT", "Mertek (ahşap)", "length", "kesit (5x10)", "KSF-CAT-MERTEK-5x10"),
+    _i("ASIK", "CAT", "Aşık (ahşap / çelik)", "length", "kesit", "KSF-CAT-ASIK-10x10"),
+    _i("CATI_LATA", "CAT", "Lata / kontrlata", "length", "kesit", "KSF-CAT-CATI_LATA-3x5"),
+    _i("EGIM_BETONU", "CAT", "Eğim betonu / eğim şapı", "area", "ort. kalınlık (cm)", "KSF-CAT-EGIM_BETONU-8"),
+    _i("CATI_CAKIL", "CAT", "Çakıl / balast", "area", "kalınlık (cm)", "KSF-CAT-CATI_CAKIL-5"),
+    _i("KENET_CATI", "CAT", "Kenet çatı sistemi (katmanlı)", "area", "kaplama malzemesi", "KSF-CAT-KENET_CATI-ALU",
+       [_c("KENET_KAPLAMA"), _c("AYIRICI_KECE"), _c("OSB", 1.0, "11"), _c("SU_YALITIM_MEMBRAN", 1.0, "NEFES_ALAN"),
+        _c("TASYUNU", 1.0, "10"), _c("BUHAR_KESICI"), _c("MERTEK", 1.7, "5x10"), _c("ASIK", 0.8)]),
+    _i("KIREMIT_CATI", "CAT", "Kiremit çatı sistemi (katmanlı)", "area", "kiremit tipi", "KSF-CAT-KIREMIT_CATI-MARSILYA",
+       [_c("CATI_KIREMIT"), _c("CATI_LATA", 3.0, "3x5"), _c("SU_YALITIM_MEMBRAN", 1.0, "NEFES_ALAN"), _c("OSB", 1.0, "11"),
+        _c("TASYUNU", 1.0, "10"), _c("BUHAR_KESICI"), _c("MERTEK", 1.7, "5x10"), _c("ASIK", 0.8)]),
+    _i("TERAS_CATI", "CAT", "Teras çatı sistemi (katmanlı)", "area", "tip (GEZILEN / GEZILMEYEN)", "KSF-CAT-TERAS_CATI-GEZILMEYEN",
+       [_c("EGIM_BETONU", 1.0, "8"), _c("BUHAR_KESICI"), _c("XPS", 1.0, "8"), _c("SU_YALITIM_MEMBRAN", 1.0, "BITUMLU_3MM"),
+        _c("GEOTEKSTIL"), _c("CATI_CAKIL", 1.0, "5")]),
     # IZO
     _i("XPS", "IZO", "XPS ısı yalıtımı", "area", "kalınlık (cm)", "KSF-IZO-XPS-5"),
     _i("EPS", "IZO", "EPS ısı yalıtımı", "area", "kalınlık (cm)", "KSF-IZO-EPS-5"),
     _i("TASYUNU", "IZO", "Taşyünü", "area", "kalınlık (cm)", "KSF-IZO-TASYUNU-5"),
     _i("SU_YALITIM_MEMBRAN", "IZO", "Su yalıtım membranı", "area", "tip (BITUMLU_3MM)", "KSF-IZO-SU_YALITIM_MEMBRAN-BITUMLU_3MM"),
     _i("SURME_IZOLASYON", "IZO", "Sürme izolasyon", "area", "tip", "KSF-IZO-SURME_IZOLASYON"),
+    _i("BUHAR_KESICI", "IZO", "Buhar kesici", "area", "tip", "KSF-IZO-BUHAR_KESICI"),
+    _i("GEOTEKSTIL", "IZO", "Geotekstil keçe", "area", "gramaj", "KSF-IZO-GEOTEKSTIL-300"),
     # ELK
     _i("KABLO", "ELK", "Kablo", "length", "tip + kesit (NYY_4x16)", "KSF-ELK-KABLO-NYY_4x16"),
     _i("TAVA", "ELK", "Kablo tavası", "length", "en x yükseklik (mm)", "KSF-ELK-TAVA-200x60"),
@@ -252,11 +334,19 @@ class Catalog:
     def upsert_item(self, data: dict) -> CatalogItem:
         it = CatalogItem(code=data["code"], discipline=data["discipline"], name=data["name"], measure=data["measure"],
                          unit=data.get("unit") or "", spec_label=data.get("spec_label") or "", example=data.get("example") or "",
-                         custom=True)
+                         custom=True, components=data.get("components") or [])
         if it.discipline not in self.disciplines:
             raise ValueError(f"Bilinmeyen disiplin kodu: {it.discipline}")
+        for c in it.components:
+            if c["code"] == it.code:
+                raise ValueError("Kalem kendi bileşeni olamaz")
+            if c["code"] not in self.items:
+                raise ValueError(f"Bileşen katalogda yok: {c['code']} (önce kalem olarak ekleyin)")
         self.items[it.code] = it
         return it
+
+    def systems(self) -> list[CatalogItem]:
+        return [it for it in self.items.values() if it.is_system]
 
     def remove_item(self, code: str) -> bool:
         return self.items.pop(normalize_code(code), None) is not None
@@ -284,7 +374,7 @@ class Catalog:
         for c in data.get("removed") or []:
             cat.items.pop(c, None)
         for d in data.get("items") or []:
-            d = {k: v for k, v in d.items() if k in {"code", "discipline", "name", "measure", "unit", "spec_label", "example", "custom"}}
+            d = {k: v for k, v in d.items() if k in {"code", "discipline", "name", "measure", "unit", "spec_label", "example", "custom", "components"}}
             it = CatalogItem(**d)
             cat.items[it.code] = it
         return cat

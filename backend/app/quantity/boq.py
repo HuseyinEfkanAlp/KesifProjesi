@@ -347,6 +347,41 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
 KIND_ORDER = list(KIND_META)
 
 
+def expand_systems(items: list[BoqItem], systems: list[dict], catalog: Catalog) -> list[BoqItem]:
+    """Katmanlı sistem kalemlerini bileşenlerine açar (services.project_systems çıktısına göre).
+
+    Sistem satırı listede kalır ama fiyatlanmaz (detail.system = True); dahil edilen her bileşen için
+    miktar = sistem miktarı × çarpan olan ayrı bir kalem eklenir (anahtar <bileşen>:<özellik>)."""
+    by_kind = {sys["code"].lower(): sys for sys in systems}
+    acc = _Acc()
+    out: list[BoqItem] = []
+    for it in items:
+        sys = by_kind.get(it.kind)
+        if not sys:
+            out.append(it)
+            continue
+        it.detail["system"] = True
+        it.detail["system_code"] = sys["code"]
+        note = "Katmanlı sistem: bileşenleri ayrı kalem olarak yazıldı, bu satır fiyatlanmaz"
+        if note not in it.notes:
+            it.notes.append(note)
+        out.append(it)
+        for comp in sys["components"]:
+            if not comp["include"]:
+                continue
+            citem = catalog.get(comp["code"])
+            unit = citem.unit if citem else "m²"
+            name = citem.name if citem else comp["code"]
+            disc = citem.discipline if citem else sys["discipline"]
+            spec = comp.get("spec") or ""
+            group = slug(spec) if spec else "*"
+            src = {"project": "projede yazıyor", "manual": "elle eklendi", "default": "sistem varsayılanı"}.get(comp.get("source"), "")
+            acc.add(comp["code"].lower(), group, f"{name}" + (f" {spec}" if spec else ""), it.quantity * comp["factor"],
+                    count=0.0, note=f"{sys['name']} bileşeni × {comp['factor']:g}" + (f" ({src})" if src else ""),
+                    meta=(name, unit, f"ksf:{disc}", catalog.discipline_name(disc)), system_code=sys["code"])
+    return out + list(acc.items.values())
+
+
 def sort_items(items: list[BoqItem]) -> list[BoqItem]:
     def k(i: BoqItem):
         return (KIND_ORDER.index(i.kind) if i.kind in KIND_META else 100, i.discipline, i.kind_label, i.group != "*", i.label)

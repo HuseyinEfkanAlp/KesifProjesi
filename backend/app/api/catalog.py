@@ -20,6 +20,7 @@ class ItemIn(BaseModel):
     unit: str | None = None
     spec_label: str | None = None
     example: str | None = None
+    components: list[dict] | str | None = None   # [{"code","factor","spec"}] ya da "OSB×1:11; MERTEK×1.7"
 
 
 class DisciplineIn(BaseModel):

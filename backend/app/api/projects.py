@@ -10,7 +10,7 @@ from ..parser.layer_profile import ALL_TYPES, DEFAULT_PROFILE, DISCIPLINES, TYPE
 from ..planset import LEVELS, PLAN_GROUPS, PLAN_TYPE_BY_CODE, PLAN_TYPES, effective_levels, plan_check
 from ..quantity.boq import DEFAULT_PARAMS, KIND_META
 from ..quantity.engine import DEFAULT_REBAR_RATIOS
-from ..services import analyze_and_store, project_params
+from ..services import analyze_and_store, project_params, project_systems
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -200,6 +200,53 @@ def update_plan_set(project_id: int, body: dict[str, str], session: Session = De
     session.add(p)
     session.commit()
     return read_plan_check(project_id, session)
+
+
+@router.get("/{project_id}/systems")
+def read_systems(project_id: int, session: Session = Depends(get_session)):
+    """Projedeki katmanlı sistemler ve bileşen kararları (projede yazıyor / yok / elle eklendi)."""
+    p = get_project(project_id, session)
+    return project_systems(p, session)
+
+
+class ComponentDecision(BaseModel):
+    include: bool | None = None   # None: karar silinir (kanıta döner)
+    spec: str | None = None
+
+
+@router.put("/{project_id}/systems")
+def update_systems(project_id: int, body: dict[str, dict[str, ComponentDecision]], session: Session = Depends(get_session)):
+    """Bileşen kararlarını günceller: {sistem_kodu: {bileşen_kodu: {include, spec}}}. Verilmeyenler olduğu gibi kalır."""
+    from ..services import load_catalog
+    p = get_project(project_id, session)
+    cat = load_catalog()
+    cur = {k: dict(v) for k, v in (p.systems or {}).items()}
+    for sys_code, comps in body.items():
+        sys_item = cat.get(sys_code)
+        if not sys_item or not sys_item.is_system:
+            raise HTTPException(400, f"Katmanlı sistem değil: {sys_code}")
+        valid = {c["code"] for c in sys_item.components}
+        bucket = cur.setdefault(sys_item.code, {})
+        for comp_code, dec in comps.items():
+            from ..standard.catalog import normalize_code
+            code = normalize_code(comp_code)
+            if code not in valid:
+                raise HTTPException(400, f"{sys_item.code} sisteminde bileşen yok: {code}")
+            entry = dict(bucket.get(code) or {})
+            if dec.include is None and dec.spec is None:
+                bucket.pop(code, None)
+                continue
+            if dec.include is not None:
+                entry["include"] = dec.include
+            if dec.spec is not None:
+                entry["spec"] = dec.spec.strip()
+            bucket[code] = entry
+        if not bucket:
+            cur.pop(sys_item.code, None)
+    p.systems = cur
+    session.add(p)
+    session.commit()
+    return project_systems(p, session)
 
 
 @router.get("/meta/plan-types")

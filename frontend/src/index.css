@@ -137,3 +137,7 @@ select.unset { border-color: var(--warn-border); background: var(--warn-bg); }
 .steps li.active { background: var(--primary); color: #fff; font-weight: 600; }
 .steps li.done { background: #d9efd9; color: #1e5e1e; }
 .btn.secondary-link { background: #e5e9ee; color: var(--text); }
+/* katmanlı sistemler */
+.system-block { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+tr.system-row td { background: #f3f5f8; font-weight: 600; }
+.hint { font-size: 11px; }

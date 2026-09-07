@@ -119,6 +119,7 @@ SUGGEST_RULES: list[tuple[str, str]] = [
     (r"PLASTER|SIVA|SIVA", "SIVA"), (r"PAINT|BOYA", "BOYA"), (r"TA[SŞ]\s*KAPLAMA|STONE", "CEPHE_TASI"),
     (r"KOMPOZ|ALUCOBOND|PANEL", "KOMPOZIT_PANEL"), (r"MEMBRAN", "CATI_MEMBRAN"), (r"ROOF|[CÇ]ATI", "CATI_KIREMIT"),
     (r"OLUK", "CATI_OLUK"), (r"YA[GĞ]MUR|DERE|INIS|İNİŞ", "CATI_DERE"), (r"K[UÜ]PE[SŞ]TE|KORKULUK", "KOREKUYU"),
+    (r"S[ÖO]VE", "SOVE"), (r"S[Iİ]LME", "SILME"), (r"DEN[Iİ]ZL[Iİ]K", "DENIZLIK"), (r"KARTONP", "SILME"),
     (r"SERAMIK|SERAMİK", "SERAMIK_ZEMIN"), (r"PARKE|LAMINAT", "LAMINAT"), (r"ASMA\s*TAVAN|CEILING", "ASMA_TAVAN"),
     (r"BORD[UÜ]R", "BORDUR"), (r"BAZALT|GRAN[Iİ]T|PEYZAJ.*D[OÖ][SŞ]EME", "PEYZAJ_DOSEME"), (r"[CÇ][Iİ]M\b|GRASS", "CIM"),
     (r"A[GĞ]A[CÇ]|TREE", "AGAC"), (r"ASFALT", "ASFALT"), (r"PARKE\s*TA[SŞ]|K[Iİ]L[Iİ]T", "PARKE_TAS"),
@@ -128,15 +129,31 @@ SUGGEST_RULES: list[tuple[str, str]] = [
 _SUGGEST = [(re.compile(p, re.IGNORECASE), c) for p, c in SUGGEST_RULES]
 
 
-def suggest_item(layer: str, catalog: Catalog) -> str | None:
+# Katman adından bulunan kalem, çizim yazıları bir katmanlı sistemi anlatıyorsa o sisteme yükseltilir:
+# ÇATI katmanı + "KENET" yazısı -> KENET_CATI; MANTOLAMA katmanı -> MANTOLAMA_SISTEM (bileşenleri ayrı kalem olur).
+SYSTEM_UPGRADES: dict[str, list[str]] = {
+    "CATI_KIREMIT": ["KENET_CATI", "TERAS_CATI", "KIREMIT_CATI"],
+    "MANTOLAMA": ["MANTOLAMA_SISTEM"],
+}
+# Sistem kodu -> yazıda kanıt gerekli mi (MANTOLAMA katmanı kanıtsız da sisteme yükselir)
+UPGRADE_NEEDS_EVIDENCE = {"KENET_CATI": True, "TERAS_CATI": True, "KIREMIT_CATI": True, "MANTOLAMA_SISTEM": False}
+
+
+def suggest_item(layer: str, catalog: Catalog, materials: dict | None = None) -> str | None:
     n = layer.replace("i", "İ").upper()
     for pat, code in _SUGGEST:
         if pat.search(n) and catalog.get(code):
+            for sys_code in SYSTEM_UPGRADES.get(code, []):
+                if not catalog.get(sys_code):
+                    continue
+                if not UPGRADE_NEEDS_EVIDENCE.get(sys_code, True) or (materials and sys_code in materials):
+                    return sys_code
             return code
     return None
 
 
-def detect_mapped(drawing: Drawing, profile, catalog: Catalog, params: DetectParams) -> tuple[list[DetectedElement], list[str], dict]:
+def detect_mapped(drawing: Drawing, profile, catalog: Catalog, params: DetectParams,
+                  materials: dict | None = None) -> tuple[list[DetectedElement], list[str], dict]:
     """Katman eşlemeli çizim: kullanıcı eşlediği katmanlar katalog kuralıyla ölçülür; eşlenmeyenlere öneri.
     Döndürür: elemanlar, uyarılar, {katman: {"code", "measure", "label", "suggested"}}."""
     from ..layer_profile import mapped_item
@@ -164,7 +181,7 @@ def detect_mapped(drawing: Drawing, profile, catalog: Catalog, params: DetectPar
             info[layer] = {"code": code, "measure": measure, "label": (item.name if item else code) + f" · {MEASURE_LABELS.get(measure, measure)}",
                            "suggested": None}
         else:
-            sug = suggest_item(layer, catalog)
+            sug = suggest_item(layer, catalog, materials)
             info[layer] = {"code": None, "measure": None, "label": None, "suggested": sug}
     if not mapped_n:
         warnings.append("Henüz katman eşlenmedi: Elemanlar sayfasında her katmanı bir katalog kalemine (ve ölçüm kuralına) atayın; "

@@ -4,6 +4,7 @@ import { Api, type DrawingPatch } from '../api/client'
 import { DISCIPLINES, ETYPE_LABELS, STRUCTURAL_ETYPES, type Discipline, type Drawing, type Project, type ProjectParams } from '../types'
 import PlanChecklist from '../components/PlanChecklist'
 import PlanIntake from '../components/PlanIntake'
+import SystemsPanel from '../components/SystemsPanel'
 import { planTypeGroups, usePlanTypes } from '../hooks/usePlanTypes'
 import ProjectNav from './ProjectNav'
 
@@ -95,6 +96,9 @@ export default function ProjectDetail() {
 
       <div className="panel">
         <PlanChecklist projectId={id} refreshKey={refresh} />
+      </div>
+      <div className="panel">
+        <SystemsPanel projectId={id} refreshKey={refresh} />
       </div>
 
       <div className="grid2">

@@ -34,6 +34,8 @@ _ADDED_COLUMNS = [
     ("element", "meta", "JSON"),
     ("project", "plan_set", "JSON"),
     ("drawing", "plan_type", "VARCHAR DEFAULT ''"),
+    ("project", "systems", "JSON"),
+    ("drawing", "materials", "JSON"),
 ]
 
 

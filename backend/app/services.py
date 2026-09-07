@@ -13,8 +13,9 @@ from .db import DATA_DIR
 from .parser.layer_profile import (DEFAULT_DISCIPLINE, MAPPED_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE, STRUCTURAL_TYPES,
                                    TYPE_DISCIPLINE, LayerProfile)
 from .parser.rebar_tables import kot_from_label
+from .parser.materials import merge_materials
 from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary, effective_params, electrical_items,
-                           sort_items, standard_items, structural_items)
+                           expand_systems, sort_items, standard_items, structural_items)
 from .standard.catalog import Catalog
 from .quantity.engine import ElementData, QuantityLine, QuantityParams, compute_all
 from .quantity.summary import summarize
@@ -67,6 +68,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.unit_detected = result.unit_detected
     drawing.layers = [l.to_dict() for l in result.layers]
     drawing.warnings = result.warnings
+    drawing.materials = result.materials or {}
     drawing.analyzed_at = datetime.utcnow()
     session.add(drawing)
     session.commit()
@@ -156,8 +158,8 @@ def project_quantities(project: Project, session: Session) -> tuple[list[Quantit
     return lines, summarize(lines, rebar_table_rows(project, session), info), info
 
 
-def project_boq(project: Project, session: Session, summary: dict | None = None) -> list[BoqItem]:
-    """Tüm disiplinlerin keşif listesi."""
+def project_boq(project: Project, session: Session, summary: dict | None = None, expand: bool = True) -> list[BoqItem]:
+    """Tüm disiplinlerin keşif listesi. expand=True: katmanlı sistemler bileşenlerine açılır (project_systems kararıyla)."""
     if summary is None:
         _, summary, _ = project_quantities(project, session)
     params = project_params(project)
@@ -178,9 +180,73 @@ def project_boq(project: Project, session: Session, summary: dict | None = None)
         if any(TYPE_DISCIPLINE.get(e.etype) == "electrical" for e in elements):
             elec.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "electrical"]})
     items = structural_items(summary, params) + architectural_items(arch, params) + electrical_items(elec, params)
+    catalog = load_catalog()
     if std:
-        items += standard_items(std, params, load_catalog())
+        items += standard_items(std, params, catalog)
+    if expand:
+        systems = project_systems(project, session, catalog=catalog, items=items, drawings=drawings)
+        if systems["systems"]:
+            items = expand_systems(items, systems["systems"], catalog)
     return sort_items(items)
+
+
+COMPONENT_SOURCES = ("project", "manual", "default", "missing", "excluded")
+
+
+def project_systems(project: Project, session: Session, catalog: Catalog | None = None,
+                    items: list[BoqItem] | None = None, drawings: list[Drawing] | None = None) -> dict:
+    """Projedeki katmanlı sistemler (kenet çatı, mantolama…) ve bileşen kararları.
+
+    Bir sistem, bir çizimde o kalem koduyla ölçülmüşse (katman eşlemesi ya da KSF katmanı) projede vardır; miktarı
+    keşif listesinden gelir. Her bileşen için karar sırası: kullanıcı kararı (project.systems) > çizim yazılarında
+    kanıt (drawing.materials: "projede yazıyor") > yok ("projede yok": kullanıcı ekler ya da yok sayar).
+    """
+    catalog = catalog or load_catalog()
+    if drawings is None:
+        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    if items is None:
+        items = project_boq(project, session, expand=False)
+    evidence = merge_materials([d.materials or {} for d in drawings])
+    overrides = project.systems or {}
+    out: list[dict] = []
+    warnings: list[str] = []
+    for it in items:
+        sys_item = catalog.get(it.kind)
+        if not sys_item or not sys_item.is_system:
+            continue
+        ov = overrides.get(sys_item.code) or {}
+        comps = []
+        missing = []
+        for comp in sys_item.components:
+            citem = catalog.get(comp["code"])
+            ev = evidence.get(comp["code"]) or {}
+            user = ov.get(comp["code"]) or {}
+            has_ev = bool(ev.get("evidence"))
+            if "include" in user:
+                include = bool(user["include"])
+                source = ("project" if has_ev else "manual") if include else "excluded"
+            else:
+                include = has_ev
+                source = "project" if has_ev else "missing"
+            spec = (user.get("spec") or ev.get("spec") or comp.get("spec") or "").strip()
+            row = {"code": comp["code"], "name": citem.name if citem else comp["code"], "unit": citem.unit if citem else "",
+                   "discipline": citem.discipline if citem else sys_item.discipline, "factor": comp["factor"],
+                   "default_spec": comp.get("spec") or "", "spec": spec, "include": include, "source": source,
+                   "evidence": list(ev.get("evidence") or []), "quantity": round(it.quantity * comp["factor"], 3)}
+            comps.append(row)
+            if source == "missing":
+                missing.append(row["name"])
+        out.append({"code": sys_item.code, "name": sys_item.name, "discipline": sys_item.discipline,
+                    "discipline_label": catalog.discipline_name(sys_item.discipline), "unit": sys_item.unit,
+                    "quantity": round(it.quantity, 3), "spec": it.group if it.group != "*" else "", "key": it.key,
+                    "components": comps, "missing": missing,
+                    "system_evidence": list((evidence.get(sys_item.code) or {}).get("evidence") or [])})
+        if missing:
+            warnings.append(f"{sys_item.name} ({it.quantity:,.0f} {sys_item.unit}): projede yazmıyor → {', '.join(missing)}. "
+                            "Projede varsa ekleyin, yoksa 'yok' bırakın.")
+    return {"systems": out, "warnings": warnings,
+            "missing": sum(len(sy["missing"]) for sy in out),
+            "evidence_codes": sorted(evidence)}
 
 
 def ensure_price_items(project: Project, items: list[BoqItem], session: Session) -> list[PriceItem]:

@@ -52,3 +52,9 @@ def beam_detail_dxf(tmp_path_factory):
 @pytest.fixture(scope="session")
 def facade_dxf(tmp_path_factory):
     return make_facade_dxf(tmp_path_factory.mktemp("dxf") / "cephe.dxf")
+
+
+@pytest.fixture(scope="session")
+def roof_dxf(tmp_path_factory):
+    from tests.fixtures.make_dxf import make_roof_dxf
+    return make_roof_dxf(tmp_path_factory.mktemp("dxf") / "cati.dxf")

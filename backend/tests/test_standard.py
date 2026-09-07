@@ -88,7 +88,7 @@ def test_mapped_discipline_facade(facade_dxf):
     from app.parser.detectors.standard import suggest_item
     cat = Catalog()
     assert suggest_item("brn_hatch_gazbeton", cat) == "DUVAR_YTONG" and suggest_item("brn_glass", cat) == "CAM"
-    assert suggest_item("dc mantolama01", cat) == "MANTOLAMA" and suggest_item("brn_dim", cat) is None
+    assert suggest_item("dc mantolama01", cat) == "MANTOLAMA_SISTEM" and suggest_item("brn_dim", cat) is None   # mantolama katmanı sisteme yükselir
     r0 = analyze_file(str(facade_dxf), discipline="mapped", catalog=cat)
     assert not r0.elements and any("Öneri" in w and "brn_hatch_gazbeton → DUVAR_YTONG" in w for w in r0.warnings)
     prof = (LayerProfile().with_layer("item:DUVAR_YTONG:area", "brn_hatch_gazbeton").with_layer("item:CAM", "brn_glass")

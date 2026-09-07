@@ -1,4 +1,4 @@
-import type { Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, LayerCheck, PlanCheck, PlanLevel, PlanType, PriceIn, PriceItem, Project, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
+import type { Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, LayerCheck, PlanCheck, PlanLevel, PlanType, PriceIn, PriceItem, Project, ProjectSystems, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
@@ -59,6 +59,10 @@ export const Api = {
     setPlanLevels: (id: number, levels: Record<string, PlanLevel>) =>
       request<PlanCheck>(`/api/projects/${id}/plan-set`, { method: 'PUT', body: json(levels) }),
     planTypes: () => request<{ groups: Record<string, string>; types: PlanType[]; levels: PlanLevel[] }>('/api/projects/meta/plan-types'),
+    systems: (id: number) => request<ProjectSystems>(`/api/projects/${id}/systems`),
+    /** {sistem: {bileşen: {include?, spec?}}}; boş nesne kararı siler (kanıta döner) */
+    setSystems: (id: number, body: Record<string, Record<string, { include?: boolean | null; spec?: string | null }>>) =>
+      request<ProjectSystems>(`/api/projects/${id}/systems`, { method: 'PUT', body: json(body) }),
   },
   drawings: {
     list: (pid: number) => request<Drawing[]>(`/api/projects/${pid}/drawings`),
@@ -103,7 +107,8 @@ export const Api = {
   },
   catalog: {
     get: () => request<Catalog>('/api/catalog'),
-    upsertItem: (body: Partial<CatalogItem>) => request<CatalogItem>('/api/catalog/items', { method: 'PUT', body: json(body) }),
+    upsertItem: (body: Partial<Omit<CatalogItem, 'components'>> & { components?: string | CatalogItem['components'] }) =>
+      request<CatalogItem>('/api/catalog/items', { method: 'PUT', body: json(body) }),
     removeItem: (code: string) => request<void>(`/api/catalog/items/${encodeURIComponent(code)}`, { method: 'DELETE' }),
     upsertDiscipline: (code: string, name: string) => request<{ disciplines: Record<string, string> }>('/api/catalog/disciplines', { method: 'PUT', body: json({ code, name }) }),
     reset: () => request<Catalog>('/api/catalog/reset', { method: 'POST' }),

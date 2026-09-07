@@ -292,6 +292,26 @@ Mimari ve elektrik dedektörleri şimdilik sentetik çizimlerle (`tests/fixtures
 3. Etiket biçimleri farklıysa `labels_ext.py` regex'lerini genişlet, `tests/test_disciplines.py`'ye örnek ekle.
 4. Blok adlarından kategori/ölçü çıkarımı için `labels_ext.py` içindeki `FIXTURE_CATEGORIES`, `opening_type_from_name`, `size_from_name`.
 
+## Katmanlı sistemler: kenet / kiremit / teras çatı, mantolama (`catalog.py: components`, `parser/materials.py`, `services.project_systems`)
+
+Çatı ve cephede katmanlar çizilmez, yazılır. Bu yüzden bir katalog kalemi **sistem** olabilir: `components` listesi
+(`{"code": "OSB", "factor": 1.0, "spec": "11"}` …) o kalem ölçüldüğünde ayrı iş kalemi olarak yazılacak bileşenleri ve
+çarpanlarını verir (miktar = sistem miktarı × çarpan; mertek m/m², dübel adet/m²). Varsayılan sistemler: `KENET_CATI`,
+`KIREMIT_CATI`, `TERAS_CATI` (CAT), `MANTOLAMA_SISTEM` (CEP); Standart sayfasından `OSB×1:11; MERTEK×1.7:5x10` biçiminde
+yeni sistem eklenir.
+
+- **Projeden çıkarma**: her çizimin bütün yazıları (blok içi dahil) taranır (`scan_materials`): "OSB 11 mm", "10 cm TAŞYÜNÜ",
+  "BUHAR KESİCİ", "KENET ÇATI" → bileşen kodu + kanıt + kalınlık (`drawing.materials`). Çatı katmanı için öneri bu kanıta
+  göre seçilir: yazılarda KENET varsa `KENET_CATI`, TERAS/GEZİLEN varsa `TERAS_CATI`, KİREMİT varsa `KIREMIT_CATI`, yoksa düz
+  `CATI_KIREMIT`; mantolama katmanı her zaman `MANTOLAMA_SISTEM` önerilir.
+- **Bileşen kararı** (`project_systems`): kullanıcı kararı > çizim kanıtı ("projede yazıyor", kalınlık kanıttan) > yok
+  ("projede yok"). Yazmayan bileşenler keşfe girmez ve **kullanıcıya sorulur** ("Kenet çatı sistemi (200 m²): projede yazmıyor →
+  Buhar kesici, Aşık"); kullanıcı *Ekle (projede var)* der ya da yok bırakır, özelliği (kalınlık) düzenler. Kararlar
+  `project.systems` içinde saklanır. Panel proje sayfasında ve Metraj sayfasında.
+- **Keşif**: sistem satırı listede kalır ama fiyatlanmaz (`detail.system`); dahil bileşenler `<bileşen>:<özellik>` anahtarıyla
+  ayrı kalem olur (`expand_systems`) ve Birim Fiyatlar'da fiyatlanır. API: `GET/PUT /api/projects/{id}/systems`.
+- Cephe için ayrıca söve, silme, denizlik kalemleri ve katman önerileri eklendi (söve çizgi → m, blok → adet).
+
 ## Plan seti (`planset.py`)
 
 `PLAN_TYPES`: 7 grupta (statik, mimari, elektrik, mekanik, altyapı, peyzaj, asansör) ~30 plan tipi; her biri için başlık

@@ -399,3 +399,25 @@ def make_facade_dxf(path: str | Path) -> Path:
     path = Path(path)
     doc.saveas(path)
     return path
+
+
+def make_roof_dxf(path: str | Path) -> Path:
+    """Çatı planı + detay notları (cm), ofis katmanlarıyla. Beklenen: ÇATI katmanında 20x10 m = 200 m² çatı alanı;
+    yazılarda kenet çatı sistemi kanıtı (KENET, OSB 11 mm, 10 cm TAŞYÜNÜ, MERTEK); buhar kesici ve aşık yazmıyor."""
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 5
+    for n in ("ÇATI", "OLUK", "NOT", "TABLO"):
+        doc.layers.add(n)
+    msp = doc.modelspace()
+    msp.add_lwpolyline(_rect(-100, -100, 2500, 1500), close=True, dxfattribs={"layer": "TABLO"})
+    msp.add_lwpolyline(_rect(0, 0, 2000, 1000), close=True, dxfattribs={"layer": "ÇATI"})
+    msp.add_line((0, 0), (2000, 0), dxfattribs={"layer": "OLUK"})
+    msp.add_text("ÇATI PLANI", dxfattribs={"layer": "TABLO", "height": 30}).set_placement((0, 1300))
+    y = 1100
+    for note in ("ÇATI DETAYI - KENET ÇATI SİSTEMİ", "1- TİTANYUM ÇİNKO KENET KAPLAMA", "2- AYIRICI KEÇE",
+                 "3- OSB 11 mm", "4- NEFES ALAN SU YALITIM ÖRTÜSÜ", "5- 10 cm TAŞYÜNÜ", "6- MERTEK 5x10 AHŞAP"):
+        msp.add_text(note, dxfattribs={"layer": "NOT", "height": 8}).set_placement((2100, y))
+        y -= 20
+    path = Path(path)
+    doc.saveas(path)
+    return path

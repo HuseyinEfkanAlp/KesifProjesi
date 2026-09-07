@@ -25,6 +25,7 @@ from .layer_profile import (ALL_TYPES, DEFAULT_DISCIPLINE, MAPPED_DISCIPLINE, RE
                             types_for)
 from .rebar_tables import kot_from_label, parse_rebar_labels, parse_rebar_tables, target_from_label
 from .loader import UNIT_SCALE, Drawing, load_dxf
+from .materials import scan_materials
 from ..standard.catalog import Catalog
 
 
@@ -55,6 +56,7 @@ class AnalysisResult:
     layers: list[LayerInfo] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     suggested_unit: str | None = None     # etiketler başka bir birime işaret ediyorsa
+    materials: dict = field(default_factory=dict)   # yazılardan tanınan malzeme / sistem kanıtı (parser/materials.py)
 
     def by_type(self, etype: str) -> list[DetectedElement]:
         return [e for e in self.elements if e.etype == etype]
@@ -64,7 +66,7 @@ class AnalysisResult:
             "unit": self.unit, "scale": self.scale, "unit_detected": self.unit_detected, "discipline": self.discipline,
             "elements": [e.to_dict() for e in self.elements],
             "layers": [l.to_dict() for l in self.layers],
-            "warnings": self.warnings, "suggested_unit": self.suggested_unit,
+            "warnings": self.warnings, "suggested_unit": self.suggested_unit, "materials": self.materials,
         }
 
 
@@ -210,7 +212,8 @@ def analyze_rebar(drawing: Drawing, label: str = "") -> AnalysisResult:
 def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, params: DetectParams) -> AnalysisResult:
     """Katman eşlemeli çizim (cephe görünüşü, çatı, peyzaj…): katman -> katalog kalemi + ölçüm kuralı."""
     counts = drawing.layer_counts()
-    elements, warns, info = detect_mapped(drawing, profile, catalog, params)
+    materials = scan_materials(drawing)
+    elements, warns, info = detect_mapped(drawing, profile, catalog, params, materials)
     infos = []
     for name in drawing.layers:
         i = info.get(name, {})
@@ -219,6 +222,7 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
     result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
                             discipline=MAPPED_DISCIPLINE, layers=infos, warnings=list(drawing.warnings) + warns)
     result.elements = elements
+    result.materials = materials
     sugg = [f"{l.name} → {l.suggested}" for l in infos if l.suggested and not l.mapped_code and l.count > 0]
     if sugg:
         result.warnings.append("Öneri (onaylamak için katmanı eşleyin): " + "; ".join(sugg[:12]) + (" …" if len(sugg) > 12 else ""))
@@ -231,11 +235,15 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
     profile = profile or LayerProfile()
     params = params or DetectParams()
     if discipline == STANDARD_DISCIPLINE:
-        return analyze_standard(drawing, catalog or Catalog(), params)
+        result = analyze_standard(drawing, catalog or Catalog(), params)
+        result.materials = scan_materials(drawing)
+        return result
     if discipline == MAPPED_DISCIPLINE:
         return analyze_mapped(drawing, profile, catalog or Catalog(), params)
     if discipline == REBAR_DISCIPLINE:
-        return analyze_rebar(drawing, label)
+        result = analyze_rebar(drawing, label)
+        result.materials = scan_materials(drawing)
+        return result
     discipline = discipline if discipline in DISCIPLINE_RUNNERS else DEFAULT_DISCIPLINE
 
     counts = drawing.layer_counts()
@@ -246,7 +254,8 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
             layers_by_type.setdefault(li.etype, []).append(li.name)
 
     result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
-                            discipline=discipline, layers=layer_infos, warnings=list(drawing.warnings))
+                            discipline=discipline, layers=layer_infos, warnings=list(drawing.warnings),
+                            materials=scan_materials(drawing))
 
     if discipline == "structural":
         suggested = check_unit_against_labels(drawing, profile, params)
