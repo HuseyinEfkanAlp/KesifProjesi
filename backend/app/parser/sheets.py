@@ -425,6 +425,9 @@ def boxes_from_titles(titles: list[tuple[float, float, float, str]], xs: np.ndar
     px = np.percentile(xs, [1, 99]); py = np.percentile(ys, [1, 99])
     extent = min(extent, max(float(px[1] - px[0]), float(py[1] - py[0]), 1e-9))
     rows: list[list[tuple[float, float, float, str]]] = []
+    titles = [t for t in titles if len(t[3].strip()) >= 4]
+    if len(titles) < 3:
+        return []
     for t in sorted(titles, key=lambda t: t[1]):
         if rows and abs(rows[-1][0][1] - t[1]) <= 0.02 * extent:
             rows[-1].append(t)
@@ -437,6 +440,8 @@ def boxes_from_titles(titles: list[tuple[float, float, float, str]], xs: np.ndar
         h0 = float(np.median([t[2] for t in row]))
         seen = {(round(t[0]), round(t[1])) for t in row}
         for t in big_texts:
+            if len(t[3].strip()) < 4:
+                continue   # "B", "C", aks harfi, kot: pafta başlığı değil
             if abs(t[1] - ty0) <= 0.02 * extent and h0 > 0 and 0.7 <= t[2] / h0 <= 1.4 and (round(t[0]), round(t[1])) not in seen:
                 row.append(t)
     # satırdaki yazı boyu başlık boyundan çok farklıysa (küçük alt başlık / not) pafta başlığı değildir
