@@ -8,6 +8,11 @@ interface Props {
   onChanged?: () => void
 }
 
+const RULE_LABEL: Record<string, string> = {
+  astar: 'Astar (boya alanı)', tavan: 'Tavan sıva + boya (kat oturumu)', sap: 'Şap (kat oturumu × kalınlık)', kaplama: 'Döşeme kaplaması (kat oturumu)',
+  temel_yalitim: 'Temel su yalıtımı (temel alanı)', grobeton: 'Grobeton (temel alanı × kalınlık)', koruma_sapi: 'Koruma şapı (temel alanı)',
+}
+
 const SOURCE_LABEL: Record<ComponentSource, string> = {
   project: 'Projede yazıyor', manual: 'Elle eklendi', default: 'Sistem varsayılanı', missing: 'PROJEDE YOK', excluded: 'Çıkarıldı',
 }
@@ -25,6 +30,17 @@ export default function SystemsPanel({ projectId, refreshKey, onChanged }: Props
     Api.projects.systems(projectId).then(setData).catch((e) => setError(e.message))
   }, [projectId])
   useEffect(() => { load() }, [load, refreshKey])
+
+  const toggleRule = async (rule: string, on: boolean) => {
+    if (!data) return
+    const off = new Set(data.derived_off)
+    if (on) off.delete(rule); else off.add(rule)
+    setBusy(true); setError('')
+    try {
+      await Api.projects.patch(projectId, { params: { derived_off: Array.from(off).join(',') } as never })
+      load(); onChanged?.()
+    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
 
   const decide = async (sys: string, comp: string, dec: { include?: boolean | null; spec?: string | null }) => {
     setBusy(true); setError('')
@@ -45,11 +61,43 @@ export default function SystemsPanel({ projectId, refreshKey, onChanged }: Props
         {' '}Cephe sistemi (mantolama, kompozit…) proje parametrelerinden seçilir; miktarı net alandan gelir.</div>
     </div>
   ) : null
+  const ROOF_SRC = { measured: 'çizimden ölçüldü', manual: 'elle girildi', estimated: 'kat planı oturumundan tahmin', none: '' }
+  const roof = data.roof && data.roof.area > 0 ? (
+    <div className="facade-info">
+      <b>Çatı alanı:</b> {fmt(data.roof.area)} m² <span className="muted">({ROOF_SRC[data.roof.source]})</span>
+      {' · '}<b>Çatı sistemi:</b> {data.roof.system ? <>{data.roof.system} <span className="muted">({data.roof.system_source === 'evidence' ? 'kesit notlarından' : 'seçildi'})</span></> : <span className="badge st-missing">seçilmedi</span>}
+      <div className="muted hint">{data.roof.detail}{data.roof.candidates.length > 0 && <> · notlarda: {data.roof.candidates.join(', ')}</>} Çatı alanı ve sistemi proje parametrelerinden düzeltilir.</div>
+    </div>
+  ) : null
+  const checklist = (
+    <>
+      {data.checklist.length > 0 && (
+        <div className="warn">
+          <b>Tamlık kontrolü — keşifte olması gereken ama çizimden türetilemeyen işler:</b>
+          <ul>{data.checklist.map((c) => <li key={c.code}>{c.level === 'required' ? <b>[gerekli] </b> : ''}{c.text}</li>)}</ul>
+        </div>
+      )}
+      {(data.derived.length > 0 || data.derived_off.length > 0) && (
+        <div className="derived">
+          <b>Türetilmiş kalemler</b> <span className="muted hint">(keşfe eklendi ve fiyatlanır; gereksizse kapatın)</span>
+          <ul className="derived-list">
+            {data.derived.map((d) => (
+              <li key={d.key}><span className="badge st-present">açık</span> {d.label}: <b>{fmt(d.quantity, d.unit === 'adet' ? 0 : 1)} {d.unit}</b> <span className="muted hint">{d.note}</span>
+                <button className="small secondary" disabled={busy} onClick={() => toggleRule(d.rule, false)}>kapat</button></li>
+            ))}
+            {data.derived_off.map((r) => (
+              <li key={r}><span className="badge st-skipped">kapalı</span> {RULE_LABEL[r] ?? r} <button className="small secondary" disabled={busy} onClick={() => toggleRule(r, true)}>aç</button></li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </>
+  )
   if (data.systems.length === 0) {
     return (
       <div className="systems">
         <h3>Katmanlı sistemler <span className="muted" style={{ fontWeight: 400 }}>(kenet / kiremit / teras çatı, mantolama)</span></h3>
-        {facade}
+        {facade}{roof}{checklist}
         <p className="muted">
           Bu projede henüz katmanlı sistem ölçülmedi. Çatı ya da cephe paftasında ilgili katmanı bir sistem kalemine eşleyin
           (Elemanlar sayfası, katman eşleme: örn. <code className="layer">ÇATI → Kenet çatı sistemi</code>); program çizim yazılarından
@@ -70,7 +118,7 @@ export default function SystemsPanel({ projectId, refreshKey, onChanged }: Props
           ? <span className="badge st-missing">{data.missing} bileşen projede yazmıyor</span>
           : <span className="badge st-present">bileşenler tamam</span>}
       </h3>
-      {facade}
+      {facade}{roof}{checklist}
       {data.warnings.length > 0 && (
         <div className="warn">
           <b>Projede yazmayan bileşenler var.</b> Sistem bu bileşenleri keşfe almadı. Projede var olduğunu biliyorsanız <i>Ekle</i> deyin,

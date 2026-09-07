@@ -142,3 +142,7 @@ select.unset { border-color: var(--warn-border); background: var(--warn-bg); }
 tr.system-row td { background: #f3f5f8; font-weight: 600; }
 .hint { font-size: 11px; }
 .facade-info { background: #f3f5f8; border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+.derived { background: #f3f5f8; border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+.derived-list { margin: 4px 0 0 18px; padding: 0; }
+.derived-list li { margin: 2px 0; }
+.derived-list button { margin-left: 6px; }

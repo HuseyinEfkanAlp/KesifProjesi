@@ -37,8 +37,12 @@ export default function ProjectDetail() {
   const planTypes = usePlanTypes()
   const planGroups = planTypeGroups(planTypes)
   const [facadeItems, setFacadeItems] = useState<CatalogItem[]>([])
+  const [roofItems, setRoofItems] = useState<CatalogItem[]>([])
   useEffect(() => {
-    Api.catalog.get().then((c) => setFacadeItems(c.items.filter((i) => i.discipline === 'CEP' && i.measure === 'area' && i.code !== 'CEPHE_BRUT'))).catch(() => {})
+    Api.catalog.get().then((c) => {
+      setFacadeItems(c.items.filter((i) => i.discipline === 'CEP' && i.measure === 'area' && i.code !== 'CEPHE_BRUT'))
+      setRoofItems(c.items.filter((i) => i.discipline === 'CAT' && i.measure === 'area'))
+    }).catch(() => {})
   }, [])
 
   // parametre formu
@@ -64,7 +68,7 @@ export default function ProjectDetail() {
     setBusy(true); setError('')
     try {
       const cleaned: Record<string, number | null> = {}
-      for (const [k, v] of Object.entries(dparams)) cleaned[k] = v === '' ? null : (k === 'facade_system' ? (v as unknown as number) : +v)
+      for (const [k, v] of Object.entries(dparams)) cleaned[k] = v === '' ? null : (['facade_system', 'roof_system', 'derived_off'].includes(k) ? (v as unknown as number) : +v)
       await Api.projects.patch(id, { ...params, rebar_ratios: ratios, params: cleaned as unknown as ProjectParams })
       await load()
     } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
@@ -151,6 +155,22 @@ export default function ProjectDetail() {
                 {facadeItems.map((i) => <option key={i.code} value={i.code}>{i.name}{i.is_system ? ' (katmanlı)' : ''}</option>)}
               </select>
             </label>
+          </div>
+          <h3>Çatı ve türetilmiş kalemler</h3>
+          <div className="row">
+            <label className="field" title="Boş: çizimde ölçülen çatı kalemi, yoksa en üst kat planı oturumu">
+              Çatı alanı (m²)
+              <input type="number" step="1" value={dparams.roof_area_m2 ?? ''} placeholder="otomatik" onChange={(e) => setDparams({ ...dparams, roof_area_m2: e.target.value })} />
+            </label>
+            <label className="field" title="Boş: kesit / detay notlarındaki kanıttan (kenet / kiremit / teras)">
+              Çatı sistemi
+              <select value={dparams.roof_system ?? ''} onChange={(e) => setDparams({ ...dparams, roof_system: e.target.value })}>
+                <option value="">— notlardan / seçilmedi —</option>
+                {roofItems.map((i) => <option key={i.code} value={i.code}>{i.name}{i.is_system ? ' (katmanlı)' : ''}</option>)}
+              </select>
+            </label>
+            <label className="field">Şap kalınlığı (cm)<input type="number" step="0.5" value={dparams.screed_cm ?? ''} placeholder="5" onChange={(e) => setDparams({ ...dparams, screed_cm: e.target.value })} /></label>
+            <label className="field">Grobeton (cm)<input type="number" step="1" value={dparams.lean_concrete_cm ?? ''} placeholder="10" onChange={(e) => setDparams({ ...dparams, lean_concrete_cm: e.target.value })} /></label>
           </div>
           <h3>Statik sarf ve fire (bağ teli, plywood, kalıp yağı, çivi)</h3>
           <div className="params-grid">

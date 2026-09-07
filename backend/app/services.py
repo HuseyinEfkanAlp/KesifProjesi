@@ -15,7 +15,7 @@ from .parser.layer_profile import (DEFAULT_DISCIPLINE, MAPPED_DISCIPLINE, REBAR_
 from .parser.rebar_tables import kot_from_label
 from .parser.materials import merge_materials
 from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary, effective_params, electrical_items,
-                           expand_systems, sort_items, standard_items, structural_items)
+                           expand_systems, slug, sort_items, standard_items, structural_items)
 from .standard.catalog import Catalog
 from .quantity.engine import ElementData, QuantityLine, QuantityParams, compute_all
 from .quantity.summary import summarize
@@ -187,11 +187,166 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     if std:
         items += standard_items(std, params, catalog)
     items += facade_items(project, session, catalog, items, drawings, params)
+    items += roof_items(project, session, catalog, items, drawings, params)
+    items += derived_items(project, session, catalog, items, drawings, params)[0]
     if expand:
         systems = project_systems(project, session, catalog=catalog, items=items, drawings=drawings)
         if systems["systems"]:
             items = expand_systems(items, systems["systems"], catalog)
     return sort_items(items)
+
+
+ROOF_KINDS = {"kenet_cati", "kiremit_cati", "teras_cati", "cati_kiremit", "cati_membran", "cati_sandvic_panel"}
+ROOF_SYSTEM_EVIDENCE = ("KENET_CATI", "KIREMIT_CATI", "TERAS_CATI")
+
+
+def roof_area(project: Project, session: Session, items: list[BoqItem] | None = None,
+              drawings: list[Drawing] | None = None, params: dict | None = None) -> dict:
+    """Çatı alanı ve sistemi. Alan: (1) çizimde ölçülen çatı kalemi, (2) roof_area_m2 parametresi, (3) tahmin: en üst
+    (bodrum olmayan) kat planı oturumu. Sistem: roof_system parametresi, yoksa kesit / detay notlarındaki kanıt."""
+    params = params or project_params(project)
+    if drawings is None:
+        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    if items is None:
+        items = project_boq(project, session, expand=False)
+    measured = sum(it.quantity for it in items if it.kind in ROOF_KINDS and it.unit == "m²" and not it.detail.get("info")
+                   and not it.detail.get("roof_auto"))
+    out = {"area": 0.0, "source": "none", "detail": "", "system": "", "system_source": "", "candidates": []}
+    if measured > 0:
+        out.update(area=round(measured, 2), source="measured", detail="çizimde ölçülen çatı kalemi")
+    elif params.get("roof_area_m2"):
+        out.update(area=float(params["roof_area_m2"]), source="manual", detail="proje parametresi (elle girildi)")
+    else:
+        fps = [fp for fp in _plan_footprints(project, session, drawings) if not fp["basement"]]
+        if fps:
+            top = max(fps, key=lambda f: f["area"])
+            out.update(area=round(top["area"], 2), source="estimated",
+                       detail=f"en büyük kat planı oturumu ({top['drawing']}; tahmin, elle düzeltilebilir)")
+    evidence = merge_materials([d.materials or {} for d in drawings])
+    cands = [c for c in ROOF_SYSTEM_EVIDENCE if c in evidence]
+    out["candidates"] = cands
+    code = str(params.get("roof_system") or "").strip().upper()
+    if code:
+        out.update(system=code, system_source="manual")
+    elif len(cands) == 1:
+        out.update(system=cands[0], system_source="evidence")
+    return out
+
+
+def roof_items(project: Project, session: Session, catalog: Catalog, items: list[BoqItem],
+               drawings: list[Drawing], params: dict) -> list[BoqItem]:
+    """Çatı sistemi biliniyor ama çizimde ölçülmemişse: çatı alanı bilgi satırı + sistem kalemi (roof_auto)."""
+    ra = roof_area(project, session, items, drawings, params)
+    if ra["area"] <= 0 or ra["source"] == "measured" or not ra["system"]:
+        return []
+    sys_item = catalog.get(ra["system"])
+    if not sys_item or any(i.kind == sys_item.code.lower() for i in items):
+        return []
+    src = {"manual": "proje parametresi", "evidence": "kesit / detay notlarından tanındı"}[ra["system_source"]]
+    return [BoqItem(key="cati_alani:*", kind="cati_alani", group="*", label="Çatı alanı", unit="m²", quantity=ra["area"],
+                    discipline="ksf:CAT", kind_label="Çatı alanı", discipline_label=catalog.discipline_name("CAT"),
+                    notes=[f"Kaynak: {ra['detail']}", "Bilgi satırı; fiyatlanmaz"], detail={"info": True, "source": ra["source"]}),
+            BoqItem(key=f"{sys_item.code.lower()}:*", kind=sys_item.code.lower(), group="*", label=sys_item.name, unit=sys_item.unit,
+                    quantity=ra["area"], discipline=f"ksf:{sys_item.discipline}", kind_label=sys_item.name,
+                    discipline_label=catalog.discipline_name(sys_item.discipline),
+                    notes=[f"Miktar = çatı alanı ({ra['detail']}); sistem: {src}"], detail={"roof_auto": True})]
+
+
+DERIVED_RULES = ("astar", "tavan", "sap", "kaplama", "temel_yalitim", "grobeton", "koruma_sapi")
+
+
+def derived_items(project: Project, session: Session, catalog: Catalog, items: list[BoqItem],
+                  drawings: list[Drawing], params: dict) -> tuple[list[BoqItem], list[dict]]:
+    """Keşifte gözden kaçmasın diye türetilen kalemler ve tamlık kontrol listesi.
+
+    Türetilen (fiyatlanır, detail.derived): boya varsa astar; kat planı oturumundan tavan sıva+boya, şap, döşeme kaplaması;
+    temel varsa temel su yalıtımı, grobeton, koruma şapı. derived_off parametresiyle kural kapatılır.
+    Kontrol listesi (miktar türetilemeyen ama olması gereken işler): çatı / cephe sistemi seçimi, söve-denizlik, cam,
+    korkuluk, ıslak hacim, drenaj…"""
+    off = {x.strip().lower() for x in str(params.get("derived_off") or "").split(",") if x.strip()}
+    kinds = {it.kind for it in items}
+    qty = lambda k: sum(it.quantity for it in items if it.kind == k)   # noqa: E731
+    out: list[BoqItem] = []
+    check: list[dict] = []
+
+    def add(code: str, spec: str, q: float, note: str, rule: str):
+        it = catalog.get(code)
+        if not it or q <= 0 or rule in off:
+            return
+        group = slug(spec) if spec else "*"
+        out.append(BoqItem(key=f"{it.code.lower()}:{group}", kind=it.code.lower(), group=group,
+                           label=it.name + (f" {spec}" if spec else ""), unit=it.unit, quantity=round(q, 3),
+                           discipline=f"ksf:{it.discipline}", kind_label=it.name, discipline_label=catalog.discipline_name(it.discipline),
+                           notes=[f"Türetildi: {note}"], detail={"derived": True, "rule": rule}))
+
+    def ask(code: str, text: str, level: str = "required"):
+        check.append({"code": code, "text": text, "level": level})
+
+    # 1) boya -> astar
+    boya = qty("boya")
+    if boya > 0 and "astar" not in kinds:
+        add("ASTAR", "", boya, "boya alanı kadar astar (duvar)", "astar")
+    # 2) kat planı oturumu -> tavan, şap, döşeme kaplaması
+    fps = _plan_footprints(project, session, drawings)
+    floor = sum(fp["area"] * max(1, fp["storey_count"]) for fp in fps)
+    if floor > 0:
+        src = ", ".join(f"{fp['drawing']} {fp['area']:,.0f} m²" for fp in fps[:4]) + ("…" if len(fps) > 4 else "")
+        if "tavan_siva_boya" not in kinds:
+            add("TAVAN_SIVA_BOYA", "", floor, f"kat oturumu × kat sayısı ({src})", "tavan")
+        if "sap" not in kinds:
+            t = float(params.get("screed_cm") or 5.0)
+            add("SAP", f"{t:g}", floor * t / 100.0, f"kat oturumu × {t:g} cm ({src})", "sap")
+        if "doseme_kaplama" not in kinds and not any(k in kinds for k in ("seramik_zemin", "laminat", "epoksi")):
+            add("DOSEME_KAPLAMA", "", floor, f"kat oturumu ({src}); tip seçin (seramik / parke / epoksi)", "kaplama")
+            ask("kaplama_tipi", f"Döşeme kaplaması türetildi ({floor:,.0f} m²): tipi (seramik / parke / epoksi) ve ıslak hacim payını belirleyin.", "optional")
+    # 3) temel -> su yalıtımı, grobeton, koruma şapı
+    found_area = 0.0
+    for d in drawings:
+        if d.discipline == DEFAULT_DISCIPLINE:
+            found_area += sum((e.area or 0.0) for e in _included_elements(d, session) if e.etype == "foundation")
+    if found_area > 0:
+        if "temel_su_yalitimi" not in kinds and "su_yalitim_membran" not in kinds:
+            add("TEMEL_SU_YALITIMI", "", found_area, f"temel alanı {found_area:,.0f} m² (radye / sürekli temel)", "temel_yalitim")
+        if "grobeton" not in kinds:
+            t = float(params.get("lean_concrete_cm") or 10.0)
+            add("GROBETON", f"{t:g}", found_area * t / 100.0, f"temel alanı × {t:g} cm", "grobeton")
+        if "koruma_sapi" not in kinds:
+            add("KORUMA_SAPI", "5", found_area, "temel yalıtımı üstü koruma şapı 5 cm", "koruma_sapi")
+        if "drenaj" not in kinds:
+            ask("drenaj", f"Temel var ({found_area:,.0f} m²): perimetre drenajı (drenaj borusu + levha) gerekiyorsa ekleyin.", "optional")
+    # 4) çatı
+    ra = roof_area(project, session, items, drawings, params)
+    if ra["area"] > 0 and not ra["system"] and not any(k in kinds for k in ROOF_KINDS):
+        hint = " Kesitte " + " / ".join(ra["candidates"]) + " notu var." if ra["candidates"] else ""
+        ask("cati_sistemi", f"Çatı alanı {ra['area']:,.0f} m² ({ra['detail']}) ama çatı sistemi seçilmedi.{hint} Betonarme teras ise: eğim betonu, "
+                            "buhar kesici, ısı yalıtımı (XPS), su yalıtımı, koruma betonu; kenet / kiremit çatı ise ilgili sistemi seçin.")
+    elif ra["area"] > 0 and len(ra["candidates"]) > 1 and ra["system_source"] != "manual":
+        ask("cati_sistemi", f"Kesit notlarında birden çok çatı sistemi geçiyor ({', '.join(ra['candidates'])}); proje parametrelerinden seçin.")
+    # 5) cephe
+    fa = facade_area(project, session, items, drawings, params)
+    facade_kinds = {"mantolama_sistem", "kompozit_panel", "giydirme_cephe", "cephe_tasi", "cephe_boya", "prekast_panel", "cephe_brut", "mantolama"}
+    if fa["gross"] > 0 and not str(params.get("facade_system") or "").strip() and not (kinds & facade_kinds):
+        ask("cephe_sistemi", f"Cephe brüt alanı {fa['gross']:,.0f} m² ({fa['detail']}) ama cephe sistemi seçilmedi (mantolama + boya / kompozit / "
+                             "prekast / cephe taşı). Cephe boyası ve astarı da bu seçimden gelir.")
+    openings = qty("pencere") + qty("dograma")
+    evidence = merge_materials([d.materials or {} for d in drawings])
+    layer_names = {l.get("name", "").upper() for d in drawings for l in (d.layers or [])}
+    has_sove = "sove" in kinds or "SOVE" in evidence or any("SÖVE" in n or "SOVE" in n for n in layer_names)
+    if openings > 0 and not has_sove:
+        ask("sove_denizlik", f"{openings:,.0f} adet pencere / doğrama var: söve, denizlik ve kat silmesi çizimde yok. Cephede varsa "
+                             "(görünüşte katman eşleyerek ya da elle) ekleyin.", "optional")
+    if (qty("pencere") > 0 or qty("dograma") > 0) and "cam" not in kinds:
+        ask("cam", "Pencere / doğrama adedi var ama cam m² yok (ölçü etiketi ya da poz listesinde boyut yok); doğrama fiyatı camı kapsamıyorsa ekleyin.", "optional")
+    # 6) çok katlı -> korkuluk / merdiven
+    storeys = sum(max(1, d.storey_count) for d in drawings if d.discipline in (DEFAULT_DISCIPLINE, "architectural")
+                  and any(e.etype in ("column", "wall") for e in _included_elements(d, session)))
+    if storeys >= 2 and "korekuyu" not in kinds:
+        ask("korkuluk", "Çok katlı bina: merdiven korkuluğu / küpeşte ve balkon-teras korkuluğu keşifte yok; ekleyin.", "optional")
+    # 7) ıslak hacim
+    wet = any(any(k in n for k in ("VITRIFIYE", "WC", "BANYO", "ISLAK")) for n in layer_names)
+    if wet and "seramik_duvar" not in kinds:
+        ask("islak_hacim", "Planda ıslak hacim (vitrifiye / WC) var: duvar seramiği, ıslak hacim su yalıtımı ve vitrifiye adetleri keşifte yok.", "optional")
+    return out, check
 
 
 FACADE_HULL_RATIO = 0.7
@@ -208,8 +363,8 @@ def building_footprint(elements) -> "tuple[float, float] | None":
     from shapely.geometry import Polygon
     from shapely.ops import unary_union
     polys = [Polygon(e.points).buffer(0) for e in elements
-             if e.etype in ("slab", "beam", "column", "shear_wall") and len(e.points or []) >= 3]
-    polys = [g for g in polys if not g.is_empty and g.is_valid]
+             if e.etype in ("slab", "beam", "column", "shear_wall", "wall") and len(e.points or []) >= 3]
+    polys = [g for g in polys if not g.is_empty and g.is_valid and g.area > 1e-4]
     if len(polys) < 3:
         return None
     try:
@@ -225,7 +380,39 @@ def building_footprint(elements) -> "tuple[float, float] | None":
         return None
     if not parts:
         return None
-    return float(sum(g.area for g in parts)), float(sum(g.exterior.length for g in parts))
+    big = max(parts, key=lambda g: g.area)    # bina oturumu: en büyük parça (uzak aykırı nesneler elenir)
+    return float(big.area), float(big.exterior.length)
+
+
+def _plan_footprints(project: Project, session: Session, drawings: list[Drawing]) -> list[dict]:
+    """Kat planlarının (statik kalıp ya da mimari) bina oturumu: aynı kat için statik varsa mimari sayılmaz.
+    Bodrum / temel paftaları cephe için atlanır (yer altı)."""
+    out = []
+    labels_struct = set()
+    for d in drawings:
+        if d.discipline == DEFAULT_DISCIPLINE:
+            els = _included_elements(d, session)
+            if not any(e.etype in ("column", "shear_wall") for e in els):
+                continue
+            fp = building_footprint(els)
+            if fp and fp[0] >= 10:
+                labels_struct.add(kot_from_label(d.label))
+                out.append({"drawing": d.label or d.filename, "drawing_id": d.id, "area": round(fp[0], 2), "perimeter": round(fp[1], 2),
+                            "storey_height": d.storey_height or project.storey_height, "storey_count": d.storey_count,
+                            "basement": "BODRUM" in (d.label or "").upper(), "source": "structural"})
+    for d in drawings:
+        if d.discipline == "architectural":
+            els = _included_elements(d, session)
+            if not any(e.etype == "wall" for e in els):
+                continue
+            if kot_from_label(d.label) and kot_from_label(d.label) in labels_struct:
+                continue
+            fp = building_footprint(els)
+            if fp and fp[0] >= 10:
+                out.append({"drawing": d.label or d.filename, "drawing_id": d.id, "area": round(fp[0], 2), "perimeter": round(fp[1], 2),
+                            "storey_height": d.storey_height or project.storey_height, "storey_count": d.storey_count,
+                            "basement": "BODRUM" in (d.label or "").upper(), "source": "architectural"})
+    return out
 
 
 def facade_area(project: Project, session: Session, items: list[BoqItem] | None = None,
@@ -249,24 +436,15 @@ def facade_area(project: Project, session: Session, items: list[BoqItem] | None 
         out.update(gross=float(params["facade_gross_m2"]), source="manual", detail="proje parametresi (elle girildi)")
     else:
         total = 0.0
-        for d in drawings:
-            if d.discipline != DEFAULT_DISCIPLINE:
-                continue
-            els = _included_elements(d, session)
-            if not any(e.etype in ("column", "shear_wall") for e in els):
-                continue   # yalnız temel paftası: cephe vermez
-            fp = building_footprint(els)
-            if not fp or fp[0] < 10:
-                continue
-            per = fp[1]
-            h = d.storey_height or project.storey_height
-            a = per * h * max(1, d.storey_count)
+        for fp in _plan_footprints(project, session, drawings):
+            if fp["basement"]:
+                continue   # yer altı: cephe yok
+            a = fp["perimeter"] * fp["storey_height"] * max(1, fp["storey_count"])
             total += a
-            out["per_drawing"].append({"drawing": d.label or d.filename, "drawing_id": d.id, "perimeter": round(per, 2),
-                                       "storey_height": h, "storey_count": d.storey_count, "area": round(a, 2)})
+            out["per_drawing"].append({**fp, "area": round(a, 2)})
         if total > 0:
             out.update(gross=total, source="estimated",
-                       detail="kalıp planı kolon / perde dış hattı çevresi × kat yüksekliği × kat sayısı (tahmin; elle düzeltilebilir)")
+                       detail="kat planı dış hattı (kolon / perde / duvar) çevresi × kat yüksekliği × kat sayısı (tahmin; elle düzeltilebilir)")
     out["gross"] = round(out["gross"], 2)
     out["net"] = round(max(out["gross"] - glass, 0.0), 2)
     return out
@@ -352,10 +530,18 @@ def project_systems(project: Project, session: Session, catalog: Catalog | None 
         if missing:
             warnings.append(f"{sys_item.name} ({it.quantity:,.0f} {sys_item.unit}): projede yazmıyor → {', '.join(missing)}. "
                             "Projede varsa ekleyin, yoksa 'yok' bırakın.")
+    params = project_params(project)
+    base = [it for it in items if not it.detail.get("derived")]   # türetilmişler listede olsa da kurallar yeniden hesaplanır
+    derived, checklist = derived_items(project, session, catalog, base, drawings, params)
     return {"systems": out, "warnings": warnings,
             "missing": sum(len(sy["missing"]) for sy in out),
             "evidence_codes": sorted(evidence),
-            "facade": facade_area(project, session, items, drawings)}
+            "facade": facade_area(project, session, items, drawings, params),
+            "roof": roof_area(project, session, items, drawings, params),
+            "derived": [{"key": it.key, "label": it.label, "quantity": it.quantity, "unit": it.unit, "rule": it.detail.get("rule"),
+                         "note": it.notes[0] if it.notes else ""} for it in derived],
+            "derived_off": sorted({x.strip() for x in str(params.get("derived_off") or "").split(",") if x.strip()}),
+            "checklist": checklist}
 
 
 def ensure_price_items(project: Project, items: list[BoqItem], session: Session) -> list[PriceItem]:

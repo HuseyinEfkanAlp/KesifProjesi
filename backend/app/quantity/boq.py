@@ -60,6 +60,13 @@ DEFAULT_PARAMS: dict[str, Any] = {
     # cephe
     "facade_gross_m2": None,      # brüt cephe alanı (m²); None -> görünüşteki CEPHE_BRUT kalemi, yoksa kalıp planı oturum çevresi × H
     "facade_system": "",          # cephe sistemi katalog kodu (MANTOLAMA_SISTEM, KOMPOZIT_PANEL…); miktarı net cephe alanından
+    # çatı
+    "roof_area_m2": None,         # çatı alanı (m²); None -> ölçülen çatı kalemi, yoksa en üst kat planı oturumu
+    "roof_system": "",            # çatı sistemi kodu (KENET_CATI / KIREMIT_CATI / TERAS_CATI …); boş -> kesit notlarından
+    # türetilmiş kalemler
+    "screed_cm": 5.0,             # şap kalınlığı (cm) — döşeme alanından türetilir
+    "lean_concrete_cm": 10.0,     # grobeton kalınlığı (cm) — temel alanından türetilir
+    "derived_off": "",            # kapatılan türetme kuralları (virgülle: astar,tavan,sap,kaplama,temel_yalitim,grobeton,koruma_sapi)
 }
 
 

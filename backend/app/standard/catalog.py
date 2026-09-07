@@ -169,6 +169,12 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("ASMA_TAVAN", "INC", "Asma tavan", "area", "tip (ALCIPAN / METAL / TASYUNU)", "KSF-INC-ASMA_TAVAN-TASYUNU"),
     _i("SUPURGELIK", "INC", "Süpürgelik", "length", "tip", "KSF-INC-SUPURGELIK-MDF"),
     _i("SAP", "INC", "Şap", "volume", "kalınlık (cm)", "KSF-INC-SAP-5"),
+    _i("ASTAR", "INC", "Boya astarı", "wall_area", "tip", "KSF-INC-ASTAR"),
+    _i("DOSEME_KAPLAMA", "INC", "Döşeme kaplaması (tip seçilecek)", "area", "tip (SERAMIK / PARKE / EPOKSI)", "KSF-INC-DOSEME_KAPLAMA-SERAMIK"),
+    _i("TAVAN_SIVA_BOYA", "INC", "Tavan sıva + astar + boya", "area", "tip", "KSF-INC-TAVAN_SIVA_BOYA"),
+    _i("TEMEL_SU_YALITIMI", "IZO", "Temel su yalıtımı (bitümlü membran / sürme)", "area", "tip", "KSF-IZO-TEMEL_SU_YALITIMI"),
+    _i("KORUMA_SAPI", "IZO", "Koruma şapı (temel yalıtımı üstü)", "area", "kalınlık (cm)", "KSF-IZO-KORUMA_SAPI-5"),
+    _i("DRENAJ", "IZO", "Drenaj levhası / drenaj borusu", "area", "tip", "KSF-IZO-DRENAJ"),
     # CEP
     _i("KOMPOZIT_PANEL", "CEP", "Kompozit cephe paneli", "area", "kalınlık / renk", "KSF-CEP-KOMPOZIT_PANEL-4MM"),
     _i("GIYDIRME_CEPHE", "CEP", "Giydirme cephe", "area", "sistem", "KSF-CEP-GIYDIRME_CEPHE"),

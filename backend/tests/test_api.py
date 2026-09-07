@@ -89,7 +89,8 @@ def test_full_flow(client, storey_dxf, foundation_dxf):
     cost = client.get(f"/api/projects/{pid}/cost").json()["cost"]
     assert cost["grand_total"] > 0
     # beton/kalıp/demir fiyatlandı; yalnız sarf kalemleri (bağ teli, plywood, yağ, çivi) fiyatsız kalabilir
-    assert all(k.split(":")[0] in {"bag_teli", "plywood", "kalip_yagi", "civi"} for k in cost["missing_prices"]), cost["missing_prices"]
+    DERIVED = {"doseme_kaplama", "tavan_siva_boya", "sap", "astar", "temel_su_yalitimi", "grobeton", "koruma_sapi"}
+    assert all(k.split(":")[0] in {"bag_teli", "plywood", "kalip_yagi", "civi"} | DERIVED for k in cost["missing_prices"]), cost["missing_prices"]
     keys = {l["key"] for l in cost["lines"]}
     assert {"beton:fire", "demir:fire", "bag_teli:*", "plywood:*"} <= keys
 
@@ -166,7 +167,7 @@ def test_multi_discipline_flow(client, storey_dxf, arch_dxf, elec_dxf):
     p9 = next(i for i in q["boq"]["items"] if i["key"] == "pencere:p9_100x100")
     assert p9["quantity"] == 6                          # 3 adet × 2 kat
     discs = [d["discipline"] for d in q["boq"]["by_discipline"]]
-    assert discs == ["structural", "architectural", "electrical"]
+    assert discs[:3] == ["structural", "architectural", "electrical"] and set(discs[3:]) <= {"ksf:INC", "ksf:IZO", "ksf:STA"}   # türetilmiş kalemler
 
     prices = client.get(f"/api/projects/{pid}/prices").json()
     assert {"beton:*", "duvar:*", "duvar:ytong:20", "kablo:*", "tava:200x60"} <= {x["key"] for x in prices}
@@ -186,7 +187,7 @@ def test_multi_discipline_flow(client, storey_dxf, arch_dxf, elec_dxf):
     assert wall["days"] == pytest.approx(wall["quantity"] * 0.8 / (3 * 9), abs=0.01)
     assert c["material_subtotal"] > 0 and c["labor_subtotal"] > 0
     assert c["duration"]["hours_per_day"] == 9 and c["duration"]["parallel_days"] <= c["duration"]["sequential_days"]
-    assert {d["discipline"] for d in c["by_discipline"]} == {"structural", "architectural", "electrical"}
+    assert {"structural", "architectural", "electrical"} <= {d["discipline"] for d in c["by_discipline"]}   # + türetilmiş (ksf:INC…)
     assert "kapi:k1_90x210" in c["missing_prices"]
 
     r = client.get(f"/api/projects/{pid}/cost.xlsx")

@@ -85,6 +85,12 @@ export interface ProjectParams {
   facade_gross_m2: number | null
   /** cephe sistemi katalog kodu (MANTOLAMA_SISTEM…); miktarı net cephe alanından */
   facade_system: string
+  roof_area_m2: number | null
+  roof_system: string
+  screed_cm: number
+  lean_concrete_cm: number
+  /** kapatılan türetme kuralları (virgülle) */
+  derived_off: string
 }
 
 export interface Project {
@@ -397,12 +403,28 @@ export interface FacadeArea {
   per_drawing: { drawing: string; drawing_id: number; perimeter: number; storey_height: number; storey_count: number; area: number }[]
 }
 
+export interface RoofInfo {
+  area: number
+  source: 'measured' | 'manual' | 'estimated' | 'none'
+  detail: string
+  system: string
+  system_source: 'manual' | 'evidence' | ''
+  candidates: string[]
+}
+
+export interface DerivedItem { key: string; label: string; quantity: number; unit: string; rule: string; note: string }
+export interface ChecklistItem { code: string; text: string; level: 'required' | 'optional' }
+
 export interface ProjectSystems {
   systems: ProjectSystem[]
   warnings: string[]
   missing: number
   evidence_codes: string[]
   facade: FacadeArea
+  roof: RoofInfo
+  derived: DerivedItem[]
+  derived_off: string[]
+  checklist: ChecklistItem[]
 }
 
 export interface Catalog {

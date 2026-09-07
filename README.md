@@ -312,6 +312,30 @@ yeni sistem eklenir.
   ayrı kalem olur (`expand_systems`) ve Birim Fiyatlar'da fiyatlanır. API: `GET/PUT /api/projects/{id}/systems`.
 - Cephe için ayrıca söve, silme, denizlik kalemleri ve katman önerileri eklendi (söve çizgi → m, blok → adet).
 
+## Türetilmiş kalemler ve tamlık kontrolü (`services.derived_items`, `roof_area`)
+
+Detaylı maliyette gözden kaçmasın diye çizimden **türetilen** kalemler keşfe eklenir (fiyatlanır, "Türetildi" notu,
+`detail.derived`; proje parametresi `derived_off` ile kural kapatılır — panelde *kapat / aç*):
+
+| Tetik | Türetilen | Miktar |
+|---|---|---|
+| Boya | Boya astarı | boya m² |
+| Kat planı oturumu (statik ya da mimari) | Tavan sıva + astar + boya; şap; döşeme kaplaması (tip seçilecek) | oturum × kat sayısı (şap × kalınlık) |
+| Temel (radye / sürekli) | Temel su yalıtımı; grobeton; koruma şapı | temel alanı (grobeton × kalınlık) |
+| Çatı sistemi biliniyor (parametre ya da kesit notu) | Çatı alanı bilgi satırı + sistem kalemi → bileşenler | çatı alanı |
+
+**Çatı alanı**: çizimde ölçülen çatı kalemi > parametre > en büyük (bodrum olmayan) kat planı oturumu. **Çatı sistemi**: parametre >
+kesit / detay notlarındaki tek kanıt (KENET / KİREMİT / TERAS). Bina oturumu artık mimari plandaki duvar çokgenlerinden de
+çıkar (`building_footprint`: en büyük parça), cephe brüt alanı için bodrum paftaları atlanır.
+
+**Tamlık kontrol listesi** (miktarı türetilemeyen ama olması gereken işler; sistem panelinde uyarı): çatı sistemi seçilmedi
+(betonarme teras ise eğim betonu + buhar kesici + ısı yalıtımı + su yalıtımı + koruma betonu), cephe sistemi seçilmedi (cephe boyası /
+astar / mantolama), pencere var ama söve / denizlik / silme yok, cam m² yok, çok katlıda korkuluk / küpeşte yok, ıslak hacim seramiği
+ve yalıtımı yok, temel drenajı, döşeme kaplaması tipi. API: `GET /api/projects/{id}/systems` → `roof`, `derived`, `checklist`.
+
+**Çerçevesiz paftalar**: çerçeve yoksa ve kümeleme başlık sayısından az pafta bulursa, aynı hizadaki pafta başlıklarının x
+konumlarından bantlar üretilir (`sheets.py: boxes_from_titles`, kaynak "title"); B2 BLOK 11 paftaya ayrıldı.
+
 ## Gerçek çizimde öğrenilenler (B2 BLOK mimari uygulama seti, 520 MB DXF, 7 Eyl 2026)
 
 - 11 pafta çerçevesiz yan yana (vaziyet, bodrum / zemin / 1. kat / çatı katı / +15.65 planları, kesitler, görünüşler, doğramalar,

@@ -413,6 +413,44 @@ def _top_layers(ids: np.ndarray, names: list[str]) -> dict[str, int]:
     return {names[i]: int(counts[i]) for i in order if counts[i] > 0}
 
 
+def boxes_from_titles(titles: list[tuple[float, float, float, str]], xs: np.ndarray, ys: np.ndarray,
+                      extent: float) -> list[Bbox]:
+    """Çerçevesiz, yan yana dizilmiş paftalar: aynı hizada (aynı y) duran pafta başlıklarının x konumlarından
+    pafta bantları üretir. Başlıklar pafta sol kenarına yakın yazılır; bant = [başlık x − pay, sonraki başlık x − pay].
+    Bandın y aralığı içindeki nesnelerden (uzak aykırılar hariç) alınır. En az 3 başlık aynı satırda olmalı."""
+    if len(titles) < 3 or extent <= 0:
+        return []
+    rows: list[list[tuple[float, float, float, str]]] = []
+    for t in sorted(titles, key=lambda t: t[1]):
+        if rows and abs(rows[-1][0][1] - t[1]) <= 0.02 * extent:
+            rows[-1].append(t)
+        else:
+            rows.append([t])
+    row = max(rows, key=len)
+    # aynı x'e çok yakın başlıklar (alt başlık) tek sayılır
+    xs_t: list[float] = []
+    for t in sorted(row, key=lambda t: t[0]):
+        if not xs_t or t[0] - xs_t[-1] > 0.01 * extent:
+            xs_t.append(t[0])
+    if len(xs_t) < 3:
+        return []
+    gaps = np.diff(np.array(xs_t))
+    gap = float(np.median(gaps))
+    ty = float(np.median([t[1] for t in row]))
+    pad = 0.07 * gap
+    edges = [x - pad for x in xs_t] + [xs_t[-1] + gap]
+    out: list[Bbox] = []
+    for i in range(len(xs_t)):
+        x0, x1 = edges[i], edges[i + 1]
+        m = (xs >= x0) & (xs < x1) & (np.abs(ys - ty) < 2.5 * gap)
+        if int(np.count_nonzero(m)) < MIN_SHEET_ENTITIES:
+            continue
+        band = ys[m]
+        lo, hi = np.percentile(band, [0.5, 99.5])
+        out.append((x0, float(min(lo, ty)) - 0.03 * gap, x1, float(max(hi, ty)) + 0.03 * gap))
+    return out
+
+
 def _build_sheets(boxes: list[tuple[Bbox, str]], xs: np.ndarray, ys: np.ndarray,
                   titles: list[tuple[float, float, float, str]], extent: float,
                   layer_ids: np.ndarray | None = None, layer_names: list[str] | None = None) -> list[Sheet]:
@@ -563,6 +601,11 @@ def scan_sheets(path: str | Path) -> SheetScan:
                 boxes.append((b, "cluster"))
     else:
         boxes = [(b, "cluster") for b in cluster_sheets(npx, npy, extent)]
+    # çerçeve yok ve kümeleme başlık sayısından az pafta buldu: aynı hizadaki pafta başlıklarından bantlar
+    if len(frames) < 2:
+        tb = boxes_from_titles(titles, npx, npy, extent)
+        if len(tb) >= 3 and len(tb) > len(boxes):
+            boxes = [(b, "title") for b in tb]
     npl = np.frombuffer(layer_ids, dtype="i").copy() if len(layer_ids) else np.zeros(0, dtype="i")
     sheets = _build_sheets(boxes, npx, npy, titles, extent, npl, layer_names) if len(boxes) >= 2 else []
     top: list[str] = []
