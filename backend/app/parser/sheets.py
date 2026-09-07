@@ -577,7 +577,10 @@ def scan_sheets(path: str | Path) -> SheetScan:
 # ---------- Kırpma ----------
 
 class _Target:
+    notes: list[str]
+
     def __init__(self, bbox: Bbox, dest: Path, margin_ratio: float):
+        self.notes = []
         x0, y0, x1, y1 = bbox
         mx = (x1 - x0) * margin_ratio
         my = (y1 - y0) * margin_ratio
@@ -599,6 +602,9 @@ def crop_sheet(src: str | Path, bbox: Bbox, dest: str | Path, margin_ratio: floa
 
 
 BLOCK_PASS_MAX_BYTES = 500 * 1024 * 1024   # blok / tarama içeriği için ezdxf ile ikinci geçiş yapılacak en büyük dosya
+STREAM_BLOCK_MIN_BYTES = 100 * 1024 * 1024  # bu boyutun üstünde blok içeriği ezdxf'siz, akışla açılır (bellek ve süre için)
+BLOCK_EXPAND_MAX_ENTITIES = 60_000          # bundan büyük bloklar doku / 3B model sayılır, açılmaz (uyarı)
+BLOCK_EXPAND_DEPTH = 4
 
 
 def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_ratio: float = 0.02,
@@ -612,6 +618,9 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
     poly: dict | None = None      # POLYLINE + VERTEX ... SEQEND
     insunits = 0
     inserts_hit = 0
+    size = Path(src).stat().st_size
+    stream_blocks = include_blocks and size > STREAM_BLOCK_MIN_BYTES
+    ins_records: list[list[dict]] = [[] for _ in tg]   # akış genişletmesi için hedef başına INSERT kayıtları
     with _open_dxf_text(src) as f:
         for ent in _iter_entities(f):
             t = ent["t"]
@@ -623,6 +632,12 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
                 xs, ys = ent.get("xs") or [], ent.get("ys") or []
                 if xs and ys and any(g.inside(xs, ys) for g in tg):
                     inserts_hit += 1
+                    if stream_blocks and t == "INSERT" and ent.get("2"):
+                        rec = {"name": ent["2"], "x": xs[0], "y": ys[0], "sx": float(ent.get("41", 1.0) or 1.0),
+                               "sy": float(ent.get("42", 1.0) or 1.0), "rot": float(ent.get("50", 0.0) or 0.0), "layer": layer}
+                        for i, g in enumerate(tg):
+                            if g.inside(xs, ys):
+                                ins_records[i].append(rec)
                 elif t == "HATCH":
                     inserts_hit += 1          # tarama sınır noktaları akışta okunmaz; ezdxf geçişinde kontrol edilir
                 continue
@@ -650,7 +665,12 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
             for g in tg:
                 if g.inside(xs, ys):
                     _write_entity(g, t, ent, xs, ys, layer)
-    if include_blocks and inserts_hit and Path(src).stat().st_size <= BLOCK_PASS_MAX_BYTES:
+    if stream_blocks and any(ins_records):
+        try:
+            _expand_blocks_stream(src, tg, ins_records)
+        except Exception:
+            pass
+    elif include_blocks and inserts_hit and size <= BLOCK_PASS_MAX_BYTES:
         try:
             _add_block_contents(src, tg)
         except Exception:
@@ -667,6 +687,192 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
         g.doc.saveas(str(g.dest))
         out.append(g.written)
     return out
+
+
+def _read_block_defs(src: str | Path, wanted: set[str]) -> dict[str, dict]:
+    """BLOCKS bölümünden yalnız istenen blokların tanımını (taban noktası + nesne kayıtları) akışla okur.
+    Çok büyük bloklar (doku / 3B model) atlanır: {"name": {"base": (x, y), "ents": [...], "skipped": bool}}."""
+    out: dict[str, dict] = {}
+    cur_name: str | None = None
+    cur: dict | None = None
+    blk: dict | None = None
+    section = None
+    with _open_dxf_text(src) as f:
+        it = iter(f)
+        while True:
+            try:
+                code = next(it).strip()
+                val = next(it).rstrip("\r\n")
+            except StopIteration:
+                break
+            if code == "0":
+                if cur is not None and blk is not None:
+                    if not blk["skipped"]:
+                        blk["ents"].append(cur)
+                        if len(blk["ents"]) > BLOCK_EXPAND_MAX_ENTITIES:
+                            blk["ents"] = []
+                            blk["skipped"] = True
+                    cur = None
+                v = val.strip()
+                if v == "SECTION":
+                    section = None
+                elif v == "ENDSEC":
+                    if section == "BLOCKS":
+                        break
+                    section = None
+                elif section == "BLOCKS":
+                    if v == "BLOCK":
+                        cur_name, blk = "?", None
+                    elif v == "ENDBLK":
+                        if blk is not None and cur_name and cur_name != "?":
+                            out[cur_name] = blk
+                        cur_name, blk = None, None
+                    elif blk is not None:
+                        cur = {"t": v, "xs": [], "ys": []}
+                continue
+            if code == "2" and section is None:
+                section = val.strip()
+                continue
+            if section != "BLOCKS":
+                continue
+            if cur_name == "?":
+                if code == "2":
+                    cur_name = val.strip()
+                    blk = {"base": [0.0, 0.0], "ents": [], "skipped": False} if cur_name in wanted else None
+                continue
+            if blk is None:
+                continue
+            if cur is None:            # BLOCK başlığı: taban noktası
+                if code == "10":
+                    blk["base"][0] = float(val)
+                elif code == "20":
+                    blk["base"][1] = float(val)
+                continue
+            if code in ("10", "11", "12", "13"):
+                cur["xs"].append(float(val))
+            elif code in ("20", "21", "22", "23"):
+                cur["ys"].append(float(val))
+            elif code == "8":
+                cur["8"] = val.strip()
+            elif code == "1":
+                cur["1"] = val
+            elif code == "3":
+                cur.setdefault("3", []).append(val)
+            elif code == "2":
+                cur["2"] = val.strip()
+            elif code in ("40", "41", "42", "43", "50", "51"):
+                try:
+                    cur[code] = float(val)
+                except ValueError:
+                    pass
+            elif code == "70":
+                try:
+                    cur["70"] = int(val)
+                except ValueError:
+                    pass
+    return out
+
+
+def _expand_blocks_stream(src: str | Path, tg: list["_Target"], ins_records: list[list[dict]]) -> None:
+    """Hedef paftalara düşen INSERT'lerin içeriğini ezdxf'siz açar (çok büyük dosyalar).
+
+    Blok tanımları yalnız gerekenler için okunur (iç içe bloklar için birkaç geçiş). Nesneler yerleştirme noktası,
+    ölçek ve dönmeyle dönüştürülüp yazılır; katmanı '0' olan alt nesneler INSERT'in katmanını alır. INSERT'in kendisi
+    de boş bir blok tanımıyla yazılır ki blok sayımı (kapı / pencere / armatür) çalışsın. Dev bloklar (doku) atlanır."""
+    wanted: set[str] = {r["name"] for recs in ins_records for r in recs}
+    defs: dict[str, dict] = {}
+    for _ in range(BLOCK_EXPAND_DEPTH):
+        missing = {n for n in wanted if n not in defs}
+        if not missing:
+            break
+        got = _read_block_defs(src, missing)
+        for n in missing:
+            defs[n] = got.get(n) or {"base": [0.0, 0.0], "ents": [], "skipped": False}
+        for n in missing:
+            for e in defs[n]["ents"]:
+                if e["t"] == "INSERT" and e.get("2"):
+                    wanted.add(e["2"])
+
+    def xform(x: float, y: float, base, ins) -> tuple[float, float]:
+        dx, dy = (x - base[0]) * ins["sx"], (y - base[1]) * ins["sy"]
+        a = math.radians(ins["rot"])
+        c, s_ = math.cos(a), math.sin(a)
+        return ins["x"] + dx * c - dy * s_, ins["y"] + dx * s_ + dy * c
+
+    def emit(g: _Target, name: str, ins: dict, depth: int) -> None:
+        d = defs.get(name)
+        if not d or d["skipped"] or depth > BLOCK_EXPAND_DEPTH:
+            return
+        base = d["base"]
+        poly: dict | None = None
+        for e in d["ents"]:
+            t = e["t"]
+            layer = e.get("8", "0")
+            if layer == "0":
+                layer = ins["layer"]
+            if t == "INSERT":
+                if not e["xs"] or not e["ys"] or not e.get("2"):
+                    continue
+                px, py = xform(e["xs"][0], e["ys"][0], base, ins)
+                sub = {"name": e["2"], "x": px, "y": py, "sx": ins["sx"] * float(e.get("41", 1.0) or 1.0),
+                       "sy": ins["sy"] * float(e.get("42", 1.0) or 1.0), "rot": ins["rot"] + float(e.get("50", 0.0) or 0.0),
+                       "layer": layer}
+                _write_insert_marker(g, sub)
+                emit(g, e["2"], sub, depth + 1)
+                continue
+            if t == "POLYLINE":
+                poly = {"layer": layer, "closed": bool(e.get("70", 0) & 1), "pts": []}
+                continue
+            if t == "VERTEX":
+                if poly is not None and e["xs"] and e["ys"]:
+                    poly["pts"].append(xform(e["xs"][0], e["ys"][0], base, ins))
+                continue
+            if t == "SEQEND":
+                if poly is not None and len(poly["pts"]) >= 2:
+                    try:
+                        g.msp.add_lwpolyline(poly["pts"], close=poly["closed"], dxfattribs={"layer": poly["layer"]})
+                        g.layers.add(poly["layer"])
+                        g.written += 1
+                    except Exception:
+                        pass
+                poly = None
+                continue
+            if not e["xs"] or not e["ys"]:
+                continue
+            pts = [xform(x, y, base, ins) for x, y in zip(e["xs"], e["ys"])]
+            xs = [p[0] for p in pts]
+            ys = [p[1] for p in pts]
+            e2 = dict(e)
+            if t in ("TEXT", "MTEXT", "ATTRIB", "CIRCLE", "ARC") and "40" in e2:
+                e2["40"] = float(e2["40"]) * abs(ins["sx"])
+            if t in ("TEXT", "MTEXT", "ATTRIB"):
+                e2["50"] = float(e2.get("50", 0.0) or 0.0) + ins["rot"]
+            elif t == "ARC":
+                e2["50"] = float(e2.get("50", 0.0) or 0.0) + ins["rot"]
+                e2["51"] = float(e2.get("51", 360.0) or 360.0) + ins["rot"]
+            _write_entity(g, t, e2, xs, ys, layer)
+
+    for g, recs in zip(tg, ins_records):
+        for ins in recs:
+            _write_insert_marker(g, ins)
+            emit(g, ins["name"], ins, 1)
+        skipped = sorted({r["name"] for r in recs if defs.get(r["name"], {}).get("skipped")})
+        if skipped:
+            g.notes.append("Çok büyük bloklar açılmadı (doku / 3B model sayıldı): " + ", ".join(skipped[:6]))
+
+
+def _write_insert_marker(g: "_Target", ins: dict) -> None:
+    """INSERT'i hedef dokümana boş bir blok tanımıyla yazar (adet sayımı için)."""
+    try:
+        name = re.sub(r"[<>/\\\":;?*|=`]", "_", ins["name"])[:250]
+        if name not in g.doc.blocks:
+            g.doc.blocks.new(name)
+        g.msp.add_blockref(name, (ins["x"], ins["y"]), dxfattribs={"layer": ins["layer"], "xscale": ins["sx"] or 1.0,
+                                                                  "yscale": ins["sy"] or 1.0, "rotation": ins["rot"]})
+        g.layers.add(ins["layer"])
+        g.written += 1
+    except Exception:
+        pass
 
 
 def _add_block_contents(src: str | Path, tg: list["_Target"]) -> None:

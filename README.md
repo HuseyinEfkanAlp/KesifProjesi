@@ -312,6 +312,17 @@ yeni sistem eklenir.
   ayrı kalem olur (`expand_systems`) ve Birim Fiyatlar'da fiyatlanır. API: `GET/PUT /api/projects/{id}/systems`.
 - Cephe için ayrıca söve, silme, denizlik kalemleri ve katman önerileri eklendi (söve çizgi → m, blok → adet).
 
+## Büyük dosyada blok içeriği (akış) ve doğrama poz listesi
+
+- **Blok içinde plan** (bağlanmış xref, doğrama blokları, kolon detay blokları): 100 MB üstü DXF'te pafta kırpma, blok içeriğini
+  ezdxf'siz akışla açar (`sheets.py: _expand_blocks_stream`). Yalnız paftaya düşen INSERT'lerin blokları okunur (iç içe 4 seviye),
+  nesneler yerleştirme / ölçek / dönme ile dönüştürülür, katmanı "0" olan alt nesneler INSERT'in katmanını alır. INSERT'in kendisi
+  boş blok tanımıyla korunur (kapı / pencere / armatür adet sayımı çalışır). 60 bin nesneden büyük bloklar doku / 3B model
+  sayılır, açılmaz (uyarı). B2 BLOK (520 MB, 667 bin nesne, 1.143 blok): 11 pafta 5 dakikada kırpıldı.
+- **Doğrama poz listesi** (`parser/schedules.py`): "Poz: EMP1 / Adet: 82", "9 Adet AÇILIR KAPI", "Poz: EMP914" (bitişik: EMP9 14,
+  düşük güven) yazıları okunur; her poz `DOGRAMA:<poz>` kalemi olur (adet), açıklama nota yazılır. Aynı poz birden çok yerde
+  yazılıysa en büyük adet alınır. Mimari ve katman eşlemeli çizimlerde otomatik çalışır.
+
 ## Cephe: etiket sayımı (prekast panel) ve cephe brüt alanı
 
 - **Etiket sayımı** ölçüm kuralı (`label_count`): katmandaki her yazı bir kalem, her kod ayrı satır (`prekast_panel:gp-4` 20 adet).

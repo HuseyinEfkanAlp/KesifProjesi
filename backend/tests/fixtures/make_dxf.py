@@ -439,3 +439,40 @@ def make_precast_dxf(path: str | Path) -> Path:
     path = Path(path)
     doc.saveas(path)
     return path
+
+
+def make_block_plan_dxf(path: str | Path) -> Path:
+    """Planı blok olarak koyan çizim (cm): 'PLAN' bloğu içinde 2 kolon (KOLON katmanı) + etiketler, ana uzayda
+    PLAN bloğu (0, 0)'a ve ölçek 1 ile; ayrıca 'KAPI90' bloğundan 3 kapı (KAPI katmanında) ve doğrama poz listesi yazıları.
+    İç içe blok: PLAN içinde 'S_ETIKET' bloğu. Dev 'DOKU' bloğu (70k çizgi) açılmamalı."""
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 5
+    for n in ("KOLON", "YAZI", "KAPI", "ANTET", "DOKU"):
+        doc.layers.add(n)
+    et = doc.blocks.new("S_ETIKET")
+    et.add_text("S1", dxfattribs={"layer": "YAZI", "height": 8}).set_placement((0, 0))
+    et.add_text("(50/50)", dxfattribs={"layer": "YAZI", "height": 6}).set_placement((0, 10))
+    plan = doc.blocks.new("PLAN", base_point=(100, 100))
+    for x in (300, 700):
+        plan.add_lwpolyline(_rect(x, 400, 50, 50), close=True, dxfattribs={"layer": "KOLON"})
+        plan.add_blockref("S_ETIKET", (x, 460))
+    kapi = doc.blocks.new("KAPI90")
+    kapi.add_line((0, 0), (90, 0), dxfattribs={"layer": "0"})
+    doku = doc.blocks.new("DOKU")
+    for i in range(70000):
+        doku.add_line((i % 100, i // 100), (i % 100 + 1, i // 100), dxfattribs={"layer": "DOKU"})
+    msp = doc.modelspace()
+    msp.add_lwpolyline(_rect(0, 0, 2000, 1400), close=True, dxfattribs={"layer": "ANTET"})
+    msp.add_lwpolyline(_rect(3000, 0, 2000, 1400), close=True, dxfattribs={"layer": "ANTET"})
+    msp.add_text("ZEMİN KAT KALIP PLANI", dxfattribs={"layer": "ANTET", "height": 40}).set_placement((100, 1300))
+    msp.add_text("DOĞRAMA DETAYLARI", dxfattribs={"layer": "ANTET", "height": 40}).set_placement((3100, 1300))
+    msp.add_blockref("PLAN", (100, 100), dxfattribs={"layer": "0"})          # base (100,100) -> kolonlar 300,400 ve 700,400
+    for x in (300, 600, 900):
+        msp.add_blockref("KAPI90", (x, 200), dxfattribs={"layer": "KAPI"})
+    msp.add_blockref("DOKU", (500, 800), dxfattribs={"layer": "DOKU"})
+    msp.add_mtext("Poz: EMP1\\PAdet: 82", dxfattribs={"layer": "YAZI", "char_height": 10}).set_location((3200, 800))
+    msp.add_mtext("Poz: EMP3\\P9 Adet AÇILIR KAPI", dxfattribs={"layer": "YAZI", "char_height": 10}).set_location((3200, 700))
+    msp.add_text("Poz: EMP914", dxfattribs={"layer": "YAZI", "height": 10}).set_placement((3200, 600))
+    path = Path(path)
+    doc.saveas(path)
+    return path

@@ -175,6 +175,9 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
             continue
         if d.discipline == REBAR_DISCIPLINE:
             continue
+        ksf = [e for e in elements if (e.meta or {}).get("ksf_code")]   # poz listesi gibi katalog kodlu elemanlar
+        if ksf:
+            std.append({**entry, "elements": ksf})
         if any(TYPE_DISCIPLINE.get(e.etype) == "architectural" for e in elements):
             arch.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "architectural"]})
         if any(TYPE_DISCIPLINE.get(e.etype) == "electrical" for e in elements):

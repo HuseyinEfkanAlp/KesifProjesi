@@ -26,6 +26,7 @@ from .layer_profile import (ALL_TYPES, DEFAULT_DISCIPLINE, MAPPED_DISCIPLINE, RE
 from .rebar_tables import kot_from_label, parse_rebar_labels, parse_rebar_tables, target_from_label
 from .loader import UNIT_SCALE, Drawing, load_dxf
 from .materials import scan_materials
+from .schedules import parse_schedule
 from ..standard.catalog import Catalog
 
 
@@ -211,6 +212,22 @@ def analyze_rebar(drawing: Drawing, label: str = "") -> AnalysisResult:
     return result
 
 
+def schedule_elements(drawing: Drawing, catalog: Catalog | None, label: str = "") -> tuple[list[DetectedElement], list[str]]:
+    """Çizimdeki 'Poz: EMP1 / Adet: 82' yazılarını doğrama kalemine çevirir (etype dograma, alt tip poz, adet)."""
+    rows = parse_schedule([e.text for e in drawing.entities if e.kind == "text" and e.text], label)
+    if not rows:
+        return [], []
+    item = catalog.get("DOGRAMA") if catalog else None
+    els = []
+    for r in rows:
+        els.append(DetectedElement(etype="dograma", layer="(poz listesi)", points=[], name=f"{r.poz} {r.note}".strip(), subtype=r.poz,
+                                   count=r.count, source="SCHEDULE", confidence=0.9, label_raw=r.raw,
+                                   meta={"ksf_code": "DOGRAMA", "measure": "count", "spec": r.poz,
+                                         "discipline": item.discipline if item else "MIM", "note": r.note}))
+    total = sum(r.count for r in rows)
+    return els, [f"Doğrama poz listesi okundu: {len(rows)} poz, {total} adet (" + ", ".join(f"{r.poz} {r.count}" for r in rows[:8]) + ("…" if len(rows) > 8 else "") + ")"]
+
+
 def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, params: DetectParams) -> AnalysisResult:
     """Katman eşlemeli çizim (cephe görünüşü, çatı, peyzaj…): katman -> katalog kalemi + ölçüm kuralı."""
     counts = drawing.layer_counts()
@@ -224,7 +241,9 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
                                mapped_pattern=i.get("pattern")))
     result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
                             discipline=MAPPED_DISCIPLINE, layers=infos, warnings=list(drawing.warnings) + warns)
-    result.elements = elements
+    sched, sw = schedule_elements(drawing, catalog)
+    result.elements = elements + sched
+    result.warnings.extend(sw)
     result.materials = materials
     sugg = [f"{l.name} → {l.suggested}" for l in infos if l.suggested and not l.mapped_code and l.count > 0]
     if sugg:
@@ -270,6 +289,10 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
             )
 
     result.elements = DISCIPLINE_RUNNERS[discipline](drawing, layers_by_type, params, result)
+    if discipline == "architectural":
+        sched, sw = schedule_elements(drawing, catalog or Catalog())
+        result.elements += sched
+        result.warnings.extend(sw)
 
     unmapped = [li.name for li in layer_infos if li.etype is None and li.count > 0]
     if unmapped:

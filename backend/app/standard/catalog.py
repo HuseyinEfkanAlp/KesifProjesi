@@ -159,6 +159,7 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("PENCERE", "MIM", "Pencere", "count", "tip / ölçü (120x140)", "KSF-MIM-PENCERE-P1_120x140"),
     _i("CAM", "MIM", "Cam", "area", "tip (4+16+4)", "KSF-MIM-CAM-4+16+4"),
     _i("KOREKUYU", "MIM", "Korkuluk", "length", "tip", "KSF-MIM-KOREKUYU-CAM"),
+    _i("DOGRAMA", "MIM", "Doğrama (poz listesinden)", "count", "poz (EMP1)", "KSF-MIM-DOGRAMA-EMP1"),
     # INC
     _i("SIVA", "INC", "Sıva", "wall_area", "tip (ALCI / CIMENTO)", "KSF-INC-SIVA-ALCI"),
     _i("BOYA", "INC", "Boya", "wall_area", "tip", "KSF-INC-BOYA-PLASTIK"),
