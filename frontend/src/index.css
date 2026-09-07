@@ -141,3 +141,4 @@ select.unset { border-color: var(--warn-border); background: var(--warn-bg); }
 .system-block { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
 tr.system-row td { background: #f3f5f8; font-weight: 600; }
 .hint { font-size: 11px; }
+.facade-info { background: #f3f5f8; border-radius: 6px; padding: 8px 12px; margin: 8px 0; }

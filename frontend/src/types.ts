@@ -81,6 +81,10 @@ export interface ProjectParams {
   formwork_reuse: number
   formwork_oil_l_per_m2: number
   nails_kg_per_m2: number
+  /** brüt cephe alanı m² (boş: görünüşten ya da kalıp planından otomatik) */
+  facade_gross_m2: number | null
+  /** cephe sistemi katalog kodu (MANTOLAMA_SISTEM…); miktarı net cephe alanından */
+  facade_system: string
 }
 
 export interface Project {
@@ -142,6 +146,8 @@ export interface LayerInfo {
   suggested?: string | null
   mapped_code?: string | null
   mapped_measure?: string | null
+  /** etiket sayımında sayılacak yazı deseni (düzenli ifade) */
+  mapped_pattern?: string | null
 }
 
 export interface Drawing {
@@ -340,7 +346,7 @@ export interface CatalogItem {
   code: string
   discipline: string
   name: string
-  measure: 'count' | 'length' | 'area' | 'wall_area' | 'volume'
+  measure: 'count' | 'length' | 'area' | 'wall_area' | 'volume' | 'label_count'
   measure_label: string
   unit: string
   spec_label: string
@@ -382,11 +388,21 @@ export interface ProjectSystem {
   system_evidence: string[]
 }
 
+export interface FacadeArea {
+  gross: number
+  net: number
+  glass: number
+  source: 'measured' | 'manual' | 'estimated' | 'none'
+  detail: string
+  per_drawing: { drawing: string; drawing_id: number; perimeter: number; storey_height: number; storey_count: number; area: number }[]
+}
+
 export interface ProjectSystems {
   systems: ProjectSystem[]
   warnings: string[]
   missing: number
   evidence_codes: string[]
+  facade: FacadeArea
 }
 
 export interface Catalog {

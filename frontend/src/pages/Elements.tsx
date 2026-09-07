@@ -28,6 +28,7 @@ export default function Elements() {
   const [manual, setManual] = useState({ etype: '' as EType | '', name: '', subtype: '', b: 0.3, h: 0.6, length: 0, thickness: 0, area: 0, count: 1 })
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [measureSel, setMeasureSel] = useState<Record<string, string>>({})
+  const [patternSel, setPatternSel] = useState<Record<string, string>>({})
 
   const load = useCallback(async () => {
     try {
@@ -103,7 +104,8 @@ export default function Elements() {
   // KSF / eşlemeli çizimde tipler katalog kalem kodlarıdır; etiketleri katman bilgisinden alınır
   const stdLabels: Record<string, string> = {}
   if (isStd) for (const l of drawing.layers) if (l.etype && l.etype_label) stdLabels[l.etype] = l.etype_label.split(' · ')[0].replace(/ \[.*\]$/, '')
-  const mapItem = (layer: string, code: string, measure: string) => run(() => Api.projects.mapLayer(pid, layer, code ? `item:${code}${measure ? ':' + measure : ''}` : null))
+  const mapItem = (layer: string, code: string, measure: string, pattern = '') =>
+    run(() => Api.projects.mapLayer(pid, layer, code ? `item:${code}${measure || pattern ? ':' + measure : ''}${pattern ? ':' + pattern : ''}` : null))
   const itemName = (code: string) => catalog?.items.find((i) => i.code === code)?.name ?? code
   const ETYPES: string[] = isStd ? Array.from(new Set(elements.map((e) => e.etype))) : ETYPES_BY_DISCIPLINE[discipline]
   const labelOf = (t: string) => (ETYPE_LABELS as Record<string, string>)[t] ?? stdLabels[t] ?? t
@@ -164,7 +166,7 @@ export default function Elements() {
                       {isMapped ? (
                         <div className="row" style={{ gap: 6 }}>
                           <select value={l.mapped_code ?? ''} disabled={busy || !catalog}
-                            onChange={(e) => mapItem(l.name, e.target.value, measureSel[l.name] ?? l.mapped_measure ?? '')} style={{ maxWidth: 260 }}>
+                            onChange={(e) => mapItem(l.name, e.target.value, measureSel[l.name] ?? l.mapped_measure ?? '', patternSel[l.name] ?? l.mapped_pattern ?? '')} style={{ maxWidth: 260 }}>
                             <option value="">— ölçülmez —</option>
                             {catalog?.by_discipline.map((g) => (
                               <optgroup key={g.code} label={`${g.code} · ${g.name}`}>
@@ -173,10 +175,16 @@ export default function Elements() {
                             ))}
                           </select>
                           <select value={measureSel[l.name] ?? l.mapped_measure ?? ''} disabled={busy}
-                            onChange={(e) => { setMeasureSel({ ...measureSel, [l.name]: e.target.value }); if (l.mapped_code) mapItem(l.name, l.mapped_code, e.target.value) }}>
+                            onChange={(e) => { setMeasureSel({ ...measureSel, [l.name]: e.target.value }); if (l.mapped_code) mapItem(l.name, l.mapped_code, e.target.value, patternSel[l.name] ?? l.mapped_pattern ?? '') }}>
                             <option value="">ölçüm: kalem varsayılanı</option>
                             {catalog && Object.entries(catalog.measures).map(([m, v]) => <option key={m} value={m}>{v.label}</option>)}
                           </select>
+                          {((measureSel[l.name] ?? l.mapped_measure) === 'label_count' || (l.mapped_code && catalog?.items.find((i) => i.code === l.mapped_code)?.measure === 'label_count')) && (
+                            <input className="wide" placeholder="etiket deseni: ^(GP|EP)" title="Yalnız bu düzenli ifadeye uyan yazılar sayılır; boş: kot ve pafta işaretleri hariç tüm yazılar"
+                              value={patternSel[l.name] ?? l.mapped_pattern ?? ''} disabled={busy}
+                              onChange={(e) => setPatternSel({ ...patternSel, [l.name]: e.target.value })}
+                              onBlur={(e) => { if (l.mapped_code && e.target.value !== (l.mapped_pattern ?? '')) mapItem(l.name, l.mapped_code, measureSel[l.name] ?? l.mapped_measure ?? '', e.target.value) }} />
+                          )}
                           {!l.mapped_code && l.suggested && (
                             <button className="small secondary" disabled={busy} title={`Öneri: ${itemName(l.suggested)}`}
                               onClick={() => mapItem(l.name, l.suggested!, measureSel[l.name] ?? '')}>öneri: {itemName(l.suggested)}</button>

@@ -183,11 +183,116 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     catalog = load_catalog()
     if std:
         items += standard_items(std, params, catalog)
+    items += facade_items(project, session, catalog, items, drawings, params)
     if expand:
         systems = project_systems(project, session, catalog=catalog, items=items, drawings=drawings)
         if systems["systems"]:
             items = expand_systems(items, systems["systems"], catalog)
     return sort_items(items)
+
+
+FACADE_HULL_RATIO = 0.7
+FACADE_HULL_MARGIN = 0.15   # m: kolon dış yüzünden cephe yüzeyine (duvar + kaplama) pay
+FACADE_GAP_CLOSE = 0.6      # m: döşeme / kiriş / kolon çokgenleri arasındaki boşluklar bu ölçüye kadar kapatılır
+
+
+def building_footprint(elements) -> "tuple[float, float] | None":
+    """Kat planındaki döşeme / kiriş / kolon / perde çokgenlerinden bina oturumu: (alan m², dış çevre m).
+
+    Çokgenler birleştirilir, aralardaki küçük boşluklar kapatılır, delikler doldurulur (dış hat = cephe). Döşeme yoksa
+    (yalnız kolon), kolonların concave hull'u alınır."""
+    from shapely import concave_hull
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    polys = [Polygon(e.points).buffer(0) for e in elements
+             if e.etype in ("slab", "beam", "column", "shear_wall") and len(e.points or []) >= 3]
+    polys = [g for g in polys if not g.is_empty and g.is_valid]
+    if len(polys) < 3:
+        return None
+    try:
+        u = unary_union(polys)
+        u = u.buffer(FACADE_GAP_CLOSE, join_style=2).buffer(-FACADE_GAP_CLOSE, join_style=2)
+        has_plate = any(e.etype in ("slab", "beam") for e in elements)
+        if not has_plate:
+            u = concave_hull(u, ratio=FACADE_HULL_RATIO)
+        u = u.buffer(FACADE_HULL_MARGIN, join_style=2)
+        parts = list(u.geoms) if u.geom_type == "MultiPolygon" else [u]
+        parts = [Polygon(g.exterior) for g in parts if g.geom_type == "Polygon" and not g.is_empty]
+    except Exception:
+        return None
+    if not parts:
+        return None
+    return float(sum(g.area for g in parts)), float(sum(g.exterior.length for g in parts))
+
+
+def facade_area(project: Project, session: Session, items: list[BoqItem] | None = None,
+                drawings: list[Drawing] | None = None, params: dict | None = None) -> dict:
+    """Cephe brüt / net alanı ve kaynağı.
+
+    Öncelik: (1) görünüşte ölçülen CEPHE_BRUT kalemi, (2) proje parametresi facade_gross_m2, (3) tahmin: kalıp planındaki
+    kolon / perde dış hattı (concave hull) çevresi × kat yüksekliği × kat sayısı, her kat planı için toplanır.
+    Net = brüt − cam alanı (CAM kalemi varsa)."""
+    params = params or project_params(project)
+    if drawings is None:
+        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    if items is None:
+        items = project_boq(project, session, expand=False)
+    measured = sum(it.quantity for it in items if it.kind == "cephe_brut" and not it.detail.get("info"))
+    glass = sum(it.quantity for it in items if it.kind == "cam" and it.unit == "m²")
+    out = {"gross": 0.0, "net": 0.0, "source": "none", "detail": "", "glass": round(glass, 2), "per_drawing": []}
+    if measured > 0:
+        out.update(gross=measured, source="measured", detail="görünüşteki cephe brüt alanı kalemi (CEPHE_BRUT)")
+    elif params.get("facade_gross_m2"):
+        out.update(gross=float(params["facade_gross_m2"]), source="manual", detail="proje parametresi (elle girildi)")
+    else:
+        total = 0.0
+        for d in drawings:
+            if d.discipline != DEFAULT_DISCIPLINE:
+                continue
+            els = _included_elements(d, session)
+            if not any(e.etype in ("column", "shear_wall") for e in els):
+                continue   # yalnız temel paftası: cephe vermez
+            fp = building_footprint(els)
+            if not fp or fp[0] < 10:
+                continue
+            per = fp[1]
+            h = d.storey_height or project.storey_height
+            a = per * h * max(1, d.storey_count)
+            total += a
+            out["per_drawing"].append({"drawing": d.label or d.filename, "drawing_id": d.id, "perimeter": round(per, 2),
+                                       "storey_height": h, "storey_count": d.storey_count, "area": round(a, 2)})
+        if total > 0:
+            out.update(gross=total, source="estimated",
+                       detail="kalıp planı kolon / perde dış hattı çevresi × kat yüksekliği × kat sayısı (tahmin; elle düzeltilebilir)")
+    out["gross"] = round(out["gross"], 2)
+    out["net"] = round(max(out["gross"] - glass, 0.0), 2)
+    return out
+
+
+def facade_items(project: Project, session: Session, catalog: Catalog, items: list[BoqItem],
+                 drawings: list[Drawing], params: dict) -> list[BoqItem]:
+    """Cephe sistemi seçildiyse: cephe brüt alanı bilgi satırı (fiyatlanmaz) + sistem kalemi (miktar = net cephe alanı).
+    Sistem seçilmediyse keşfe bir şey eklenmez; alan yalnız sistem panelinde bilgi olarak görünür."""
+    code = str(params.get("facade_system") or "").strip().upper()
+    if not code:
+        return []
+    fa = facade_area(project, session, items, drawings, params)
+    if fa["gross"] <= 0:
+        return []
+    out: list[BoqItem] = []
+    if fa["source"] != "measured":
+        it = BoqItem(key="cephe_brut:*", kind="cephe_brut", group="*", label="Cephe brüt alanı", unit="m²",
+                     quantity=fa["gross"], discipline="ksf:CEP", kind_label="Cephe brüt alanı", discipline_label=catalog.discipline_name("CEP"),
+                     notes=[f"Kaynak: {fa['detail']}", "Bilgi satırı; fiyatlanmaz"], detail={"info": True, "source": fa["source"]})
+        out.append(it)
+    sys_item = catalog.get(code)
+    if sys_item and not any(i.kind == sys_item.code.lower() for i in items):
+        note = f"Miktar = net cephe alanı ({fa['gross']:,.0f} m² brüt − {fa['glass']:,.0f} m² cam); kaynak: {fa['detail']}"
+        out.append(BoqItem(key=f"{sys_item.code.lower()}:*", kind=sys_item.code.lower(), group="*", label=sys_item.name,
+                           unit=sys_item.unit, quantity=fa["net"], discipline=f"ksf:{sys_item.discipline}", kind_label=sys_item.name,
+                           discipline_label=catalog.discipline_name(sys_item.discipline), notes=[note],
+                           detail={"facade_source": fa["source"]}))
+    return out
 
 
 COMPONENT_SOURCES = ("project", "manual", "default", "missing", "excluded")
@@ -246,7 +351,8 @@ def project_systems(project: Project, session: Session, catalog: Catalog | None 
                             "Projede varsa ekleyin, yoksa 'yok' bırakın.")
     return {"systems": out, "warnings": warnings,
             "missing": sum(len(sy["missing"]) for sy in out),
-            "evidence_codes": sorted(evidence)}
+            "evidence_codes": sorted(evidence),
+            "facade": facade_area(project, session, items, drawings)}
 
 
 def ensure_price_items(project: Project, items: list[BoqItem], session: Session) -> list[PriceItem]:

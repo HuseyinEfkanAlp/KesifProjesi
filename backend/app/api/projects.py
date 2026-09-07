@@ -48,6 +48,8 @@ def _clean_params(raw: dict | None) -> dict:
             continue
         if v in ("", None):
             out[k] = None
+        elif isinstance(DEFAULT_PARAMS[k], str):
+            out[k] = str(v).strip()
         else:
             try:
                 out[k] = float(v)
@@ -152,14 +154,25 @@ def map_layer(project_id: int, body: LayerMap, session: Session = Depends(get_se
         if body.etype.startswith("item:"):
             from ..services import load_catalog
             from ..standard.catalog import MEASURES, normalize_code
-            parts = body.etype.split(":")
+            import re as _re
+            parts = body.etype.split(":", 3)
             code = normalize_code(parts[1]) if len(parts) > 1 else ""
             measure = parts[2] if len(parts) > 2 and parts[2] else ""
-            if not load_catalog().get(code):
+            pattern = parts[3].strip() if len(parts) > 3 and parts[3] else ""
+            item = load_catalog().get(code)
+            if not item:
                 raise HTTPException(400, f"Katalogda olmayan kalem: {code}")
             if measure and measure not in MEASURES:
                 raise HTTPException(400, f"Geçersiz ölçüm kuralı: {measure}")
-            body.etype = f"item:{code}" + (f":{measure}" if measure else "")
+            if pattern:
+                if (measure or item.measure) != "label_count":
+                    raise HTTPException(400, "Etiket deseni yalnız etiket sayımı ölçümüyle kullanılır")
+                try:
+                    _re.compile(pattern)
+                except _re.error as ex:
+                    raise HTTPException(400, f"Geçersiz etiket deseni: {ex}")
+                measure = measure or "label_count"
+            body.etype = f"item:{code}" + (f":{measure}" if measure or pattern else "") + (f":{pattern}" if pattern else "")
         else:
             raise HTTPException(400, f"Geçersiz eleman tipi: {body.etype}")
     p.layer_profile = LayerProfile(p.layer_profile or None).with_layer(body.etype, body.layer).to_dict()

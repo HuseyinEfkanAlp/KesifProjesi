@@ -44,7 +44,7 @@ export default function Quantities() {
             <tbody>
               {d.items.map((it) => (
                 <tr key={it.key} className={it.detail?.system ? 'system-row' : ''}>
-                  <td>{it.kind_label}{it.detail?.system ? <span className="badge none" style={{ marginLeft: 6 }}>sistem</span> : null}</td>
+                  <td>{it.kind_label}{it.detail?.system ? <span className="badge none" style={{ marginLeft: 6 }}>sistem</span> : null}{it.detail?.info ? <span className="badge none" style={{ marginLeft: 6 }}>bilgi</span> : null}</td>
                   <td>{it.label}{it.detail?.system_code && !it.detail?.system ? <span className="muted hint"> ← {String(it.detail.system_code)}</span> : null}</td>
                   <td className="num"><b>{fmt(it.quantity, it.unit === 'adet' || it.unit === 'kg' ? 0 : 2)}</b></td>
                   <td>{it.unit}</td>

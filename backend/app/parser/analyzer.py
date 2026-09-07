@@ -39,11 +39,13 @@ class LayerInfo:
     suggested: str | None = None          # eşlemeli çizim: katman adından önerilen katalog kalemi
     mapped_code: str | None = None
     mapped_measure: str | None = None
+    mapped_pattern: str | None = None     # etiket sayımı deseni
 
     def to_dict(self) -> dict:
         return {"name": self.name, "count": self.count, "etype": self.etype,
                 "etype_label": self.etype_label or ALL_TYPES.get(self.etype or "", None),
-                "suggested": self.suggested, "mapped_code": self.mapped_code, "mapped_measure": self.mapped_measure}
+                "suggested": self.suggested, "mapped_code": self.mapped_code, "mapped_measure": self.mapped_measure,
+                "mapped_pattern": self.mapped_pattern}
 
 
 @dataclass
@@ -218,7 +220,8 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
     for name in drawing.layers:
         i = info.get(name, {})
         infos.append(LayerInfo(name, counts.get(name, 0), (i.get("code") or "").lower() or None, etype_label=i.get("label"),
-                               suggested=i.get("suggested"), mapped_code=i.get("code"), mapped_measure=i.get("measure")))
+                               suggested=i.get("suggested"), mapped_code=i.get("code"), mapped_measure=i.get("measure"),
+                               mapped_pattern=i.get("pattern")))
     result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
                             discipline=MAPPED_DISCIPLINE, layers=infos, warnings=list(drawing.warnings) + warns)
     result.elements = elements

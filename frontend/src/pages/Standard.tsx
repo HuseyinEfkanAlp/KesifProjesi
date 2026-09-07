@@ -4,6 +4,7 @@ import type { Catalog, CatalogItem, LayerCheck } from '../types'
 
 const MEASURE_HINT: Record<string, string> = {
   count: 'blok yerleştir', length: 'çizgi / polyline', area: 'kapalı polyline / tarama', wall_area: 'eksen çizgisi (× yükseklik)', volume: 'kapalı alan (× kalınlık)',
+  label_count: 'yazı etiketi (her kod ayrı kalem)',
 }
 
 export default function Standard() {

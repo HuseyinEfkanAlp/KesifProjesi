@@ -33,6 +33,7 @@ MEASURES: dict[str, tuple[str, str]] = {
     "area": ("Alan (kapalı çokgen / tarama)", "m²"),
     "wall_area": ("Duvar alanı (uzunluk × yükseklik)", "m²"),
     "volume": ("Hacim (alan × kalınlık)", "m³"),
+    "label_count": ("Etiket sayımı (katmandaki yazılar, her kod ayrı kalem)", "adet"),
 }
 
 DEFAULT_DISCIPLINES: dict[str, str] = {
@@ -182,6 +183,8 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("SOVE", "CEP", "Söve", "length", "tip / en (cm)", "KSF-CEP-SOVE-15"),
     _i("SILME", "CEP", "Silme / kat silmesi", "length", "tip", "KSF-CEP-SILME"),
     _i("DENIZLIK", "CEP", "Denizlik", "length", "tip (MERMER / ALU)", "KSF-CEP-DENIZLIK-MERMER"),
+    _i("PREKAST_PANEL", "CEP", "Prekast cephe paneli (etiket kodu bazında)", "label_count", "panel kodu (GP-4 / EP17)", "KSF-CEP-PREKAST_PANEL"),
+    _i("CEPHE_BRUT", "CEP", "Cephe brüt alanı (görünüş dış hattı)", "area", "cephe adı (ON / ARKA)", "KSF-CEP-CEPHE_BRUT-ON"),
     _i("MANTOLAMA_SISTEM", "CEP", "Mantolama sistemi (katmanlı)", "area", "yalıtım + kalınlık (EPS_5)",
        "KSF-CEP-MANTOLAMA_SISTEM-EPS_5",
        [_c("EPS", 1.0, "5"), _c("MANTOLAMA_YAPISTIRICI"), _c("MANTOLAMA_DUBEL", 6.0, "120"), _c("MANTOLAMA_FILE"),

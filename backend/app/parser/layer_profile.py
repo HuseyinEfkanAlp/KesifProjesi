@@ -191,15 +191,18 @@ class LayerProfile:
         return LayerProfile(raw)
 
 
-def mapped_item(profile: "LayerProfile", layer: str) -> tuple[str, str | None] | None:
-    """Katman eşlemeli çizim: kullanıcı katmanı bir katalog kalemine atamışsa (anahtar 'item:<KOD>' ya da
-    'item:<KOD>:<ölçüm>') (kod, ölçüm) döndürür."""
+def mapped_item(profile: "LayerProfile", layer: str) -> tuple[str, str | None, str | None] | None:
+    """Katman eşlemeli çizim: kullanıcı katmanı bir katalog kalemine atamışsa (anahtar 'item:<KOD>',
+    'item:<KOD>:<ölçüm>' ya da 'item:<KOD>:<ölçüm>:<etiket deseni>') (kod, ölçüm, desen) döndürür.
+    Desen: etiket sayımında yalnız bu düzenli ifadeye uyan yazılar sayılır (ör. '^(GP|EP)')."""
     name = _upper(layer)
     for key, pats in profile.raw.items():
         if not key.startswith("item:"):
             continue
         for pat in profile._compiled.get(key, []):
             if pat.search(name):
-                parts = key.split(":")
-                return parts[1], (parts[2] if len(parts) > 2 and parts[2] else None)
+                parts = key.split(":", 3)
+                measure = parts[2] if len(parts) > 2 and parts[2] else None
+                pattern = parts[3] if len(parts) > 3 and parts[3] else None
+                return parts[1], measure, pattern
     return None

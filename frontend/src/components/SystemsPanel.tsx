@@ -36,10 +36,20 @@ export default function SystemsPanel({ projectId, refreshKey, onChanged }: Props
 
   if (error) return <div className="error">{error}</div>
   if (!data) return <p className="muted">Sistemler kontrol ediliyor...</p>
+  const SOURCE = { measured: 'görünüşten ölçüldü', manual: 'elle girildi', estimated: 'kalıp planından tahmin', none: '' }
+  const facade = data.facade && data.facade.gross > 0 ? (
+    <div className="facade-info">
+      <b>Cephe brüt alanı:</b> {fmt(data.facade.gross)} m² <span className="muted">({SOURCE[data.facade.source]})</span>
+      {data.facade.glass > 0 && <> − cam {fmt(data.facade.glass)} m² = <b>net {fmt(data.facade.net)} m²</b></>}
+      <div className="muted hint">{data.facade.detail}{data.facade.per_drawing.length > 0 && <> · {data.facade.per_drawing.map((d) => `${d.drawing}: çevre ${fmt(d.perimeter)} m × ${d.storey_height} m × ${d.storey_count} kat`).join('; ')}</>}
+        {' '}Cephe sistemi (mantolama, kompozit…) proje parametrelerinden seçilir; miktarı net alandan gelir.</div>
+    </div>
+  ) : null
   if (data.systems.length === 0) {
     return (
       <div className="systems">
         <h3>Katmanlı sistemler <span className="muted" style={{ fontWeight: 400 }}>(kenet / kiremit / teras çatı, mantolama)</span></h3>
+        {facade}
         <p className="muted">
           Bu projede henüz katmanlı sistem ölçülmedi. Çatı ya da cephe paftasında ilgili katmanı bir sistem kalemine eşleyin
           (Elemanlar sayfası, katman eşleme: örn. <code className="layer">ÇATI → Kenet çatı sistemi</code>); program çizim yazılarından
@@ -60,6 +70,7 @@ export default function SystemsPanel({ projectId, refreshKey, onChanged }: Props
           ? <span className="badge st-missing">{data.missing} bileşen projede yazmıyor</span>
           : <span className="badge st-present">bileşenler tamam</span>}
       </h3>
+      {facade}
       {data.warnings.length > 0 && (
         <div className="warn">
           <b>Projede yazmayan bileşenler var.</b> Sistem bu bileşenleri keşfe almadı. Projede var olduğunu biliyorsanız <i>Ekle</i> deyin,

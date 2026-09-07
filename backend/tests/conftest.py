@@ -58,3 +58,9 @@ def facade_dxf(tmp_path_factory):
 def roof_dxf(tmp_path_factory):
     from tests.fixtures.make_dxf import make_roof_dxf
     return make_roof_dxf(tmp_path_factory.mktemp("dxf") / "cati.dxf")
+
+
+@pytest.fixture(scope="session")
+def precast_dxf(tmp_path_factory):
+    from tests.fixtures.make_dxf import make_precast_dxf
+    return make_precast_dxf(tmp_path_factory.mktemp("dxf") / "prekast.dxf")

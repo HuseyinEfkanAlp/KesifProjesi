@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Api, type DrawingPatch } from '../api/client'
-import { DISCIPLINES, ETYPE_LABELS, STRUCTURAL_ETYPES, type Discipline, type Drawing, type Project, type ProjectParams } from '../types'
+import { DISCIPLINES, ETYPE_LABELS, STRUCTURAL_ETYPES, type CatalogItem, type Discipline, type Drawing, type Project, type ProjectParams } from '../types'
 import PlanChecklist from '../components/PlanChecklist'
 import PlanIntake from '../components/PlanIntake'
 import SystemsPanel from '../components/SystemsPanel'
@@ -36,6 +36,10 @@ export default function ProjectDetail() {
   const [refresh, setRefresh] = useState(0)
   const planTypes = usePlanTypes()
   const planGroups = planTypeGroups(planTypes)
+  const [facadeItems, setFacadeItems] = useState<CatalogItem[]>([])
+  useEffect(() => {
+    Api.catalog.get().then((c) => setFacadeItems(c.items.filter((i) => i.discipline === 'CEP' && i.measure === 'area' && i.code !== 'CEPHE_BRUT'))).catch(() => {})
+  }, [])
 
   // parametre formu
   const [params, setParams] = useState({ storey_height: 3, slab_thickness: 0.15, vat_rate: 0 })
@@ -60,7 +64,7 @@ export default function ProjectDetail() {
     setBusy(true); setError('')
     try {
       const cleaned: Record<string, number | null> = {}
-      for (const [k, v] of Object.entries(dparams)) cleaned[k] = v === '' ? null : +v
+      for (const [k, v] of Object.entries(dparams)) cleaned[k] = v === '' ? null : (k === 'facade_system' ? (v as unknown as number) : +v)
       await Api.projects.patch(id, { ...params, rebar_ratios: ratios, params: cleaned as unknown as ProjectParams })
       await load()
     } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
@@ -133,6 +137,20 @@ export default function ProjectDetail() {
                   onChange={(e) => setDparams({ ...dparams, [f.key]: e.target.value })} />
               </label>
             ))}
+          </div>
+          <h3>Cephe</h3>
+          <div className="row">
+            <label className="field" title="Boş: görünüşte CEPHE_BRUT eşlenmişse o alan, yoksa kalıp planındaki kolon/perde dış hattı çevresi × kat yüksekliği">
+              Brüt cephe alanı (m²)
+              <input type="number" step="1" value={dparams.facade_gross_m2 ?? ''} placeholder="otomatik" onChange={(e) => setDparams({ ...dparams, facade_gross_m2: e.target.value })} />
+            </label>
+            <label className="field" title="Seçilirse miktarı net cephe alanı (brüt − cam) olan bir kalem üretilir; katmanlı sistemse bileşenleri sorulur">
+              Cephe sistemi
+              <select value={dparams.facade_system ?? ''} onChange={(e) => setDparams({ ...dparams, facade_system: e.target.value })}>
+                <option value="">— yok / görünüşten ölçülecek —</option>
+                {facadeItems.map((i) => <option key={i.code} value={i.code}>{i.name}{i.is_system ? ' (katmanlı)' : ''}</option>)}
+              </select>
+            </label>
           </div>
           <h3>Statik sarf ve fire (bağ teli, plywood, kalıp yağı, çivi)</h3>
           <div className="params-grid">

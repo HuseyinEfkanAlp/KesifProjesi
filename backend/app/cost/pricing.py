@@ -34,13 +34,13 @@ def default_price_items(items: list[BoqItem]) -> list[PriceItem]:
     out: list[PriceItem] = []
     seen: set[str] = set()
     for it in items:
-        if it.detail.get("system"):
-            continue   # katmanlı sistem başlığı: bileşenleri fiyatlanır
+        if it.detail.get("system") or it.detail.get("info"):
+            continue   # katmanlı sistem başlığı / bilgi satırı: fiyatlanmaz
         if it.kind not in seen:
             seen.add(it.kind)
             out.append(PriceItem(f"{it.kind}:*", f"{it.kind_label} (genel)", it.unit))
     for it in items:
-        if it.group != "*" and not it.detail.get("system"):
+        if it.group != "*" and not (it.detail.get("system") or it.detail.get("info")):
             out.append(PriceItem(it.key, it.label, it.unit))
     return out
 
@@ -51,7 +51,7 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
     hours_per_day = hours_per_day if hours_per_day and hours_per_day > 0 else 8.0
     lines = []
     for it in items:
-        if it.quantity <= 0 or it.detail.get("system"):
+        if it.quantity <= 0 or it.detail.get("system") or it.detail.get("info"):
             continue
         own = price_map.get(it.key)
         gen = price_map.get(f"{it.kind}:*")

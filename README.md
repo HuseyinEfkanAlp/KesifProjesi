@@ -312,6 +312,22 @@ yeni sistem eklenir.
   ayrı kalem olur (`expand_systems`) ve Birim Fiyatlar'da fiyatlanır. API: `GET/PUT /api/projects/{id}/systems`.
 - Cephe için ayrıca söve, silme, denizlik kalemleri ve katman önerileri eklendi (söve çizgi → m, blok → adet).
 
+## Cephe: etiket sayımı (prekast panel) ve cephe brüt alanı
+
+- **Etiket sayımı** ölçüm kuralı (`label_count`): katmandaki her yazı bir kalem, her kod ayrı satır (`prekast_panel:gp-4` 20 adet).
+  Kot ("+4.15"), sayı, tek karakter ve pafta işaretleri (KESİT-3, 1-1 KESİTİ, DETAY) sayılmaz. Eşlemeye **etiket deseni** eklenebilir:
+  `item:PREKAST_PANEL:label_count:^(GP|EP)` (Elemanlar sayfasında desen kutusu) → yalnız uyan yazılar sayılır; aynı deseni birden
+  çok katmana verebilirsiniz (A5 BLOK'ta GP kodları "inova prekast - YAZI", EP kodları "0" katmanındaydı: 80 panel, 17 tip).
+  Katalog kalemi `PREKAST_PANEL`; katman adında PREKAST/PRECAST geçince önerilir.
+- **Cephe brüt alanı** (`services.facade_area`), öncelik sırasıyla: (1) görünüşte `CEPHE_BRUT` kalemine eşlenen dış hat çokgeni,
+  (2) proje parametresi *Brüt cephe alanı* (elle), (3) tahmin: her kalıp planında döşeme / kiriş / kolon / perde çokgenlerinin
+  birleşimi (boşluklar 0,6 m'ye kadar kapatılır, delikler doldurulur, 15 cm cephe payı) → dış çevre × kat yüksekliği × kat sayısı
+  (`building_footprint`). Net = brüt − cam (CAM kalemi varsa). A4-A5 blokta kat başına 478–496 m çevre, ~1.800 m² cephe; çatı
+  katı paftasında döşemeler bulunamadığı için çevre şişer (elle düzeltin).
+- **Cephe sistemi** proje parametresi (`facade_system`: MANTOLAMA_SISTEM, KOMPOZIT_PANEL, CEPHE_TASI…): seçilince keşfe
+  "Cephe brüt alanı" bilgi satırı (fiyatlanmaz) ve miktarı net cephe alanı olan sistem kalemi eklenir; katmanlı sistemse
+  bileşenleri sorulur. Görünüşte aynı kalem zaten ölçülmüşse ikinci kez eklenmez. Sistem panelinde alan ve kaynağı görünür.
+
 ## Plan seti (`planset.py`)
 
 `PLAN_TYPES`: 7 grupta (statik, mimari, elektrik, mekanik, altyapı, peyzaj, asansör) ~30 plan tipi; her biri için başlık

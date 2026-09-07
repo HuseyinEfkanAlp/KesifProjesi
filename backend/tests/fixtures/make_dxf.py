@@ -421,3 +421,21 @@ def make_roof_dxf(path: str | Path) -> Path:
     path = Path(path)
     doc.saveas(path)
     return path
+
+
+def make_precast_dxf(path: str | Path) -> Path:
+    """Prekast cephe görünüşü (mm): 'inova prekast - YAZI' katmanında panel kodları (GP-4 ×3, EP17 ×2, GP-3-a ×1),
+    aynı katmanda kot yazıları (+4.15) ve tek harf (A) sayılmaz; 'CEPHE HAT' katmanında 20x9 m dış hat (180 m²)."""
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 4
+    for n in ("inova prekast - YAZI", "CEPHE HAT", "brn_glass"):
+        doc.layers.add(n)
+    msp = doc.modelspace()
+    msp.add_lwpolyline(_rect(0, 0, 20000, 9000), close=True, dxfattribs={"layer": "CEPHE HAT"})
+    for i, code in enumerate(("GP-4", "GP-4", "GP-4", "EP17", "EP17", "GP-3-a", "+4.15", "-4.03 (+0.12)", "A")):
+        msp.add_text(code, dxfattribs={"layer": "inova prekast - YAZI", "height": 150}).set_placement((500 + i * 2000, 4000))
+    for x in (2000, 8000):
+        msp.add_lwpolyline(_rect(x, 1000, 2000, 1500), close=True, dxfattribs={"layer": "brn_glass"})
+    path = Path(path)
+    doc.saveas(path)
+    return path

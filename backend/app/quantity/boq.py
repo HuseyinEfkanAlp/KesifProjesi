@@ -57,6 +57,9 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "formwork_reuse": 5.0,        # bir levhanın kullanım sayısı
     "formwork_oil_l_per_m2": 0.05,   # kalıp yağı L / m² (her kullanımda)
     "nails_kg_per_m2": 0.10,      # çivi / aksesuar kg / m² kalıp
+    # cephe
+    "facade_gross_m2": None,      # brüt cephe alanı (m²); None -> görünüşteki CEPHE_BRUT kalemi, yoksa kalıp planı oturum çevresi × H
+    "facade_system": "",          # cephe sistemi katalog kodu (MANTOLAMA_SISTEM, KOMPOZIT_PANEL…); miktarı net cephe alanından
 }
 
 
@@ -313,7 +316,7 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
                 else:
                     measure = "count"
                 note = "Katalogda yok; geometriye göre ölçüldü"
-            if measure == "count":
+            if measure in ("count", "label_count"):
                 qty = n
             elif measure == "length":
                 qty = length * n

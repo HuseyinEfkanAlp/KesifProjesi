@@ -21,6 +21,18 @@ from .base import DetectParams, DetectedElement, dedupe_elements
 GEOMETRY_MEASURE = {"insert": "count", "line": "length", "polyline": "length", "polygon": "area"}
 
 
+_LABEL_SKIP = re.compile(r"^[+\-±]?\d[\d.,]*(\s*\(.*\))?$|^[+\-±]\d")   # kot ("+4.15", "-4.03 (+0.12)") ve sayı
+_LABEL_MARKER = re.compile(r"KES[İI]T|DETAY|PLAN|G[ÖO]R[ÜU]N[ÜU][SŞ]|[ÖO]L[ÇC]EK|\d+-\d+\s*KES", re.IGNORECASE)   # pafta işaretleri
+
+
+def _label_text(text: str) -> str:
+    """Etiket sayımı için yazı: kısaltılır, kot / sayı / tek karakter elenir."""
+    t = (text or "").strip()
+    if not t or len(t) > 40 or len(t) < 2 or _LABEL_SKIP.match(t) or _LABEL_MARKER.search(t):
+        return ""
+    return t
+
+
 def standard_layers(drawing: Drawing, catalog: Catalog) -> dict[str, ParsedLayer]:
     out = {}
     for layer in drawing.layers:
@@ -31,7 +43,8 @@ def standard_layers(drawing: Drawing, catalog: Catalog) -> dict[str, ParsedLayer
 
 
 def measure_layer(drawing: Drawing, layer: str, code: str, item, measure: str | None, spec: str | None,
-                  params: DetectParams, base_conf: float = 0.95, meta: dict | None = None) -> tuple[list[DetectedElement], list[str]]:
+                  params: DetectParams, base_conf: float = 0.95, meta: dict | None = None,
+                  label_pattern: str | None = None) -> tuple[list[DetectedElement], list[str]]:
     """Bir katmandaki nesneleri katalog ölçüm kuralına göre elemanlara çevirir (count / length / area / wall_area / volume)."""
     ents = drawing.by_layer(layer)
     elements: list[DetectedElement] = []
@@ -43,6 +56,29 @@ def measure_layer(drawing: Drawing, layer: str, code: str, item, measure: str | 
     base_name = item.name if item else code
     polys: list[DetectedElement] = []
     meta = dict(meta or {})
+    if measure == "label_count":
+        # Katmandaki her yazı bir etiket: "GP-4" -> prekast panel GP-4, 1 adet. Kot / ölçü / tek karakter / kesit işareti atlanır;
+        # desen verilmişse yalnız ona uyanlar sayılır.
+        n = 0
+        rx = None
+        if label_pattern:
+            try:
+                rx = re.compile(label_pattern, re.IGNORECASE)
+            except re.error:
+                warnings.append(f"{layer}: etiket deseni geçersiz ({label_pattern}); desensiz sayıldı")
+        for e in ents:
+            if e.kind != "text":
+                continue
+            label = _label_text(e.text)
+            if not label or (rx and not rx.search(label)):
+                continue
+            elements.append(DetectedElement(etype=etype, layer=layer, points=list(e.points), name=label, subtype=label,
+                                            count=1, source=e.source or "TEXT", handle=e.handle, confidence=base_conf,
+                                            label_raw=e.text, meta=meta))
+            n += 1
+        if not n:
+            warnings.append(f"{layer}: etiket sayımı için yazı yok")
+        return elements, warnings
     for e in ents:
         if e.kind == "text":
             continue
@@ -119,6 +155,7 @@ SUGGEST_RULES: list[tuple[str, str]] = [
     (r"PLASTER|SIVA|SIVA", "SIVA"), (r"PAINT|BOYA", "BOYA"), (r"TA[SŞ]\s*KAPLAMA|STONE", "CEPHE_TASI"),
     (r"KOMPOZ|ALUCOBOND|PANEL", "KOMPOZIT_PANEL"), (r"MEMBRAN", "CATI_MEMBRAN"), (r"ROOF|[CÇ]ATI", "CATI_KIREMIT"),
     (r"OLUK", "CATI_OLUK"), (r"YA[GĞ]MUR|DERE|INIS|İNİŞ", "CATI_DERE"), (r"K[UÜ]PE[SŞ]TE|KORKULUK", "KOREKUYU"),
+    (r"PREKAST|PRECAST|PANEL\s*KOD", "PREKAST_PANEL"), (r"CEPHE.*(HAT|SINIR|KONTUR|BRUT|BR[ÜU]T)|OUTLINE|D[Iİ][SŞ]\s*HAT", "CEPHE_BRUT"),
     (r"S[ÖO]VE", "SOVE"), (r"S[Iİ]LME", "SILME"), (r"DEN[Iİ]ZL[Iİ]K", "DENIZLIK"), (r"KARTONP", "SILME"),
     (r"SERAMIK|SERAMİK", "SERAMIK_ZEMIN"), (r"PARKE|LAMINAT", "LAMINAT"), (r"ASMA\s*TAVAN|CEILING", "ASMA_TAVAN"),
     (r"BORD[UÜ]R", "BORDUR"), (r"BAZALT|GRAN[Iİ]T|PEYZAJ.*D[OÖ][SŞ]EME", "PEYZAJ_DOSEME"), (r"[CÇ][Iİ]M\b|GRASS", "CIM"),
@@ -166,7 +203,7 @@ def detect_mapped(drawing: Drawing, profile, catalog: Catalog, params: DetectPar
             continue
         m = mapped_item(profile, layer)
         if m:
-            code, measure = m
+            code, measure, pattern = m
             item = catalog.get(code)
             measure = measure or (item.measure if item else None)
             spec = None
@@ -174,11 +211,13 @@ def detect_mapped(drawing: Drawing, profile, catalog: Catalog, params: DetectPar
             if nums and item and item.measure in ("wall_area", "volume"):
                 spec = nums[0]
             els, w = measure_layer(drawing, layer, code, item, measure, spec, params, base_conf=0.85,
-                                   meta={"ksf_code": code, "measure": measure, "spec": spec, "discipline": item.discipline if item else "???"})
+                                   meta={"ksf_code": code, "measure": measure, "spec": spec, "discipline": item.discipline if item else "???"},
+                                   label_pattern=pattern)
             elements.extend(els)
             warnings.extend(w)
             mapped_n += 1
-            info[layer] = {"code": code, "measure": measure, "label": (item.name if item else code) + f" · {MEASURE_LABELS.get(measure, measure)}",
+            info[layer] = {"code": code, "measure": measure, "pattern": pattern,
+                           "label": (item.name if item else code) + f" · {MEASURE_LABELS.get(measure, measure)}" + (f" · desen {pattern}" if pattern else ""),
                            "suggested": None}
         else:
             sug = suggest_item(layer, catalog, materials)
@@ -189,4 +228,5 @@ def detect_mapped(drawing: Drawing, profile, catalog: Catalog, params: DetectPar
     return elements, warnings, info
 
 
-MEASURE_LABELS = {"count": "adet", "length": "m", "area": "m²", "wall_area": "m² (uzunluk × yükseklik)", "volume": "m³"}
+MEASURE_LABELS = {"count": "adet", "length": "m", "area": "m²", "wall_area": "m² (uzunluk × yükseklik)", "volume": "m³",
+                  "label_count": "adet (etiket)"}
