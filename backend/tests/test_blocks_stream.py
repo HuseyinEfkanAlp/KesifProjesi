@@ -68,7 +68,7 @@ def test_api_schedule_to_boq(client, block_dxf, monkeypatch):
     assert r.status_code == 200 and r.json()["needs_sheet_selection"]
     sheets_ = {s["title"]: s for s in r.json()["sheets"]}
     dog = sheets_["DOĞRAMA DETAYLARI"]
-    assert dog["plan_type"] == "mim_detay"
+    assert dog["plan_type"] == "mim_dograma"
     r = client.post(f"/api/projects/{pid}/drawings/from-source", json={
         "token": r.json()["source"]["token"],
         "sheets": [{"index": sheets_["ZEMİN KAT KALIP PLANI"]["index"]}, {"index": dog["index"], "discipline": "mapped"}]})
