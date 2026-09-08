@@ -370,6 +370,210 @@ DEFAULT_ITEMS: list[CatalogItem] = [
 ]
 
 
+# ---------------------------------------------------------------- yardımcı imalat, sarf ve işçilik kalemleri (reçete bileşenleri)
+#
+# Birimi "saat" olan kalemler işçiliktir (adam-saat); Birim Fiyatlar'da saat ücretiyle maliyete, ekip büyüklüğüyle süreye girer.
+_L = "saat"
+AUX_ITEMS: list[CatalogItem] = [
+    # STA
+    _i("BETON_ISCILIK", "STA", "Beton yerleştirme işçiliği", "count", "", "KSF-STA-BETON_ISCILIK", unit=_L),
+    _i("VIBRATOR", "STA", "Vibratör (beton sıkıştırma)", "count", "", "KSF-STA-VIBRATOR", unit=_L),
+    _i("BETON_KUR", "STA", "Beton kürü (kür kimyasalı / sulama)", "area", "", "KSF-STA-BETON_KUR"),
+    _i("DEMIR_ISCILIK", "STA", "Demir kesme - bükme - yerleştirme işçiliği", "count", "", "KSF-STA-DEMIR_ISCILIK", unit=_L),
+    _i("KALIP_ISCILIK", "STA", "Kalıp kurma + söküm işçiliği", "count", "", "KSF-STA-KALIP_ISCILIK", unit=_L),
+    _i("KAZI_MAKINE", "STA", "Ekskavatör (kazı)", "count", "", "KSF-STA-KAZI_MAKINE", unit=_L),
+    _i("KAMYON", "STA", "Kamyon (nakliye)", "count", "", "KSF-STA-KAMYON", unit=_L),
+    _i("SIKISTIRMA", "STA", "Dolgu serme + sıkıştırma işçiliği", "count", "", "KSF-STA-SIKISTIRMA", unit=_L),
+    # MIM / INC
+    _i("DUVAR_ISCILIK", "MIM", "Duvar örgü işçiliği", "count", "", "KSF-MIM-DUVAR_ISCILIK", unit=_L),
+    _i("HARC", "MIM", "Örgü harcı (hazır)", "count", "", "KSF-MIM-HARC", unit="kg"),
+    _i("ALCIPAN_PROFIL", "MIM", "Alçıpan profili (C / U)", "length", "tip", "KSF-MIM-ALCIPAN_PROFIL"),
+    _i("ALCIPAN_VIDA", "MIM", "Alçıpan vidası", "count", "", "KSF-MIM-ALCIPAN_VIDA"),
+    _i("DERZ_BANDI", "MIM", "Derz bandı + derz dolgu alçısı", "length", "", "KSF-MIM-DERZ_BANDI"),
+    _i("CAM_MONTAJ", "MIM", "Cam montaj işçiliği", "count", "", "KSF-MIM-CAM_MONTAJ", unit=_L),
+    _i("KOREKUYU_MONTAJ", "MIM", "Korkuluk montaj işçiliği", "count", "", "KSF-MIM-KOREKUYU_MONTAJ", unit=_L),
+    _i("SIVA_ISCILIK", "INC", "Sıva işçiliği", "count", "", "KSF-INC-SIVA_ISCILIK", unit=_L),
+    _i("BOYA_ISCILIK", "INC", "Boya işçiliği", "count", "", "KSF-INC-BOYA_ISCILIK", unit=_L),
+    _i("KAPLAMA_ISCILIK", "INC", "Kaplama döşeme işçiliği", "count", "", "KSF-INC-KAPLAMA_ISCILIK", unit=_L),
+    _i("SERAMIK_YAPISTIRICI", "INC", "Seramik yapıştırıcısı", "count", "", "KSF-INC-SERAMIK_YAPISTIRICI", unit="kg"),
+    _i("DERZ_DOLGU", "INC", "Derz dolgusu", "count", "", "KSF-INC-DERZ_DOLGU", unit="kg"),
+    _i("SILTE", "INC", "Parke şiltesi", "area", "", "KSF-INC-SILTE"),
+    _i("ASKI_TELI", "INC", "Asma tavan askı teli / çubuğu", "count", "", "KSF-INC-ASKI_TELI"),
+    _i("TAVAN_PROFILI", "INC", "Asma tavan taşıyıcı profili", "length", "tip", "KSF-INC-TAVAN_PROFILI"),
+    _i("SAP_ISCILIK", "INC", "Şap işçiliği", "count", "", "KSF-INC-SAP_ISCILIK", unit=_L),
+    _i("YALITIM_ISCILIK", "IZO", "Yalıtım uygulama işçiliği", "count", "", "KSF-IZO-YALITIM_ISCILIK", unit=_L),
+    _i("BITUM_ASTAR", "IZO", "Bitüm astarı", "count", "", "KSF-IZO-BITUM_ASTAR", unit="kg"),
+    # CEP / CAT
+    _i("MANTOLAMA_ISCILIK", "CEP", "Mantolama uygulama işçiliği", "count", "", "KSF-CEP-MANTOLAMA_ISCILIK", unit=_L),
+    _i("CEPHE_MONTAJ", "CEP", "Cephe kaplama montaj işçiliği", "count", "", "KSF-CEP-CEPHE_MONTAJ", unit=_L),
+    _i("CATI_ISCILIK", "CAT", "Çatı uygulama işçiliği", "count", "", "KSF-CAT-CATI_ISCILIK", unit=_L),
+    _i("KENET_KLIPS", "CAT", "Kenet klipsi", "count", "", "KSF-CAT-KENET_KLIPS"),
+    # ELK / ZAY
+    _i("KABLO_CEKME", "ELK", "Kablo çekme işçiliği", "count", "", "KSF-ELK-KABLO_CEKME", unit=_L),
+    _i("TAVA_MONTAJ", "ELK", "Kablo tavası montaj işçiliği", "count", "", "KSF-ELK-TAVA_MONTAJ", unit=_L),
+    _i("TAVA_ASKI", "ELK", "Tava askısı / konsol", "count", "", "KSF-ELK-TAVA_ASKI"),
+    _i("TAVA_EK", "ELK", "Tava ek parçası", "count", "", "KSF-ELK-TAVA_EK"),
+    _i("BORU_MONTAJ_ELK", "ELK", "Elektrik borusu döşeme işçiliği", "count", "", "KSF-ELK-BORU_MONTAJ_ELK", unit=_L),
+    _i("ARMATUR_MONTAJ", "ELK", "Armatür / cihaz montaj işçiliği", "count", "", "KSF-ELK-ARMATUR_MONTAJ", unit=_L),
+    _i("BUAT", "ELK", "Buat / kasa", "count", "tip", "KSF-ELK-BUAT"),
+    _i("PRIZ_MONTAJ", "ELK", "Priz / anahtar montaj işçiliği", "count", "", "KSF-ELK-PRIZ_MONTAJ", unit=_L),
+    _i("PANO_MONTAJ", "ELK", "Pano montaj + bağlantı işçiliği", "count", "", "KSF-ELK-PANO_MONTAJ", unit=_L),
+    _i("TOPRAKLAMA_ISCILIK", "ELK", "Topraklama işçiliği", "count", "", "KSF-ELK-TOPRAKLAMA_ISCILIK", unit=_L),
+    _i("ZAYIF_AKIM_MONTAJ", "ZAY", "Zayıf akım cihaz montaj + devreye alma", "count", "", "KSF-ZAY-ZAYIF_AKIM_MONTAJ", unit=_L),
+    # MEK / HAV / YAN / SIH
+    _i("BORU_MONTAJ", "MEK", "Boru montaj işçiliği", "count", "", "KSF-MEK-BORU_MONTAJ", unit=_L),
+    _i("BORU_ASKI", "MEK", "Boru askısı / kelepçe", "count", "çap", "KSF-MEK-BORU_ASKI"),
+    _i("FITTINGS", "MEK", "Bağlantı parçası (dirsek / te / manşon)", "count", "çap", "KSF-MEK-FITTINGS"),
+    _i("CIHAZ_MONTAJ", "MEK", "Cihaz montaj + devreye alma işçiliği", "count", "", "KSF-MEK-CIHAZ_MONTAJ", unit=_L),
+    _i("KANAL_MONTAJ", "HAV", "Kanal montaj işçiliği", "count", "", "KSF-HAV-KANAL_MONTAJ", unit=_L),
+    _i("KANAL_ASKI", "HAV", "Kanal askısı (tij + profil)", "count", "", "KSF-HAV-KANAL_ASKI"),
+    _i("FLANS", "HAV", "Kanal flanşı + conta", "count", "", "KSF-HAV-FLANS"),
+    _i("SPRINKLER_MONTAJ", "YAN", "Sprinkler / yangın cihazı montaj işçiliği", "count", "", "KSF-YAN-SPRINKLER_MONTAJ", unit=_L),
+    _i("YIVLI_KAPLIN", "YAN", "Yivli kaplin / bağlantı", "count", "çap", "KSF-YAN-YIVLI_KAPLIN"),
+    _i("VITRIFIYE_MONTAJ", "SIH", "Vitrifiye / armatür montaj işçiliği", "count", "", "KSF-SIH-VITRIFIYE_MONTAJ", unit=_L),
+    # ALT / PEY / ASN
+    _i("YATAK_KUMU", "ALT", "Boru yatak kumu", "volume", "", "KSF-ALT-YATAK_KUMU", unit="m³"),
+    _i("GERI_DOLGU", "ALT", "Hendek geri dolgusu", "volume", "", "KSF-ALT-GERI_DOLGU", unit="m³"),
+    _i("ALTYAPI_MONTAJ", "ALT", "Altyapı boru / baca montaj işçiliği", "count", "", "KSF-ALT-ALTYAPI_MONTAJ", unit=_L),
+    _i("KUM_YATAK", "ALT", "Kum yatak (parke / döşeme altı)", "volume", "", "KSF-ALT-KUM_YATAK", unit="m³"),
+    _i("PEYZAJ_ISCILIK", "PEY", "Peyzaj uygulama işçiliği", "count", "", "KSF-PEY-PEYZAJ_ISCILIK", unit=_L),
+    _i("ASANSOR_MONTAJ", "ASN", "Asansör / yürüyen merdiven montaj işçiliği", "count", "", "KSF-ASN-ASANSOR_MONTAJ", unit=_L),
+]
+DEFAULT_ITEMS.extend(AUX_ITEMS)
+
+# Kalem -> reçete (bileşen kodu, çarpan, özellik). Çarpanlar yaygın uygulama / ÇŞB analiz varsayılanıdır; kullanıcı düzenler.
+# Birim başına adam-saat: beton 1,0 / m³, demir 20 / t, kalıp 1,2 / m² (kurma + söküm), duvar 0,8 / m², sıva 0,7, boya 0,3,
+# seramik 1,0, kablo 0,05 / m, PPRC 0,25 / m, çelik boru 0,5 / m, kanal 0,6 / m, sprinkler 1,2 / adet, vitrifiye 2 / adet.
+DEFAULT_RECIPES: dict[str, list[tuple]] = {
+    # STA
+    "BETON": [("BETON_ISCILIK", 1.0), ("VIBRATOR", 0.3), ("BETON_KUR", 1.0), ("BETON_POMPAJ", 1.0)],
+    "GROBETON": [("BETON_ISCILIK", 0.8), ("BETON_POMPAJ", 1.0)],
+    "DOLGU": [("SIKISTIRMA", 0.3), ("KAMYON", 0.08)],
+    "KAZI": [("KAZI_MAKINE", 0.05), ("KAMYON", 0.1)],
+    "KALIP": [("KALIP_ISCILIK", 1.2), ("KALIP_ISKELESI", 1.0, "", "H")],
+    "CELIK_PROFIL": [("KAYNAK", 0.5), ("ANTIPAS", 0.3), ("CELIK_BOYA", 0.3), ("CELIK_MONTAJ", 0.4), ("ANKRAJ_BULONU", 0.2, "M20")],
+    "HASIR_CELIK": [("DEMIR_ISCILIK", 0.05)],
+    "SAHA_BETONU": [("BETON_ISCILIK", 0.8), ("BETON_KUR", 1.0), ("BETON_POMPAJ", 1.0)],
+    # MIM
+    "DUVAR_YTONG": [("DUVAR_ISCILIK", 0.8), ("DUVAR_TUTKAL", 4.0)],
+    "DUVAR_TUGLA": [("DUVAR_ISCILIK", 1.0), ("HARC", 25.0)],
+    "DUVAR_BIMS": [("DUVAR_ISCILIK", 0.9), ("HARC", 20.0)],
+    "DUVAR_ALCIPAN": [("DUVAR_ISCILIK", 0.9), ("ALCIPAN_PROFIL", 3.0), ("ALCIPAN_VIDA", 30.0), ("DERZ_BANDI", 2.0), ("TASYUNU", 1.0, "5")],
+    "CAM": [("CAM_MONTAJ", 0.5)],
+    "KOREKUYU": [("KOREKUYU_MONTAJ", 0.8), ("ANKRAJ_BULONU", 2.0, "M10")],
+    # INC
+    "SIVA": [("SIVA_ISCILIK", 0.7), ("KOSE_PROFILI", 0.2)],
+    "BOYA": [("BOYA_ISCILIK", 0.3)],
+    "ASTAR": [("BOYA_ISCILIK", 0.1)],
+    "SERAMIK_ZEMIN": [("KAPLAMA_ISCILIK", 1.0), ("SERAMIK_YAPISTIRICI", 5.0), ("DERZ_DOLGU", 0.5)],
+    "SERAMIK_DUVAR": [("KAPLAMA_ISCILIK", 1.2), ("SERAMIK_YAPISTIRICI", 5.0), ("DERZ_DOLGU", 0.5)],
+    "LAMINAT": [("KAPLAMA_ISCILIK", 0.4), ("SILTE", 1.05)],
+    "ASMA_TAVAN": [("KAPLAMA_ISCILIK", 0.6), ("ASKI_TELI", 2.0), ("TAVAN_PROFILI", 3.0)],
+    "SUPURGELIK": [("KAPLAMA_ISCILIK", 0.15)],
+    "SAP": [("SAP_ISCILIK", 8.0)],
+    "DOSEME_KAPLAMA": [("KAPLAMA_ISCILIK", 1.0), ("SERAMIK_YAPISTIRICI", 5.0)],
+    "TAVAN_SIVA_BOYA": [("SIVA_ISCILIK", 0.7), ("BOYA_ISCILIK", 0.4)],
+    # IZO
+    "XPS": [("YALITIM_ISCILIK", 0.2)], "EPS": [("YALITIM_ISCILIK", 0.2)], "TASYUNU": [("YALITIM_ISCILIK", 0.2)],
+    "SU_YALITIM_MEMBRAN": [("YALITIM_ISCILIK", 0.3), ("BITUM_ASTAR", 0.4)],
+    "SURME_IZOLASYON": [("YALITIM_ISCILIK", 0.3)], "BUHAR_KESICI": [("YALITIM_ISCILIK", 0.1)], "GEOTEKSTIL": [("YALITIM_ISCILIK", 0.05)],
+    "TEMEL_SU_YALITIMI": [("YALITIM_ISCILIK", 0.35), ("BITUM_ASTAR", 0.4)],
+    "KORUMA_SAPI": [("SAP_ISCILIK", 0.4)], "DRENAJ": [("YALITIM_ISCILIK", 0.3)],
+    # CEP
+    "MANTOLAMA": [("IS_ISKELESI", 1.0), ("MANTOLAMA_ISCILIK", 1.2)],
+    "MANTOLAMA_SISTEM": [("IS_ISKELESI", 1.0), ("MANTOLAMA_ISCILIK", 1.2)],
+    "KOMPOZIT_PANEL": [("IS_ISKELESI", 1.0), ("CEPHE_TASIYICI_PROFIL", 2.5, "ALU"), ("ANKRAJ_BULONU", 1.5, "M10"), ("CEPHE_MONTAJ", 1.0)],
+    "GIYDIRME_CEPHE": [("IS_ISKELESI", 1.0), ("ANKRAJ_BULONU", 1.2, "M12"), ("VINC", 0.05), ("CEPHE_MONTAJ", 1.5)],
+    "CEPHE_TASI": [("IS_ISKELESI", 1.0), ("CEPHE_MONTAJ", 1.5), ("SERAMIK_YAPISTIRICI", 8.0)],
+    "CEPHE_BOYA": [("IS_ISKELESI", 1.0), ("BOYA_ISCILIK", 0.3)],
+    "SOVE": [("CEPHE_MONTAJ", 0.5)], "SILME": [("CEPHE_MONTAJ", 0.4)], "DENIZLIK": [("CEPHE_MONTAJ", 0.4)],
+    "PREKAST_PANEL": [("ANKRAJ_BULONU", 4.0, "M20"), ("KAYNAK", 1.2), ("PREKAST_MONTAJ", 2.0), ("VINC", 0.5), ("PANEL_DERZ", 6.0)],
+    # CAT
+    "CATI_MEMBRAN": [("CATI_ISCILIK", 0.3), ("BITUM_ASTAR", 0.4)],
+    "CATI_SANDVIC_PANEL": [("PANEL_VIDASI", 6.0), ("MAHYA_KAPAMA", 0.15), ("PANEL_MONTAJ", 0.25)],
+    "CATI_KIREMIT": [("CATI_ISCILIK", 0.6)], "CATI_OLUK": [("CATI_ISCILIK", 0.4)], "CATI_DERE": [("CATI_ISCILIK", 0.4)],
+    "CATI_ISIK_BANDI": [("CATI_ISCILIK", 1.0)],
+    "KENET_KAPLAMA": [("CATI_ISCILIK", 0.8), ("KENET_KLIPS", 6.0)],
+    "AYIRICI_KECE": [("CATI_ISCILIK", 0.05)], "OSB": [("CATI_ISCILIK", 0.3)], "CATI_TAHTASI": [("CATI_ISCILIK", 0.4)],
+    "MERTEK": [("CATI_ISCILIK", 0.2)], "ASIK": [("CATI_ISCILIK", 0.15)], "CATI_LATA": [("CATI_ISCILIK", 0.1)],
+    "EGIM_BETONU": [("BETON_ISCILIK", 0.5)], "CATI_CAKIL": [("CATI_ISCILIK", 0.1)], "KORUMA_BETONU": [("BETON_ISCILIK", 0.5)],
+    # ELK
+    "KABLO": [("KABLO_CEKME", 0.05)],
+    "TAVA": [("TAVA_MONTAJ", 0.4), ("TAVA_ASKI", 0.6), ("TAVA_EK", 0.35)],
+    "BUSBAR": [("TAVA_MONTAJ", 0.6), ("TAVA_ASKI", 0.5)],
+    "BORU": [("BORU_MONTAJ_ELK", 0.1)],
+    "ARMATUR": [("ARMATUR_MONTAJ", 0.5), ("BUAT", 1.0)], "ACIL_AYDINLATMA": [("ARMATUR_MONTAJ", 0.5), ("BUAT", 1.0)],
+    "PRIZ": [("PRIZ_MONTAJ", 0.4), ("BUAT", 1.0, "KASA")], "ANAHTAR": [("PRIZ_MONTAJ", 0.4), ("BUAT", 1.0, "KASA")],
+    "PANO": [("PANO_MONTAJ", 8.0)], "TOPRAKLAMA": [("TOPRAKLAMA_ISCILIK", 0.2)],
+    # ZAY
+    "DATA_KABLO": [("KABLO_CEKME", 0.05)], "DATA_PRIZ": [("ZAYIF_AKIM_MONTAJ", 0.5), ("BUAT", 1.0, "KASA")],
+    "KAMERA": [("ZAYIF_AKIM_MONTAJ", 2.0)], "YANGIN_DEDEKTOR": [("ZAYIF_AKIM_MONTAJ", 0.8)], "YANGIN_BUTON": [("ZAYIF_AKIM_MONTAJ", 0.8)],
+    "HOPARLOR": [("ZAYIF_AKIM_MONTAJ", 0.8)], "KARTLI_GECIS": [("ZAYIF_AKIM_MONTAJ", 4.0)],
+    # MEK
+    "BORU_CELIK": [("BORU_MONTAJ", 0.5), ("BORU_ASKI", 0.7), ("KAYNAK", 0.3), ("FITTINGS", 0.3)],
+    "BORU_BAKIR": [("BORU_MONTAJ", 0.3), ("BORU_ASKI", 0.8), ("FITTINGS", 0.5)],
+    "BORU_PPRC": [("BORU_MONTAJ", 0.25), ("BORU_ASKI", 0.7), ("FITTINGS", 0.5)],
+    "BORU_IZOLASYON": [("YALITIM_ISCILIK", 0.15)],
+    "FANCOIL": [("CIHAZ_MONTAJ", 4.0)], "VRF_IC_UNITE": [("CIHAZ_MONTAJ", 4.0)], "VRF_DIS_UNITE": [("CIHAZ_MONTAJ", 12.0), ("VINC", 2.0)],
+    "RADYATOR": [("CIHAZ_MONTAJ", 2.0)], "VANA": [("CIHAZ_MONTAJ", 0.5)], "POMPA": [("CIHAZ_MONTAJ", 6.0)],
+    "KAZAN": [("CIHAZ_MONTAJ", 40.0), ("VINC", 4.0)],
+    # HAV
+    "HAVA_KANAL": [("KANAL_MONTAJ", 0.6), ("KANAL_ASKI", 0.8), ("FLANS", 0.7)],
+    "HAVA_KANAL_YUVARLAK": [("KANAL_MONTAJ", 0.4), ("KANAL_ASKI", 0.7)],
+    "FLEX_KANAL": [("KANAL_MONTAJ", 0.2)], "KANAL_IZOLASYON": [("YALITIM_ISCILIK", 0.3)],
+    "MENFEZ": [("CIHAZ_MONTAJ", 0.7)], "DAMPER": [("CIHAZ_MONTAJ", 1.5)], "FAN": [("CIHAZ_MONTAJ", 6.0)],
+    "KLIMA_SANTRALI": [("CIHAZ_MONTAJ", 40.0), ("VINC", 4.0)],
+    # YAN
+    "SPRINKLER": [("SPRINKLER_MONTAJ", 1.2)],
+    "YANGIN_BORU": [("BORU_MONTAJ", 0.6), ("BORU_ASKI", 0.7), ("YIVLI_KAPLIN", 0.3)],
+    "YANGIN_DOLABI": [("SPRINKLER_MONTAJ", 3.0)], "YANGIN_VANA": [("SPRINKLER_MONTAJ", 1.0)],
+    "YANGIN_POMPA": [("CIHAZ_MONTAJ", 16.0)], "SONDURME_TUPU": [("SPRINKLER_MONTAJ", 0.2)],
+    # SIH
+    "BORU_PVC": [("BORU_MONTAJ", 0.3), ("BORU_ASKI", 0.5), ("FITTINGS", 0.4)],
+    "BORU_PPRC_TEMIZ": [("BORU_MONTAJ", 0.25), ("BORU_ASKI", 0.7), ("FITTINGS", 0.5)],
+    "BORU_PE": [("BORU_MONTAJ", 0.3), ("FITTINGS", 0.2)],
+    "LAVABO": [("VITRIFIYE_MONTAJ", 2.0)], "KLOZET": [("VITRIFIYE_MONTAJ", 2.5)], "PISUAR": [("VITRIFIYE_MONTAJ", 2.0)],
+    "BATARYA": [("VITRIFIYE_MONTAJ", 0.8)], "YER_SUZGECI": [("VITRIFIYE_MONTAJ", 0.8)],
+    "HIDROFOR": [("CIHAZ_MONTAJ", 8.0)], "SU_DEPOSU": [("CIHAZ_MONTAJ", 6.0)],
+    # ALT
+    "BORU_KORUGE": [("KAZI", 1.2, "100"), ("YATAK_KUMU", 0.3), ("GERI_DOLGU", 0.9), ("ALTYAPI_MONTAJ", 0.3)],
+    "BORU_BETON": [("KAZI", 2.0, "150"), ("YATAK_KUMU", 0.4), ("GERI_DOLGU", 1.5), ("ALTYAPI_MONTAJ", 0.6), ("VINC", 0.1)],
+    "BACA": [("KAZI", 2.5, "200"), ("GERI_DOLGU", 1.5), ("ALTYAPI_MONTAJ", 6.0), ("VINC", 0.5)],
+    "YAGMUR_IZGARA": [("ALTYAPI_MONTAJ", 0.5)], "BORDUR": [("ALTYAPI_MONTAJ", 0.3), ("BETON", 0.05, "15")],
+    "PARKE_TAS": [("KUM_YATAK", 0.05), ("KAPLAMA_ISCILIK", 0.6)],
+    "ASFALT": [("SIKISTIRMA", 0.05)], "ISTINAT": [("KAZI", 1.0, "100"), ("GERI_DOLGU", 0.5)],
+    "AYDINLATMA_DIREGI": [("ARMATUR_MONTAJ", 6.0), ("BETON", 0.5, "25"), ("ANKRAJ_BULONU", 4.0, "M24"), ("VINC", 0.5)],
+    # PEY
+    "CIM": [("PEYZAJ_ISCILIK", 0.1)], "AGAC": [("PEYZAJ_ISCILIK", 1.5), ("KAZI", 0.5, "80")], "CALI": [("PEYZAJ_ISCILIK", 0.3)],
+    "BITKI_TOPRAGI": [("PEYZAJ_ISCILIK", 0.3)], "SULAMA_BORU": [("BORU_MONTAJ", 0.1), ("KAZI", 0.1, "40")],
+    "SULAMA_BASLIK": [("PEYZAJ_ISCILIK", 0.3)], "BANK": [("PEYZAJ_ISCILIK", 2.0), ("ANKRAJ_BULONU", 4.0, "M12")],
+    "PEYZAJ_DOSEME": [("KUM_YATAK", 0.05), ("KAPLAMA_ISCILIK", 0.6)],
+    # ASN
+    "ASANSOR": [("ASANSOR_MONTAJ", 240.0), ("VINC", 8.0)], "YURUYEN_MERDIVEN": [("ASANSOR_MONTAJ", 160.0), ("VINC", 8.0)],
+}
+
+
+def _apply_default_recipes() -> None:
+    by_code = {it.code: it for it in DEFAULT_ITEMS}
+    for code, rows in DEFAULT_RECIPES.items():
+        it = by_code.get(code)
+        if not it:
+            raise RuntimeError(f"Reçete tanımlı ama kalem yok: {code}")
+        recipe = list(it.recipe)   # kod içinde tanımlı reçete korunur, yeni bileşenler eklenir
+        have = {c["code"] for c in recipe}
+        for row in rows:
+            comp = _c(row[0], row[1] if len(row) > 1 else 1.0, row[2] if len(row) > 2 else "", row[3] if len(row) > 3 else "")
+            if comp["code"] not in have:
+                recipe.append(comp)
+        it.recipe = normalize_components(recipe)
+        for c in it.recipe:
+            if c["code"] not in by_code:
+                raise RuntimeError(f"{code} reçetesindeki bileşen katalogda yok: {c['code']}")
+
+
+_apply_default_recipes()
+
+
 class Catalog:
     def __init__(self, disciplines: dict[str, str] | None = None, items: list[CatalogItem] | None = None):
         self.disciplines: dict[str, str] = dict(disciplines if disciplines is not None else DEFAULT_DISCIPLINES)

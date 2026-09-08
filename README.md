@@ -427,6 +427,13 @@ Prekast panel (adet)  → ankraj 4, kaynak 1,2 m, montaj 2 saat, vinç 0,5 saat,
 Pencere / kapı / doğrama (adet) → lento, montaj saati, montaj köpüğü      Duvar m² → gazbeton tutkalı 4 kg
 ```
 
+Katalogdaki 137 kalemin varsayılan reçetesi vardır (`catalog.DEFAULT_RECIPES`, `rules.RECIPES_BY_KIND`); her iş grubunda
+**işçilik saatleri** ayrı kalemdir (birimi `saat`: beton yerleştirme 1,0 / m³, demir 20 / t, kalıp kurma + söküm 1,2 / m²,
+duvar örgü 0,8 / m², sıva 0,7, boya 0,3, seramik 1,0, kablo çekme 0,05 / m, PPRC 0,25 / m, çelik boru 0,5 / m, kanal 0,6 / m,
+sprinkler 1,2 / adet, vitrifiye 2 / adet, asansör 240 / adet…) ve sarf / yardımcı imalat da yazılır (vibratör, kür, tutkal,
+harç, alçıpan profil + vida + derz bandı, seramik yapıştırıcı + derz dolgusu, askı teli, buat, tava askısı + ek, boru askısı +
+fittings + kaynak, kanal askısı + flanş, yivli kaplin, hendek kazısı + yatak kumu + geri dolgu, kum yatak, vinç…).
+
 Reçete biçimi (Standart sayfası): `KOD×çarpan:özellik; …`, çarpan sonundaki `H` kat yüksekliğiyle çarpar
 (`KALIP_ISKELESI×1H`). Çarpanlar yaygın uygulama varsayılanıdır; satır notunda "reçete varsayılanı" yazar. Çizimde zaten
 ölçülmüş bir kalem (ör. iskele) reçeteyle çift yazılmaz, not düşülür. Tümünü kapatmak: `derived_off` içine `recete`.

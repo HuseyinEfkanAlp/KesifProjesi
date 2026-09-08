@@ -90,7 +90,8 @@ def test_full_flow(client, storey_dxf, foundation_dxf):
     assert cost["grand_total"] > 0
     # beton/kalıp/demir fiyatlandı; yalnız sarf kalemleri (bağ teli, plywood, yağ, çivi) fiyatsız kalabilir
     DERIVED = {"doseme_kaplama", "tavan_siva_boya", "sap", "astar", "temel_su_yalitimi", "grobeton", "koruma_sapi"}
-    assert all(k.split(":")[0] in {"bag_teli", "plywood", "kalip_yagi", "civi"} | DERIVED | {"kalip_iskelesi", "beton_pompaj", "duvar_tutkal", "lento", "dograma_montaj", "montaj_kopugu"} for k in cost["missing_prices"]), cost["missing_prices"]
+    assert not any(k.startswith(("beton:", "kalip:", "demir:")) for k in cost["missing_prices"]), cost["missing_prices"]
+    # sarf, türetilmiş ve reçete kalemleri (bağ teli, plywood, iskele, işçilik saatleri…) fiyatsız kalabilir
     keys = {l["key"] for l in cost["lines"]}
     assert {"beton:fire", "demir:fire", "bag_teli:*", "plywood:*"} <= keys
 
@@ -167,7 +168,8 @@ def test_multi_discipline_flow(client, storey_dxf, arch_dxf, elec_dxf):
     p9 = next(i for i in q["boq"]["items"] if i["key"] == "pencere:p9_100x100")
     assert p9["quantity"] == 6                          # 3 adet × 2 kat
     discs = [d["discipline"] for d in q["boq"]["by_discipline"]]
-    assert {"structural", "architectural", "electrical"} <= set(discs) and set(discs) <= {"structural", "architectural", "electrical", "ksf:INC", "ksf:IZO", "ksf:STA", "ksf:MIM"}   # türetilmiş + reçete kalemleri
+    assert {"structural", "architectural", "electrical"} <= set(discs)
+    assert all(d.startswith("ksf:") for d in discs if d not in ("structural", "architectural", "electrical"))   # türetilmiş + reçete kalemleri
     groups = [g["group"] for g in q["boq"]["by_group"]]
     assert groups == [g for g in ("KABA", "INCE", "MEK", "ELK", "ALT") if g in groups] and "KABA" in groups and "ELK" in groups
 

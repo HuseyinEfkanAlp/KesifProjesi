@@ -114,10 +114,22 @@ def default_poz(kind: str, group: str) -> tuple[str, str] | None:
 # Katalog kalemlerinin reçetesi CatalogItem.recipe içindedir. Sezgisel (katalog dışı) türler için reçete burada:
 # tür -> [{"code", "factor", "spec", "times"}]. Miktar = kalem miktarı × factor (× H, times == "H" ise).
 # Değerler yaygın uygulama varsayılanıdır; kalem notunda "reçete varsayılanı" yazar, katalogdan düzenlenir.
+def _r(code, factor=1.0, spec="", times=""):
+    return {"code": code, "factor": factor, "spec": spec, "times": times}
+
+
 RECIPES_BY_KIND: dict[str, list[dict]] = {
-    "kalip": [{"code": "KALIP_ISKELESI", "factor": 1.0, "spec": "", "times": "H"}],   # m³ = kalıp m² × kat yüksekliği
-    "beton": [{"code": "BETON_POMPAJ", "factor": 1.0, "spec": "", "times": ""}],
-    "duvar": [{"code": "DUVAR_TUTKAL", "factor": 4.0, "spec": "", "times": ""}],      # kg / m² (gazbeton tutkalı, 20 cm blok)
+    "kalip": [_r("KALIP_ISCILIK", 1.2), _r("KALIP_ISKELESI", 1.0, "", "H")],   # kurma + söküm saat/m²; iskele m³ = m² × H
+    "beton": [_r("BETON_ISCILIK", 1.0), _r("VIBRATOR", 0.3), _r("BETON_KUR", 1.0), _r("BETON_POMPAJ", 1.0)],
+    "demir": [_r("DEMIR_ISCILIK", 0.02)],                                         # 20 saat / ton = 0,02 saat / kg
+    "duvar": [_r("DUVAR_ISCILIK", 0.8), _r("DUVAR_TUTKAL", 4.0)],                # saat / m²; kg / m² (gazbeton tutkalı)
+    "siva": [_r("SIVA_ISCILIK", 0.7), _r("KOSE_PROFILI", 0.2)],
+    "boya": [_r("BOYA_ISCILIK", 0.3)],
+    "cam": [_r("CAM_MONTAJ", 0.5)],
+    "tava": [_r("TAVA_MONTAJ", 0.4), _r("TAVA_ASKI", 0.6), _r("TAVA_EK", 0.35)],
+    "kablo": [_r("KABLO_CEKME", 0.05)],
+    "boru": [_r("BORU_MONTAJ_ELK", 0.1)],
+    "armatur": [_r("ARMATUR_MONTAJ", 0.5), _r("BUAT", 1.0)],
     "pencere": [{"code": "LENTO", "factor": 1.0, "spec": "", "times": ""}, {"code": "DOGRAMA_MONTAJ", "factor": 1.0, "spec": "", "times": ""},
                 {"code": "MONTAJ_KOPUGU", "factor": 1.0, "spec": "", "times": ""}],
     "kapi": [{"code": "LENTO", "factor": 1.0, "spec": "", "times": ""}, {"code": "DOGRAMA_MONTAJ", "factor": 1.5, "spec": "", "times": ""},
