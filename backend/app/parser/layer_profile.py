@@ -65,6 +65,31 @@ AUX_TYPES: dict[str, str] = {"hole": "Döşeme boşluğu"}
 ALL_TYPES = {**ALL_ELEMENT_TYPES, **AUX_TYPES}
 
 
+# KSF-STA kalem kodu -> statik eleman tipi (beton / kalıp / demir motoru); "_ON" (ön boyut), "_KESIN" ekleri atılır
+KSF_STRUCTURAL: dict[str, str] = {"KOLON": "column", "KIRIS": "beam", "PERDE": "shear_wall", "DOSEME": "slab",
+                                  "TEMEL": "foundation", "RADYE": "foundation", "SUREKLI_TEMEL": "foundation", "TEKIL_TEMEL": "foundation"}
+_KSF_CODE_SUFFIXES = ("_ON", "_KESIN", "_TASLAK", "_REV")
+
+
+def ksf_structural_type(code: str) -> str | None:
+    c = (code or "").upper()
+    for suf in _KSF_CODE_SUFFIXES:
+        if c.endswith(suf):
+            c = c[: -len(suf)]
+    return KSF_STRUCTURAL.get(c)
+
+
+def ksf_spec_dims(spec: str | None) -> list[float]:
+    """'40x40x300' -> [0.40, 0.40, 3.00] (cm -> m); '20' -> [0.20]."""
+    out = []
+    for n in re.findall(r"\d+(?:[.,]\d+)?", spec or ""):
+        try:
+            out.append(float(n.replace(",", ".")) / 100.0)
+        except ValueError:
+            pass
+    return out
+
+
 def types_for(discipline: str) -> dict[str, str]:
     """Katman eşlemede seçilebilen tipler: disiplinin elemanları (+ statikte döşeme boşluğu). Standart çizimde eşleme yok."""
     if discipline in (STANDARD_DISCIPLINE, REBAR_DISCIPLINE, MAPPED_DISCIPLINE):
@@ -125,6 +150,7 @@ IGNORE_PATTERNS = [
     r"\bLGP",  # LGP-SLAB: döşeme etiketi çerçeve kutuları (döşeme çokgeni değil)
     r"KES[Iİ]K",  # kesik/gizli çizgi kopyaları (KM Temel Kesik: radye sınırının ofsetli kopyası)
     r"G[Iİ]ZL[Iİ]", r"\bHIDE", r"HIDDEN",  # gizli / görünmez yardımcı katmanlar (HB-GIZLI-DATA gibi yazı katmanları)
+    r"^REF[-_]", r"METRAJ[-_ ]?DISI", r"^SEMA[-_]",  # referans görünüş / şema katmanları (REF_MIM_GORUNUS, SEMA_METRAJ_DISI): ölçülmez
 ]
 # Mimari paftada duvarlar çoğu zaman tarama (hatch) ile çizilir; bu desenler mimaride yok sayılmaz
 ARCH_KEEP = {r"TARAMA", r"HATCH"}

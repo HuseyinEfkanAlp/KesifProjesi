@@ -125,12 +125,16 @@ def measure_layer(drawing: Drawing, layer: str, code: str, item, measure: str | 
     return elements, warnings
 
 
-def detect_standard(drawing: Drawing, catalog: Catalog, params: DetectParams) -> tuple[list[DetectedElement], list[str]]:
+def detect_standard(drawing: Drawing, catalog: Catalog, params: DetectParams,
+                    skip_layers: set[str] | None = None) -> tuple[list[DetectedElement], list[str]]:
+    """skip_layers: başka yolla (statik motor) ölçülen KSF katmanları."""
     parsed = standard_layers(drawing, catalog)
     elements: list[DetectedElement] = []
     warnings: list[str] = []
     unknown: list[str] = []
     for layer, p in parsed.items():
+        if skip_layers and layer in skip_layers:
+            continue
         if p.item is None:
             unknown.append(layer)
         els, w = measure_layer(drawing, layer, p.code, p.item, p.item.measure if p.item else None, p.spec, params,

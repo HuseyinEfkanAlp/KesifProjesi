@@ -24,7 +24,7 @@ from .detectors.standard import detect_mapped, detect_standard, standard_layers
 from .detectors.walls import detect_walls
 from .geometry import polygon_area
 from .layer_profile import (ALL_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, MAPPED_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE,
-                            LayerProfile, types_for)
+                            STRUCTURAL_TYPES, LayerProfile, ksf_spec_dims, ksf_structural_type, types_for)
 from .levels import parse_levels
 from .rebar_tables import kot_from_label, parse_rebar_labels, parse_rebar_tables, target_from_label
 from .loader import UNIT_SCALE, Drawing, load_dxf
@@ -70,6 +70,7 @@ class AnalysisResult:
     disciplines: list[str] = field(default_factory=list)      # bu paftada çalıştırılan sezgisel disiplinler (ana + ek)
     levels: list[float] = field(default_factory=list)          # kot yazılarından seviyeler (mutlak sistem; parser/levels.py)
     kot: float | None = None                                   # bu paftanın kat kotu (etiket ya da "… KOTU" yazısı)
+    ksf_height: float | None = None                            # KSF kolon / perde katman adındaki kat yüksekliği (40x40x300 -> 3,00 m)
     discipline_hints: dict = field(default_factory=dict)      # çalıştırılmayan ama katmanlarında kanıt olan disiplinler -> nesne sayısı
 
     def by_type(self, etype: str) -> list[DetectedElement]:
@@ -322,6 +323,29 @@ def schedule_elements(drawing: Drawing, catalog: Catalog | None, label: str = ""
     return els, [f"Doğrama poz listesi okundu: {len(rows)} poz, {total} adet (" + ", ".join(f"{r.poz} {r.count}" for r in rows[:8]) + ("…" if len(rows) > 8 else "") + ")"]
 
 
+def _centerline_elements(drawing: Drawing, layer: str, etype: str, dims: list[float]) -> list[DetectedElement]:
+    """Tek eksen çizgisiyle çizilmiş KSF kiriş (b×h) / perde (kalınlık): her çizgi bir eleman, kesit katman adından."""
+    from .detectors.base import _rect_from_centerline
+    from .geometry import polyline_length
+    out: list[DetectedElement] = []
+    b = dims[0]
+    for e in drawing.entities:
+        if e.layer != layer or e.kind not in ("line", "polyline") or len(e.points) < 2:
+            continue
+        L = polyline_length(e.points)
+        if L < 0.3:
+            continue
+        rect = _rect_from_centerline(e.points[0], e.points[-1], b)
+        el = DetectedElement(etype=etype, layer=layer, points=rect, area=b * L, perimeter=2 * (b + L), length=L, b=b,
+                             source="CENTERLINE", handle=e.handle, confidence=0.95, label_raw=f"KSF {layer.split('-')[-1]}")
+        if etype == "beam" and len(dims) >= 2:
+            el.h = dims[1]
+        elif etype == "shear_wall":
+            el.h = L
+        out.append(el)
+    return out
+
+
 def _unit_only_result(drawing: Drawing, discipline: str, suggested: str) -> AnalysisResult:
     """Birim yanlış: dedektörler çalıştırılmadan yalnız birim önerisi döner (analyze_file doğru birimle yeniden okur)."""
     r = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected, discipline=discipline)
@@ -376,7 +400,7 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
     profile = profile or LayerProfile()
     params = params or DetectParams()
     catalog = catalog or Catalog()
-    if discipline == STANDARD_DISCIPLINE:
+    if discipline == STANDARD_DISCIPLINE and not any(ksf_structural_type(p.code) for p in standard_layers(drawing, catalog).values()):
         result = analyze_standard(drawing, catalog, params)
         result.materials = scan_materials(drawing)
         result.disciplines = [STANDARD_DISCIPLINE]
@@ -388,19 +412,34 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
         result.materials = scan_materials(drawing)
         result.disciplines = [REBAR_DISCIPLINE]
         return result
-    discipline = discipline if discipline in DISCIPLINE_RUNNERS else DEFAULT_DISCIPLINE
-    discs = [discipline] + [d for d in extra_disciplines if d in DISCIPLINE_RUNNERS and d != discipline and d not in ()]
+    is_std = discipline == STANDARD_DISCIPLINE
+    if not is_std:
+        discipline = discipline if discipline in DISCIPLINE_RUNNERS else DEFAULT_DISCIPLINE
+    discs = ([] if is_std else [discipline]) + [d for d in extra_disciplines if d in DISCIPLINE_RUNNERS and d != discipline]
     discs = list(dict.fromkeys(discs))
 
     counts = drawing.layer_counts()
     ksf = standard_layers(drawing, catalog)
     layer_infos: list[LayerInfo] = []
     layers_by_disc: dict[str, dict[str, list[str]]] = {d: {} for d in discs}
+    # KSF-STA kolon / kiriş / perde / döşeme / temel katmanları statik motora gider (beton, kalıp, demir); ölçü katman adından
+    ksf_struct: dict[str, list[str]] = {}
+    ksf_dims: dict[str, tuple[str, list[float]]] = {}
     for name in drawing.layers:
         if name in ksf:
             p = ksf[name]
+            st = ksf_structural_type(p.code) if p.discipline == "STA" else None
+            if st:
+                ksf_struct.setdefault(st, []).append(name)
+                ksf_dims[name] = (st, ksf_spec_dims(p.spec))
+                layer_infos.append(LayerInfo(name, counts.get(name, 0), st, etype_label=f"{STRUCTURAL_TYPES[st]} (KSF{' ön boyut' if '_ON' in p.code.upper() else ''})"
+                                             + (f" [{p.spec}]" if p.spec else "")))
+                continue
             lbl = (p.item.name if p.item else p.code) + (f" [{p.spec}]" if p.spec else "") + f" · {catalog.discipline_name(p.discipline)}"
             layer_infos.append(LayerInfo(name, counts.get(name, 0), p.code.lower(), etype_label=lbl))
+            continue
+        if is_std:
+            layer_infos.append(LayerInfo(name, counts.get(name, 0), None))
             continue
         etype = None
         for d in discs:
@@ -409,14 +448,20 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
                 layers_by_disc[d].setdefault(etype, []).append(name)
                 break
         layer_infos.append(LayerInfo(name, counts.get(name, 0), etype))
-    layers_by_type = layers_by_disc[discipline]
+    if ksf_struct:
+        if "structural" not in discs:
+            discs.append("structural")
+            layers_by_disc["structural"] = {}
+        for st, names in ksf_struct.items():
+            layers_by_disc["structural"].setdefault(st, []).extend(names)
+    layers_by_type = layers_by_disc.get(discipline, {})
 
     result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
                             discipline=discipline, layers=layer_infos, warnings=list(drawing.warnings),
                             materials=scan_materials(drawing), disciplines=list(discs))
     result._catalog = catalog   # mekanik dedektörü kalem kodlarını katalogdan doğrular
 
-    if discipline == "structural":
+    if discipline == "structural" or (is_std and ksf_struct):
         suggested = check_unit_against_labels(drawing, profile, params)
         if suggested and suggested != drawing.unit:
             result.suggested_unit = suggested
@@ -439,12 +484,45 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
     result.elements = []
     for d in discs:
         result.elements += DISCIPLINE_RUNNERS[d](drawing, layers_by_disc[d], params, result)
+    if ksf_dims:
+        # KSF kiriş / perde katmanı tek eksen çizgisiyle çizilmişse (çift çizgi / çokgen yok): çizgiler kesiti katman adından alan elemanlar
+        found_layers = {e.layer for e in result.elements}
+        for layer, (st, dims) in ksf_dims.items():
+            if st in ("beam", "shear_wall") and layer not in found_layers and dims:
+                result.elements += _centerline_elements(drawing, layer, st, dims)
+        heights = [dims[2] for st, dims in ksf_dims.values() if st in ("column", "shear_wall") and len(dims) >= 3 and 2.0 <= dims[2] <= 8.0]
+        if heights:
+            result.ksf_height = round(sorted(heights)[len(heights) // 2], 2)
+        # KSF katman adındaki ölçü (40x40x300, 30x60, 20) çizimden okunan kesitin yerine geçer
+        n_fix = 0
+        for el in result.elements:
+            spec = ksf_dims.get(el.layer)
+            if not spec:
+                continue
+            st, dims = spec
+            if el.etype == "column" and len(dims) >= 2:
+                el.b, el.h = min(dims[0], dims[1]), max(dims[0], dims[1])
+            elif el.etype == "beam" and len(dims) >= 2:
+                el.b, el.h = dims[0], dims[1]
+            elif el.etype == "shear_wall" and dims:
+                el.b = dims[0]
+            elif el.etype in ("slab", "foundation") and dims:
+                el.thickness = dims[0]
+            else:
+                continue
+            el.confidence = max(el.confidence, 0.95)
+            el.warnings = [w for w in el.warnings if "Etiket" not in w and "etiket" not in w]
+            el.label_raw = el.label_raw or f"KSF {el.layer.split('-')[-1]}"
+            n_fix += 1
+        if n_fix:
+            result.warnings.append(f"KSF statik katmanları: {n_fix} elemanın kesiti / kalınlığı katman adından alındı "
+                                   f"({', '.join(sorted({STRUCTURAL_TYPES[s] for s, _ in ksf_dims.values()}))}).")
     if ksf:
-        # standarda uygun katmanlar (KSF-…) hangi disiplinde olursa olsun katalog kuralıyla ölçülür
-        std_elements, std_warns = detect_standard(drawing, catalog, params)
+        # standarda uygun katmanlar (KSF-…) hangi disiplinde olursa olsun katalog kuralıyla ölçülür (statik katmanlar hariç)
+        std_elements, std_warns = detect_standard(drawing, catalog, params, skip_layers=set(ksf_dims))
         result.elements += std_elements
         result.warnings.extend(std_warns)
-        result.warnings.append(f"KÇS katmanları okundu: {len(ksf)} katman, {len(std_elements)} kalem (katalog ölçüm kuralıyla)")
+        result.warnings.append(f"KÇS katmanları okundu: {len(ksf)} katman, {len(std_elements) + sum(1 for e in result.elements if e.layer in ksf_dims)} kalem")
     if "architectural" in discs:
         sched, sw = schedule_elements(drawing, catalog)
         result.elements += sched
@@ -454,7 +532,7 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
             result.warnings.append(f"Mahal alanı yazıları okundu: {len(result.rooms)} mahal, "
                                    f"{sum(r['area_m2'] for r in result.rooms):,.0f} m² (şap / kaplama mahal bazında türetilir)")
 
-    result.discipline_hints = discipline_hints(drawing, profile, discs)
+    result.discipline_hints = {} if is_std else discipline_hints(drawing, profile, discs)
     for d, n in result.discipline_hints.items():
         note = " (mimari paftadaki kolon / kiriş izleri statik planda sayılır; ayrıca açmayın)" if d == "structural" else ""
         result.warnings.append(f"Bu paftada {DISCIPLINES.get(d, d)} katmanları da var ({n} nesne): aynı paftada birden çok disiplin "

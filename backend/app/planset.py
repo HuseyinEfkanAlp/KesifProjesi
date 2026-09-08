@@ -58,7 +58,7 @@ PLAN_TYPES: list[PlanType] = [
     PlanType("sta_temel_donati", "STA", "Temel donatı planı", "rebar",
              pattern=r"(TEMEL|RADYE).*DONATI|DONATI.*(TEMEL|RADYE)", hint="Temel demir metraj tablosu buradan okunur."),
     PlanType("sta_temel_kalip", "STA", "Temel kalıp planı", "structural",
-             pattern=r"(TEMEL|RADYE).*(KALIP|PLAN)|KALIP.*(TEMEL|RADYE)", exclude="DETAY|KESIT",
+             pattern=r"(TEMEL|RADYE).*(KALIP|PLAN)|KALIP.*(TEMEL|RADYE)|^STA[-_ ]?TEM(EL)?$|\bSTA[-_ ]TEM\b", exclude="DETAY|KESIT",
              hint="Radye / sürekli temel betonu ve kalıbı."),
     PlanType("elk_kolon_sema", "ELK", "Elektrik kolon şeması", "mapped", level=OPTIONAL, analyze=False,
              pattern=r"KOLON\s*SEMA|TEK\s*HAT\s*SEMA"),
@@ -74,7 +74,7 @@ PLAN_TYPES: list[PlanType] = [
     PlanType("sta_doseme_donati", "STA", "Döşeme (kat) donatı planı", "rebar",
              pattern=r"DONATI", hint="Döşeme alt / üst demir metraj tablosu."),
     PlanType("sta_kat_kalip", "STA", "Kat kalıp planları", "structural",
-             pattern=r"KALIP", exclude="DETAY(?!L)|KESIT", hint="Kolon, perde, kiriş, döşeme: beton m³, kalıp m²."),
+             pattern=r"KALIP|^STA[-_ ]?\d{1,2}$|\bSTA[-_ ]\d{1,2}\b", exclude="DETAY(?!L)|KESIT", hint="Kolon, perde, kiriş, döşeme: beton m³, kalıp m²."),
     # --- Elektrik
     PlanType("elk_tava", "ELK", "Elektrik kablo tava planı", "electrical",
              pattern=r"\bTAVA(SI|LARI)?\b|KABLO\s*TAVA|KABLO\s*TASIMA", hint="Tava m (boyut bazında), kablo m."),
@@ -88,25 +88,25 @@ PLAN_TYPES: list[PlanType] = [
     PlanType("elk_kuvvet", "ELK", "Kuvvet / priz planı", "electrical",
              pattern=r"KUVVET|PRIZ|GUC\s*PLAN", hint="Priz adedi, kuvvet hatları."),
     PlanType("elk_genel", "ELK", "Elektrik tesisat planı (genel)", "electrical", level=OPTIONAL,
-             pattern=r"ELEKTRIK", satisfies=("elk_aydinlatma", "elk_kuvvet"),
+             pattern=r"ELEKTRIK|^ELK[-_ ]|\bELK[-_ ]?\d", satisfies=("elk_aydinlatma", "elk_kuvvet"),
              hint="Aydınlatma ve kuvvet tek paftadaysa bu tip ikisini de karşılar."),
     # --- Mekanik
     PlanType("mek_yangin", "MEK", "Yangın tesisatı (sprinkler / dolap) planı", "mechanical",
-             pattern=r"SPRINK|YANGIN|HIDRANT|SONDURME", hint="Yangın borusu m (çap), sprinkler / dolap adet; KSF katmanlıysa 'KSF standart'."),
+             pattern=r"SPRINK|YANGIN|HIDRANT|SONDURME|^YAN[-_ ]|\bYAN[-_ ]?\d", hint="Yangın borusu m (çap), sprinkler / dolap adet; KSF katmanlıysa 'KSF standart'."),
     PlanType("mek_hav", "MEK", "Havalandırma planı", "mechanical",
-             pattern=r"HAVALANDIRMA|HAVA\s*KANAL|EGZOZ|KLIMA\s*SANTRAL", hint="Kanal m (boyut bazında), menfez / fan adet."),
+             pattern=r"HAVALANDIRMA|HAVA\s*KANAL|EGZOZ|KLIMA\s*SANTRAL|^HAV[-_ ]|\bHAV[-_ ]?\d", hint="Kanal m (boyut bazında), menfez / fan adet."),
     PlanType("mek_isitma", "MEK", "Isıtma / soğutma planı", "mechanical",
-             pattern=r"ISITMA|SOGUTMA|KLIMA|RADYATOR|FANCOIL|\bVRF\b|\bVRV\b|KAZAN|CHILLER|MEKANIK",
+             pattern=r"ISITMA|SOGUTMA|KLIMA|RADYATOR|FANCOIL|\bVRF\b|\bVRV\b|KAZAN|CHILLER|MEKANIK|^MEK[-_ ]|\bMEK[-_ ]?\d",
              hint="Boru m (çap bazında), cihaz adet."),
     PlanType("mek_sihhi", "MEK", "Sıhhi tesisat planı", "mechanical",
-             pattern=r"SIHHI|TEMIZ\s*SU|PIS\s*SU|ATIK\s*SU|KULLANMA\s*SUYU|VITRIFIYE|TESISAT", exclude="ELEKTRIK",
+             pattern=r"SIHHI|TEMIZ\s*SU|PIS\s*SU|ATIK\s*SU|KULLANMA\s*SUYU|VITRIFIYE|TESISAT|^SIH[-_ ]|\bSIH[-_ ]?\d", exclude="ELEKTRIK",
              hint="Temiz / pis su boruları (çap bazında), vitrifiye adet."),
     # --- Altyapı / peyzaj / asansör
     PlanType("alt_altyapi", "ALT", "Altyapı planı", "mapped",
-             pattern=r"ALTYAPI|ALT\s*YAPI|KANALIZASYON|YAGMUR\s*SUYU|ICME\s*SUYU|DRENAJ|ROGAR|SAHA\s*TESISAT|DIS\s*TESISAT",
+             pattern=r"ALTYAPI|ALT\s*YAPI|KANALIZASYON|YAGMUR\s*SUYU|ICME\s*SUYU|DRENAJ|ROGAR|SAHA\s*TESISAT|DIS\s*TESISAT|^ALT[-_ ]|\bALT[-_ ]?\d",
              hint="Kanalizasyon, yağmur suyu, içme suyu hatları; rögar adet."),
     PlanType("pey_peyzaj", "PEY", "Peyzaj planı", "mapped",
-             pattern=r"PEYZAJ|BITKI|SERT\s*ZEMIN|CEVRE\s*DUZEN", hint="Sert zemin m², bitki adet."),
+             pattern=r"PEYZAJ|BITKI|SERT\s*ZEMIN|CEVRE\s*DUZEN|^PEY[-_ ]|\bPEY[-_ ]?\d", hint="Sert zemin m², bitki adet."),
     PlanType("asn_asansor", "ASN", "Asansör planı", "mapped", level=OPTIONAL, pattern=r"ASANSOR"),
     # --- Mimari (özel olanlar önce, genel kat planı en sonda)
     PlanType("mim_vaziyet", "MIM", "Vaziyet planı", "mapped", level=OPTIONAL, pattern=r"VAZIYET"),
@@ -116,14 +116,14 @@ PLAN_TYPES: list[PlanType] = [
              pattern=r"DOSEME|KAPLAMA|ZEMIN\s*KAPLAMA", exclude=r"DUVAR\s*KAPLAMA",
              hint="Zemin kaplaması m² (seramik, parke, epoksi...)."),
     PlanType("mim_cati", "MIM", "Çatı planı", "mapped",
-             pattern=r"CATI", exclude=r"CATI\s*KAT", hint="Çatı örtüsü m², oluk / dere m."),
+             pattern=r"CATI|^CAT[-_ ]|\bCAT[-_ ]?\d", exclude=r"CATI\s*KAT", hint="Çatı örtüsü m², oluk / dere m."),
     PlanType("mim_cephe", "MIM", "Cephe görünüşleri", "mapped",
-             pattern=r"CEPHE|GORUNUS", hint="Cephe kaplaması / mantolama / boya m², doğrama."),
+             pattern=r"CEPHE|GORUNUS|^CEP[-_ ]|\bCEP[-_ ]?\d", hint="Cephe kaplaması / mantolama / boya m², doğrama."),
     PlanType("mim_kesit", "MIM", "Kesitler", "mapped", level=OPTIONAL, analyze=False, pattern=r"KESIT"),
     PlanType("mim_detay", "MIM", "Kapı / pencere / merdiven detayları", "mapped", level=OPTIONAL, analyze=False,
              pattern=r"(KAPI|PENCERE|DOGRAMA|MERDIVEN|ISLAK\s*HACIM|BANYO|WC).*DETAY|DETAY"),
     PlanType("mim_kat_plani", "MIM", "Mimari kat planları", "architectural",
-             pattern=r"KAT\s*PLAN|MIMARI|\bPLAN",
+             pattern=r"KAT\s*PLAN|MIMARI|\bPLAN|^MIM[-_ ]|\bMIM[-_ ]?\d",
              hint="Duvar m² (malzeme bazında), sıva, boya, kapı / pencere adet."),
 ]
 
@@ -170,7 +170,23 @@ def discipline_for(plan_type: str | None, fallback: str = "structural") -> str:
 WEAK_TYPES = {"mim_kat_plani"}
 # Katmanlardan tanınan disiplin için varsayılan plan tipi
 DEFAULT_TYPE_FOR_DISCIPLINE = {"structural": "sta_kat_kalip", "architectural": "mim_kat_plani",
-                               "electrical": "elk_genel", "standard": ""}
+                               "electrical": "elk_genel", "mechanical": "mek_isitma", "standard": ""}
+# KSF katmanlı paftada baskın KSF disiplini -> plan tipi (başlık ve dosya adından tanınamazsa)
+KSF_DEFAULT_TYPE = {"STA": "sta_kat_kalip", "MIM": "mim_kat_plani", "INC": "mim_doseme_kaplama", "CEP": "mim_cephe", "CAT": "mim_cati",
+                    "IZO": "mim_cati", "ELK": "elk_genel", "ZAY": "elk_zayif", "MEK": "mek_isitma", "HAV": "mek_hav", "YAN": "mek_yangin",
+                    "SIH": "mek_sihhi", "ALT": "alt_altyapi", "PEY": "pey_peyzaj", "ASN": "asn_asansor"}
+
+
+def ksf_plan_type(layers: dict[str, int] | None) -> str:
+    """KSF-… katmanlarının disiplin kodlarından baskın olanın varsayılan plan tipi ('' yoksa)."""
+    hits: dict[str, int] = {}
+    for name, n in (layers or {}).items():
+        m = re.match(r"KSF[-_]([A-Z]{3})[-_]", (name or "").upper())
+        if m and n > 0:
+            hits[m.group(1)] = hits.get(m.group(1), 0) + n
+    if not hits:
+        return ""
+    return KSF_DEFAULT_TYPE.get(max(hits, key=hits.get), "")
 MIN_LAYER_HITS = 8
 MIN_LAYER_SHARE = 0.6
 
@@ -212,10 +228,12 @@ def resolve_plan(titles: list[str], layers: dict[str, int] | None = None, explic
     code = found.code if found else ""
     # "… KAT PLANI" açıkça mimari kat planıdır (statik ofis "KALIP PLANI" yazar); yalnız genel "PLAN" eşleşmesi zayıftır
     strong_arch = any(re.search(r"KAT\s*PLAN|MIMARI", normalize_title(t)) for t in titles if t)
+    if found is not None and discipline_from_layers(layers) == "standard":
+        return code, "standard"          # KSF katmanlı pafta: plan tipi başlıktan, analiz standart kuralla
     if found is None or (found.code in WEAK_TYPES and not strong_arch):
         ld = discipline_from_layers(layers)
         if ld and (found is None or found.discipline != ld):
-            code = DEFAULT_TYPE_FOR_DISCIPLINE.get(ld, "")
+            code = DEFAULT_TYPE_FOR_DISCIPLINE.get(ld, "") or (ksf_plan_type(layers) if ld == "standard" else "")
             return code, ld
     return code, (discipline_for(code) if code else "")   # tanınmadı: disiplin boş (çağıran varsayılanı seçer)
 

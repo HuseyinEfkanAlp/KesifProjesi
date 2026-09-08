@@ -149,8 +149,11 @@ def floor_rank(label: str) -> float | None:
     n = normalize_title(label or "")
     if not n:
         return None
-    if "TEMEL" in n:
+    if "TEMEL" in n or re.search(r"\bTEM\b", n):
         return -100
+    m = re.search(r"\b[A-Z]{2,4}[-_ ](\d{1,2})\b", n)     # STA-03, MIM-00: dosya adındaki kat numarası
+    if m and not re.search(r"\d\s*\.\s*(KAT|NORMAL)", n):
+        return int(m.group(1))
     m = re.search(r"(\d+)\s*\.?\s*BODRUM", n)
     if m:
         return -int(m.group(1))

@@ -354,7 +354,7 @@ def drawings_from_source(project_id: int, body: FromSourceIn, session: Session =
                 dest.unlink(missing_ok=True)
                 continue
             disc, ptype = _resolve(_check_discipline(pick.discipline or discipline, allow_auto=True), pick.plan_type,
-                                   [sheet.title, *sheet.titles], sheet.layers)
+                                   [sheet.title if sheet.titled else "", *sheet.titles, Path(orig).stem], sheet.layers)
             created.append(_create_drawing(project, dest, f"{orig} › {sheet.title}", pick.label or sheet.title,
                                            pick.storey_count, body.unit_override, session,
                                            storey_height=pick.storey_height, discipline=disc, plan_type=ptype))

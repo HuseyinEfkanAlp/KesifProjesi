@@ -116,6 +116,9 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.discipline_hints = result.discipline_hints or {}
     drawing.levels = [float(v) for v in (result.levels or [])]
     drawing.kot = result.kot
+    if result.ksf_height and not drawing.storey_height:
+        drawing.storey_height = result.ksf_height      # KSF katman adındaki kat yüksekliği (KOLON-40x40x300 -> 3,00 m)
+        result.warnings.append(f"Kat yüksekliği KSF katman adından alındı: {result.ksf_height:g} m")
     drawing.analyzed_at = datetime.utcnow()
     session.add(drawing)
     session.commit()

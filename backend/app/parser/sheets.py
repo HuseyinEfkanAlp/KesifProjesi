@@ -102,7 +102,9 @@ class SheetScan:
 
     @property
     def multi_sheet(self) -> bool:
-        return len(self.sheets) >= 2
+        """Pafta seçimi gerektirir mi: en az iki **başlıklı** pafta. Başlıksız kümeler (plan + görünüş + notlar yan yana
+        tek pafta) bölünmez; tek çizim olarak alınır."""
+        return sum(1 for s in self.sheets if s.titled) >= 2
 
     @property
     def unit(self) -> str | None:

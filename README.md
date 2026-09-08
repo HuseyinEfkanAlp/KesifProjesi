@@ -428,6 +428,20 @@ Standart dışı tesisat paftaları da KÇS katmanı ya da elle eşleme olmadan 
   `mek_yangin / mek_hav / mek_isitma / mek_sihhi` bu disipline gider; mimari paftadaki tesisat katmanları "+ Mekanik" ek
   disipliniyle açılır (B2 Blok'ta `-ST-Soğuksu`, `-0-Kolon Pissu`, `-HT-Kanal Egzost`, `brn_vitrifiye` böyle tanınır).
 
+## KÇS statik paftaları ve başlıksız dosyalar (8 Eyl 2026, "Örnek Proje" STA-00…07 / STA-TEM)
+
+- `KSF-STA-KOLON-40x40x300`, `KIRIS-30x60`, `PERDE-25x300`, `DOSEME-20`, `TEMEL / RADYE` katmanları **statik motora** gider
+  (beton, kalıp, demir; `layer_profile.KSF_STRUCTURAL`): kesit / kalınlık katman adından, güven 0,95; `_ON` (ön boyut),
+  `_KESIN` ekleri atılır. Kiriş / perde tek eksen çizgisiyle çizilmişse çizgiler kesiti katman adından alan elemanlardır
+  (`analyzer._centerline_elements`). Üçüncü sayı (300) kat yüksekliğidir: çizime H olarak yazılır.
+- `REF_…`, `SEMA_…`, `…METRAJ_DISI` katmanları (referans görünüş, şema) hiçbir disiplinde ölçülmez.
+- **Başlıksız dosya paftaya bölünmez**: pafta seçimi yalnız en az iki başlıklı pafta varsa (ya da dosya 40 MB üstüyse) sorulur;
+  plan + görünüş + notlar yan yana duran tek blok planı tek çizimdir (`SheetScan.multi_sheet`).
+- Plan tipi dosya adındaki kısa kodlardan da tanınır: `STA-TEM` temel kalıp, `STA-03` kat kalıp, `MIM-01`, `ELK-02`, `MEK-00`,
+  `HAV`, `SIH`, `YAN`, `ALT`, `PEY`, `CAT`, `CEP`; kat sırası dosya adındaki sayıdan (`STA-03` → 3. kat). Başlık ve dosya adı
+  tanınmazsa KSF katmanlarının baskın disiplini plan tipini verir (`planset.ksf_plan_type`); KSF katmanlı paftada disiplin
+  "standart"tır.
+
 ## Kat yüksekliği kotlardan (`parser/levels.py`, `services.storey_heights`)
 
 Planlarda ve kesitlerde kot yazıları iki sistemde olabilir: parantez dışı yapı sıfırı, parantez içi mutlak ("-4.15 (+0.00)",
