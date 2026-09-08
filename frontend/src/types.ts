@@ -382,6 +382,8 @@ export interface QuantitiesResponse {
   lines: QuantityLine[]
   boq: Boq
   params: { storey_height: number; slab_thickness: number } & ProjectParams
+  /** Kot yazılarından türeyen kat seviyeleri ve etkin kat yüksekliği (H girilmemişse bunlar kullanılır) */
+  levels?: { levels: number[]; heights: number[]; effective: number; source: string; per_drawing: Record<string, { height: number; source: string; kot: number | null }> }
 }
 
 export interface PriceItem {

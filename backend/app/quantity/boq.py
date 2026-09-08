@@ -223,7 +223,8 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
     for d in drawings:
         mult = int(d.get("storey_count") or 1)
         wall_h = params.get("wall_height") or max((d.get("storey_height") or 3.0) - (d.get("slab_thickness") or 0.0), 0.0)
-        h_note = None if (params.get("wall_height") or d.get("storey_height")) else "Kat yüksekliği girilmedi; duvar yüksekliği 3.0 m varsayıldı"
+        src = str(d.get("height_source") or "")
+        h_note = None if params.get("wall_height") or src in ("", "parametre", "çizime girildi") else f"Kat yüksekliği {d.get('storey_height'):g} m: {src}"
         elements = [e for e in d["elements"] if _g(e, "etype") in ("wall", "door", "window")]
         wall_groups: dict[str, float] = {}      # anahtar -> brüt alan (tek kat)
         wall_labels: dict[str, str] = {}

@@ -106,11 +106,76 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.poz = result.poz or {}
     drawing.unit_verdict = result.unit_verdict
     drawing.discipline_hints = result.discipline_hints or {}
+    drawing.levels = [float(v) for v in (result.levels or [])]
+    drawing.kot = result.kot
     drawing.analyzed_at = datetime.utcnow()
     session.add(drawing)
     session.commit()
     session.refresh(drawing)
     return drawing
+
+
+DEFAULT_STOREY_HEIGHT = 3.0
+
+
+def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
+    """Her çizim için kat yüksekliği ve kaynağı; proje için etkin kat yüksekliği.
+
+    Sıra: çizime elle girilen > çizimin kotu ile bir üst kat seviyesi arasındaki fark (kotlar planlardaki / kesitlerdeki kot
+    yazılarından) > plan adına göre kat sırası (bodrum, zemin, birinci…) ile seviye dizisi > projeye girilen H > kat
+    seviyelerinin medyan farkı > 3,0 m varsayılan."""
+    from .parser.levels import floor_levels, floor_rank
+    all_levels = [float(v) for d in drawings for v in (d.levels or [])]
+    for d in drawings:
+        if d.kot is not None:
+            all_levels.append(float(d.kot))
+    floors = floor_levels(all_levels)
+    diffs = [round(b - a, 2) for a, b in zip(floors, floors[1:])]
+    med = round(sorted(diffs)[len(diffs) // 2], 2) if diffs else None
+    if project.storey_height and project.storey_height > 0:
+        effective, source = float(project.storey_height), "parametre"
+    elif med:
+        effective, source = med, "kotlardan (medyan kat farkı)"
+    else:
+        effective, source = DEFAULT_STOREY_HEIGHT, "varsayılan"
+
+    def above(level: float) -> float | None:
+        ups = [f for f in floors if f > level + 0.5]
+        return ups[0] if ups else None
+
+    per: dict[int, dict] = {}
+    ranked = []
+    for d in drawings:
+        if d.storey_height and d.storey_height > 0:
+            per[d.id] = {"height": float(d.storey_height), "source": "çizime girildi", "kot": d.kot}
+            continue
+        if d.kot is not None:
+            nxt = above(float(d.kot))
+            if nxt is not None:
+                per[d.id] = {"height": round(nxt - float(d.kot), 2), "source": f"kot {d.kot:+.2f} → {nxt:+.2f}", "kot": d.kot}
+                continue
+        r = floor_rank(d.label or d.filename)
+        if r is not None and d.discipline in (DEFAULT_DISCIPLINE, "architectural", "electrical", "mechanical"):
+            ranked.append((r, d))
+        else:
+            per[d.id] = {"height": effective, "source": source, "kot": d.kot}
+    # kotu olmayan planlar: kat sırasına göre seviye dizisine oturtulur (aynı sıradaki planlar aynı seviyeyi alır)
+    ranked.sort(key=lambda t: t[0])
+    distinct = sorted({r for r, _ in ranked})
+    rank_level = {r: floors[i] for i, r in enumerate(distinct) if i < len(floors)}
+    for r, d in ranked:
+        lvl = rank_level.get(r)
+        nxt = above(lvl) if lvl is not None else None
+        if lvl is not None and nxt is not None:
+            per[d.id] = {"height": round(nxt - lvl, 2), "source": f"kat sırası → kot {lvl:+.2f} → {nxt:+.2f}", "kot": lvl}
+        else:
+            per[d.id] = {"height": effective, "source": source, "kot": lvl}
+    return {"levels": floors, "heights": diffs, "effective": effective, "source": source, "per_drawing": per}
+
+
+def storey_height_of(project: Project, d: Drawing, sh: dict | None = None) -> float:
+    sh = sh or storey_heights(project, [d])
+    return float(sh["per_drawing"].get(d.id, {}).get("height") or sh["effective"])
 
 
 def recompute_derived(el: Element) -> None:
@@ -173,6 +238,7 @@ def project_quantities(project: Project, session: Session) -> tuple[list[Quantit
     """Statik metraj: (satırlar, özet, element_info) döndürür. Yalnızca statik eleman tipleri girer;
     donatı paftalarındaki tablolar demiri çap bazında verir ve ilgili eleman tipinin oran tahminini geçersiz kılar."""
     drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    sh = storey_heights(project, drawings)
     lines: list[QuantityLine] = []
     info: dict = {}
     for d in drawings:
@@ -182,7 +248,7 @@ def project_quantities(project: Project, session: Session) -> tuple[list[Quantit
         if not elements:
             continue
         net_slabs = any(e.etype == "slab" and e.subtype == "net" for e in elements)
-        params = QuantityParams(storey_height=d.storey_height or project.storey_height, slab_thickness=project.slab_thickness,
+        params = QuantityParams(storey_height=storey_height_of(project, d, sh), slab_thickness=project.slab_thickness,
                                 storey_count=d.storey_count, beam_full_height=net_slabs,
                                 beam_depth=dominant_beam_depth(elements),
                                 rebar_ratios={**QuantityParams().rebar_ratios, **(project.rebar_ratios or {})})
@@ -202,6 +268,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     params = project_params(project)
     catalog = load_catalog()
     drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    sh = storey_heights(project, drawings)
     els_by_id = {d.id: _included_elements(d, session) for d in drawings}
     # doğrama pozları: adet poz listesinden (proje toplamı), ölçü görünüş / doğrama paftasından, kapı-pencere ayrımı nottan
     poz_sizes, poz_kinds, sched_poz = {}, {}, set()
@@ -229,7 +296,8 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     for d in drawings:
         elements = els_by_id[d.id]
         entry = {"label": d.label or d.filename, "storey_count": d.storey_count,
-                 "storey_height": d.storey_height or project.storey_height, "slab_thickness": project.slab_thickness,
+                 "storey_height": storey_height_of(project, d, sh), "slab_thickness": project.slab_thickness,
+                 "height_source": sh["per_drawing"].get(d.id, {}).get("source", sh["source"]),
                  "elements": [ksf_entry(e) for e in elements]}
         if d.discipline in (STANDARD_DISCIPLINE, MAPPED_DISCIPLINE):
             std.append(entry)
@@ -256,7 +324,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
         if systems["systems"]:
             items = expand_systems(items, systems["systems"], catalog)
         off = {x.strip() for x in str(params.get("derived_off") or "").split(",") if x.strip()}
-        items = expand_recipes(items, catalog, storey_height=project.storey_height, off="recete" in off)
+        items = expand_recipes(items, catalog, storey_height=sh["effective"], off="recete" in off)
     return sort_items(items)
 
 
@@ -509,7 +577,7 @@ def _plan_footprints(project: Project, session: Session, drawings: list[Drawing]
             if fp and fp[0] >= 10:
                 labels_struct.add(kot_from_label(d.label))
                 out.append({"drawing": d.label or d.filename, "drawing_id": d.id, "area": round(fp[0], 2), "perimeter": round(fp[1], 2),
-                            "storey_height": d.storey_height or project.storey_height, "storey_count": d.storey_count,
+                            "storey_height": storey_height_of(project, d), "storey_count": d.storey_count,
                             "basement": "BODRUM" in (d.label or "").upper(), "source": "structural"})
     for d in drawings:
         if d.discipline == "architectural":
@@ -521,7 +589,7 @@ def _plan_footprints(project: Project, session: Session, drawings: list[Drawing]
             fp = building_footprint(els)
             if fp and fp[0] >= 10:
                 out.append({"drawing": d.label or d.filename, "drawing_id": d.id, "area": round(fp[0], 2), "perimeter": round(fp[1], 2),
-                            "storey_height": d.storey_height or project.storey_height, "storey_count": d.storey_count,
+                            "storey_height": storey_height_of(project, d), "storey_count": d.storey_count,
                             "basement": "BODRUM" in (d.label or "").upper(), "source": "architectural"})
     return out
 

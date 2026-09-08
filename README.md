@@ -428,6 +428,17 @@ Standart dışı tesisat paftaları da KÇS katmanı ya da elle eşleme olmadan 
   `mek_yangin / mek_hav / mek_isitma / mek_sihhi` bu disipline gider; mimari paftadaki tesisat katmanları "+ Mekanik" ek
   disipliniyle açılır (B2 Blok'ta `-ST-Soğuksu`, `-0-Kolon Pissu`, `-HT-Kanal Egzost`, `brn_vitrifiye` böyle tanınır).
 
+## Kat yüksekliği kotlardan (`parser/levels.py`, `services.storey_heights`)
+
+Planlarda ve kesitlerde kot yazıları iki sistemde olabilir: parantez dışı yapı sıfırı, parantez içi mutlak ("-4.15 (+0.00)",
+"+0.00 (+4.15 sıfır kotu)", "+11.50(+15.65)"); parantezli yazılardan ofset bulunur, her şey mutlak sisteme çevrilir; hangi
+sistemde olduğu belirsiz çıplak değerler sayılmaz. Birbirine 2 m'den yakın seviyeler (kaplama, peyzaj, asma kat, platform)
+elenir; kalan seviyelerin ardışık farkı kat yüksekliğidir. Her paftanın kotu etiketten ("+7.95 KOTU KALIP PLANI", "15.65 KOTU
+PLANI") ya da "… KOTU" yazısından; kotu olmayan planlar kat sırasıyla (temel, bodrum, zemin, asma, birinci…, çatı) seviye
+dizisine oturtulur. Öncelik: çizime girilen H > paftanın kotu ile üst seviye farkı > kat sırası > projeye girilen H > medyan
+kat farkı > 3,0 m. Proje yanıtında `levels`; keşif notunda kaynak yazar. B2 Blok: 0,00 / 4,15 / 7,95 / 10,65 / 15,65 → 4,15 /
+3,80 / 2,70 / 5,00 m.
+
 ## Otomatik katman eşleme (eşlemeli paftalar) ve kaba yapı türetmeleri
 
 - Tavan, döşeme kaplaması, cephe, çatı, peyzaj, altyapı gibi **eşlemeli** paftalarda katman adından tanınan kalemler

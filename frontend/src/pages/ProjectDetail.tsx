@@ -108,10 +108,17 @@ export default function ProjectDetail() {
       <ProjectNav id={id} name={project.name} />
       {error && <div className="error">{error}</div>}
 
-      {project.storey_height <= 0 && (
+      {project.storey_height <= 0 && project.levels && project.levels.levels.length >= 2 && (
+        <div className="info">
+          <b>Kat yüksekliği çizimdeki kotlardan alındı:</b> {project.levels.effective.toLocaleString('tr-TR')} m ({project.levels.source}).
+          Seviyeler: {project.levels.levels.map((v) => (v >= 0 ? '+' : '') + v.toFixed(2)).join(' · ')}; kat farkları: {project.levels.heights.map((v) => v.toFixed(2)).join(' · ')} m.
+          Her paftanın kendi kotu ile hesaplanır; düzeltmek isterseniz <b>Metraj parametreleri</b>'nden H girin.
+        </div>
+      )}
+      {project.storey_height <= 0 && !(project.levels && project.levels.levels.length >= 2) && (
         <div className="warn">
-          <b>Kat yüksekliği girilmedi.</b> Duvar, sıva ve boya m² için duvar yüksekliği 3,0 m varsayılıyor; <b>Metraj parametreleri</b>'nden
-          kat yüksekliğini (H) ve döşeme kalınlığını (d) girip kaydedin.
+          <b>Kat yüksekliği girilmedi ve çizimlerde kot yazısı bulunamadı.</b> Duvar, sıva, boya ve kalıp iskelesi için 3,0 m varsayılıyor;
+          <b> Metraj parametreleri</b>'nden kat yüksekliğini (H) girin ya da kotlu plan / kesit yükleyin.
         </div>
       )}
       {drawings.length === 0 && (
@@ -285,8 +292,8 @@ export default function ProjectDetail() {
                     </td>
                     <td className="num"><input type="number" min={1} defaultValue={d.storey_count} onBlur={(e) => +e.target.value !== d.storey_count && patchDrawing(d, { storey_count: +e.target.value })} /></td>
                     <td className="num">
-                      <input type="number" step="0.01" placeholder={`proje: ${params.storey_height}`} defaultValue={d.storey_height ?? ''}
-                        title="Boş bırakılırsa projenin kat yüksekliği kullanılır"
+                      <input type="number" step="0.01" placeholder={project.levels?.per_drawing[String(d.id)] ? `${project.levels.per_drawing[String(d.id)].height}` : `proje: ${params.storey_height}`} defaultValue={d.storey_height ?? ''}
+                        title={project.levels?.per_drawing[String(d.id)] ? `Boş: ${project.levels.per_drawing[String(d.id)].height} m (${project.levels.per_drawing[String(d.id)].source})` : 'Boş bırakılırsa projenin kat yüksekliği kullanılır'}
                         onBlur={(e) => { const v = e.target.value ? +e.target.value : null; if (v !== d.storey_height) patchDrawing(d, { storey_height: v }) }} />
                     </td>
                     <td className="num">{d.element_count}</td>

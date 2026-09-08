@@ -41,6 +41,8 @@ _ADDED_COLUMNS = [
     ("drawing", "unit_verdict", "VARCHAR"),
     ("drawing", "disciplines", "JSON"),
     ("drawing", "discipline_hints", "JSON"),
+    ("drawing", "levels", "JSON"),
+    ("drawing", "kot", "FLOAT"),
 ]
 
 

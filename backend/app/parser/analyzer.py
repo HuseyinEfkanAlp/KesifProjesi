@@ -25,6 +25,7 @@ from .detectors.walls import detect_walls
 from .geometry import polygon_area
 from .layer_profile import (ALL_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, MAPPED_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE,
                             LayerProfile, types_for)
+from .levels import parse_levels
 from .rebar_tables import kot_from_label, parse_rebar_labels, parse_rebar_tables, target_from_label
 from .loader import UNIT_SCALE, Drawing, load_dxf
 from .materials import scan_materials
@@ -67,6 +68,8 @@ class AnalysisResult:
     poz: dict = field(default_factory=dict)          # doğrama pozları: sizes / kinds / prefixes (detectors/openings.py: poz_catalog)
     unit_verdict: str | None = None       # yazı yükseklikleri / etiketlerin desteklediği birim (yeterli kanıt yoksa None)
     disciplines: list[str] = field(default_factory=list)      # bu paftada çalıştırılan sezgisel disiplinler (ana + ek)
+    levels: list[float] = field(default_factory=list)          # kot yazılarından seviyeler (mutlak sistem; parser/levels.py)
+    kot: float | None = None                                   # bu paftanın kat kotu (etiket ya da "… KOTU" yazısı)
     discipline_hints: dict = field(default_factory=dict)      # çalıştırılmayan ama katmanlarında kanıt olan disiplinler -> nesne sayısı
 
     def by_type(self, etype: str) -> list[DetectedElement]:
@@ -80,6 +83,7 @@ class AnalysisResult:
             "warnings": self.warnings, "suggested_unit": self.suggested_unit, "materials": self.materials,
             "poz": self.poz, "unit_verdict": self.unit_verdict,
             "disciplines": self.disciplines, "discipline_hints": self.discipline_hints,
+            "levels": self.levels, "kot": self.kot,
         }
 
 
@@ -480,6 +484,8 @@ def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectP
     defer = bool(auto_unit and not unit_override)
     result = analyze_drawing(drawing, profile, params, discipline, catalog, label, defer_on_unit=defer,
                              extra_disciplines=extra_disciplines)
+    scan = parse_levels([e.text for e in drawing.entities if e.kind == "text" and e.text], label)
+    result.levels, result.kot = scan.levels, scan.kot
     if unit_override and result.suggested_unit and result.suggested_unit != drawing.unit:
         # kullanıcı (ya da pafta oylaması) birimi seçti: yazı kanıtı aksini söylese de yeniden okunmaz, yalnız not düşülür
         result.warnings = [w for w in result.warnings if "yazı yükseklikleri" not in w and "kolon etiketleri" not in w]
@@ -489,6 +495,7 @@ def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectP
         drawing2 = load_dxf(path, unit_override=result.suggested_unit)
         warn = [w for w in result.warnings if "kolon etiketleri" in w or "yazı yükseklikleri" in w]
         result = analyze_drawing(drawing2, profile, params, discipline, catalog, label, extra_disciplines=extra_disciplines)
+        result.levels, result.kot = scan.levels, scan.kot
         result.unit_detected = False
         result.unit_verdict = drawing2.unit
         result.warnings = warn + [w for w in result.warnings if "kolon etiketleri" not in w and "yazı yükseklikleri" not in w]

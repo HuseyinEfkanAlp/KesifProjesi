@@ -36,6 +36,9 @@ class Drawing(SQLModel, table=True):
     disciplines: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     # Analizin bulduğu ama açılmamış disiplin kanıtı: {"electrical": 42} (katmanlardaki geometrik nesne sayısı)
     discipline_hints: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    # Kot yazılarından seviyeler (mutlak sistem) ve bu paftanın kat kotu (parser/levels.py) — kat yüksekliği bunlardan türer
+    levels: list[float] = Field(default_factory=list, sa_column=Column(JSON))
+    kot: float | None = None
     plan_type: str = ""             # plan seti tipi (sta_kat_kalip, elk_tava, mim_tavan ...; bkz. planset.py)
     storey_count: int = 1           # bu planın temsil ettiği kat sayısı
     storey_height: float | None = None   # bu katın yüksekliği (m); None -> projenin H değeri
