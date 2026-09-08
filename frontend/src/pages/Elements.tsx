@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Icon from '../components/Icon'
 import Loading from '../components/Loading'
 import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
@@ -25,6 +26,7 @@ export default function Elements() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [filter, setFilter] = useState<EType | ''>('')
+  const [limit, setLimit] = useState(60)
   const svgRef = useRef<HTMLDivElement>(null)
   const [manual, setManual] = useState({ etype: '' as EType | '', name: '', subtype: '', b: 0.3, h: 0.6, length: 0, thickness: 0, area: 0, count: 1 })
   const [catalog, setCatalog] = useState<Catalog | null>(null)
@@ -114,31 +116,36 @@ export default function Elements() {
   const extras = (drawing.disciplines ?? []) as Discipline[]
   const layerTypes = layerTypeLabels(discipline, extras)
   const isElec = discipline === 'electrical'
-  const shown = elements.filter((e) => !filter || e.etype === filter)
+  const filtered = elements.filter((e) => !filter || e.etype === filter)
+  const shown = filtered.slice(0, limit)
   const counts = ETYPES.map((t) => [t, elements.filter((e) => e.etype === t).length] as const)
   const subtypeText = (el: Element) => (el.subtype ? (SUBTYPE_LABELS[el.subtype] ?? el.subtype) : '')
   const mt = manual.etype as EType
 
   return (
     <>
-      <div className="row between">
-        <h1>
-          {drawing.label} <span className={`badge disc-${discipline}`}>{DISCIPLINES[discipline]}</span>
-          {extras.map((d) => <span key={d} className={`badge disc-${d}`} style={{ marginLeft: 4 }}>+ {DISCIPLINES[d].split(' (')[0]}</span>)}
-          <span className="muted" style={{ fontSize: 14 }}> ({drawing.filename}, birim: {drawing.unit})</span>
-        </h1>
-        <div className="row">
-          <Link to={`/projects/${pid}`}>← Projeye dön</Link>
-          <button className="secondary" disabled={busy} onClick={() => run(() => Api.drawings.reanalyze(drawingId))}>Yeniden analiz et</button>
+      <div className="page-heading">
+        <div>
+          <div className="eyebrow"><Link to={`/projects/${pid}`}>← Projeye dön</Link></div>
+          <h1>{drawing.label}</h1>
+          <p className="muted">
+            <span className={`badge disc-${discipline}`}>{DISCIPLINES[discipline].split(' (')[0]}</span>
+            {extras.map((d) => <span key={d} className={`badge disc-${d}`} style={{ marginLeft: 4 }}>+ {DISCIPLINES[d].split(' (')[0]}</span>)}
+            <span className="meta-sep" />{drawing.filename.split(' › ')[0]}<span className="meta-sep" />birim {drawing.unit}<span className="meta-sep" />{elements.length} eleman
+          </p>
         </div>
+        <button className="secondary" disabled={busy} onClick={() => run(() => Api.drawings.reanalyze(drawingId))}>Yeniden analiz et</button>
       </div>
       {error && <div className="error">{error}</div>}
       {drawing.warnings.length > 0 && (
-        <div className="warn"><b>Uyarılar</b><ul>{drawing.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></div>
+        <details className="section warn-section">
+          <summary>{drawing.warnings.length} uyarı<span className="muted">{drawing.warnings[0].slice(0, 110)}{drawing.warnings[0].length > 110 ? '…' : ''}</span></summary>
+          <div className="panel"><ul className="warn-list">{drawing.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></div>
+        </details>
       )}
 
-      <div className="grid2">
-        <div className="panel">
+      <div className="grid2 align-top">
+        <div className="panel sticky-panel">
           <h3>Plan önizleme</h3>
           <div className="legend">{ETYPES.map((t) => <span key={t}><i style={{ background: colorOf(t) }} />{labelOf(t)}</span>)}<span className="muted">— tıklayınca tabloda seçilir</span></div>
           <div className="svg-wrap" ref={svgRef} dangerouslySetInnerHTML={{ __html: svg }} />
@@ -159,7 +166,7 @@ export default function Elements() {
             </p>
           )}
           <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
-            <table>
+            <table className="table-compact">
               <thead><tr><th>Katman</th><th className="num">Nesne</th><th>Eleman tipi</th></tr></thead>
               <tbody>
                 {drawing.layers.filter((l) => l.count > 0).map((l) => (
@@ -210,19 +217,19 @@ export default function Elements() {
       </div>
 
       <div className="panel">
-        <div className="row between">
-          <h3>Tespit edilen elemanlar ({elements.length})</h3>
-          <div className="row">
-            <button className={`small ${filter === '' ? '' : 'secondary'}`} onClick={() => setFilter('')}>Tümü</button>
-            {counts.map(([t, n]) => <button key={t} className={`small ${filter === t ? '' : 'secondary'}`} onClick={() => setFilter(t as EType)}>{labelOf(t)} ({n})</button>)}
+        <div className="row between sticky-bar">
+          <h3 style={{ margin: 0 }}>Tespit edilen elemanlar <span className="count-pill">{filtered.length}</span></h3>
+          <div className="chips">
+            <button className={`chip-btn${filter === '' ? ' on' : ''}`} onClick={() => { setFilter(''); setLimit(60) }}>Tümü ({elements.length})</button>
+            {counts.map(([t, n]) => <button key={t} className={`chip-btn${filter === t ? ' on' : ''}`} onClick={() => { setFilter(t as EType); setLimit(60) }}><i className="dot" style={{ background: colorOf(t) }} />{labelOf(t)} ({n})</button>)}
           </div>
         </div>
-        <p className="muted">
+        <p className="muted hint">
           {isElec ? 'Tava genişlik/yükseklik mm; uzunluk m.' : 'Boyutlar cm; uzunluk m.'} Hücreyi düzenleyip dışına tıklayın; alan otomatik güncellenir.
           Elle düzenlenen elemanlar yeniden analizde korunur. {discipline === 'architectural' && 'Duvarda h boşsa proje duvar yüksekliği kullanılır; kapı/pencerede b×h boşluk alanıdır.'}
         </p>
         <div style={{ overflow: 'auto' }}>
-          <table>
+          <table className="table-compact">
             <thead>
               <tr>
                 <th>Dahil</th><th>Tip</th><th>Ad</th><th>{discipline === 'structural' ? 'Alt tip' : discipline === 'architectural' ? 'Malzeme / blok' : isStd ? 'Özellik' : 'Boyut / kesit / kategori'}</th><th>Katman</th>
@@ -269,15 +276,21 @@ export default function Elements() {
                     {el.label_raw && <div className="mono">{el.label_raw}</div>}
                     {el.warnings.map((w, i) => <div key={i} className="muted">⚠ {w}</div>)}
                   </td>
-                  <td><button className="danger small" onClick={(e) => { e.stopPropagation(); remove(el) }}>Sil</button></td>
+                  <td><button className="icon-button delete-button" title="Elemanı sil" aria-label="Elemanı sil" onClick={(e) => { e.stopPropagation(); remove(el) }}><Icon name="trash" size={16} /></button></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        {filtered.length > shown.length && (
+          <div className="row" style={{ justifyContent: 'center', marginTop: 12 }}>
+            <button className="secondary" onClick={() => setLimit(limit + 100)}>{filtered.length - shown.length} eleman daha göster</button>
+            <button className="secondary" onClick={() => setLimit(filtered.length)}>Tümünü göster</button>
+          </div>
+        )}
 
-        {!isStd && <h3>Elle eleman ekle</h3>}
-        {!isStd && <form className="row" onSubmit={addManual}>
+        {!isStd && <details style={{ marginTop: 16 }}><summary className="muted">Elle eleman ekle</summary>
+        <form className="row" style={{ marginTop: 10 }} onSubmit={addManual}>
           <label className="field">Tip
             <select value={manual.etype} onChange={(e) => setManual({ ...manual, etype: e.target.value as EType })}>
               {ETYPES.map((t) => <option key={t} value={t}>{labelOf(t)}{t === 'foundation' ? ' (sürekli)' : ''}</option>)}
@@ -292,7 +305,7 @@ export default function Elements() {
           {mt && FIELDS[mt].includes('area') && <label className="field">Alan (m²)<input type="number" step="0.01" value={manual.area} onChange={(e) => setManual({ ...manual, area: +e.target.value })} /></label>}
           <label className="field">Adet<input type="number" min={1} value={manual.count} onChange={(e) => setManual({ ...manual, count: +e.target.value })} /></label>
           <button type="submit" disabled={busy || !manual.etype}>Ekle</button>
-        </form>}
+        </form></details>}
       </div>
     </>
   )

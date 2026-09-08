@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import Loading from '../components/Loading'
 import { Api } from '../api/client'
+import Icon from '../components/Icon'
 import type { Catalog, CatalogItem, LayerCheck } from '../types'
 
 const MEASURE_HINT: Record<string, string> = {
@@ -46,16 +47,20 @@ export default function Standard() {
 
   return (
     <>
-      <div className="row between">
-        <h1>Keşif Çizim Standardı (KÇS)</h1>
+      <div className="page-heading">
+        <div>
+          <div className="eyebrow">ÇİZİM STANDARDI</div>
+          <h1>Keşif Çizim Standardı (KÇS)</h1>
+          <p className="muted">Katman adı kalemi tanımlar, geometri miktarı verir; standarda uygun çizilen pafta eşleme gerektirmeden keşfe dönüşür.</p>
+        </div>
         <div className="row">
+          <a className="btn secondary-link" href="https://github.com/HuseyinEfkanAlp/KesifProjesi/blob/main/docs/KESIF_CIZIM_STANDARDI.md" target="_blank" rel="noreferrer">Standart dokümanı</a>
           <a className="btn" href={Api.catalog.templateUrl}>Şablon DXF indir</a>
-          <a className="btn secondary" href="https://github.com/HuseyinEfkanAlp/KesifProjesi/blob/main/docs/KESIF_CIZIM_STANDARDI.md" target="_blank" rel="noreferrer">Standart dokümanı</a>
         </div>
       </div>
       {error && <div className="error">{error}</div>}
 
-      <div className="grid2">
+      <div className="grid2 align-top">
         <div className="panel">
           <h3>Kural</h3>
           <p>
@@ -88,8 +93,8 @@ export default function Standard() {
               ) : <span>Geçersiz: {check.reason}</span>}
             </div>
           )}
-          <h3>Yeni kalem ekle</h3>
-          <form className="row" onSubmit={addItem}>
+          <details style={{ marginTop: 14 }}><summary className="muted">Yeni kalem ekle</summary>
+          <form className="params-grid" style={{ marginTop: 10 }} onSubmit={addItem}>
             <label className="field">Disiplin
               <select value={form.discipline} onChange={(e) => setForm({ ...form, discipline: e.target.value })}>
                 {Object.entries(cat.disciplines).map(([c, n]) => <option key={c} value={c}>{c} · {n}</option>)}
@@ -112,57 +117,62 @@ export default function Standard() {
               Reçete (alt işler)
               <input style={{ width: 300 }} value={form.recipe} placeholder="IS_ISKELESI×1; ANKRAJ_BULONU×1.5:M12" onChange={(e) => setForm({ ...form, recipe: e.target.value })} />
             </label>
-            <button type="submit">Ekle</button>
+            <div className="field" style={{ justifyContent: 'flex-end' }}><button type="submit">Kalemi ekle</button></div>
           </form>
           <p className="muted hint">
             Reçete satırları sorulmadan keşfe yazılır ("reçete" rozeti); bileşenin kendi reçetesi de zincirleme açılır (çelik çatı → çelik konstrüksiyon → ankraj → tij, somun, pul).
             Bileşenli kalem ölçüldüğünde (ör. çatı alanı) her bileşen için miktar = alan × çarpan yazılır; bileşen kodları katalogda olmalı.
             Var olan bir sistemi değiştirmek için aynı kodla yeniden ekleyin.
-          </p>
-          <h3>Yeni disiplin</h3>
-          <form className="row" onSubmit={addDisc}>
+          </p></details>
+          <details style={{ marginTop: 10 }}><summary className="muted">Yeni disiplin / kataloğu sıfırla</summary>
+          <form className="row" style={{ marginTop: 10 }} onSubmit={addDisc}>
             <label className="field">Kod (3 harf)<input style={{ width: 70 }} value={dform.code} maxLength={3} onChange={(e) => setDform({ ...dform, code: e.target.value.toUpperCase() })} required /></label>
             <label className="field">Ad<input style={{ width: 220 }} value={dform.name} onChange={(e) => setDform({ ...dform, name: e.target.value })} required /></label>
             <button type="submit">Ekle</button>
             <button type="button" className="secondary" onClick={() => { if (confirm('Katalog varsayılana döndürülsün mü? Eklediğiniz kalemler silinir.')) run(() => Api.catalog.reset()) }}>Varsayılana dön</button>
-          </form>
+          </form></details>
         </div>
       </div>
 
       <div className="panel">
-        <div className="row between">
-          <h3>Kalem kataloğu ({cat.items.length} kalem, {Object.keys(cat.disciplines).length} disiplin)</h3>
-          <div className="row">
-            <select value={disc} onChange={(e) => setDisc(e.target.value)}>
-              <option value="">Tüm disiplinler</option>
-              {Object.entries(cat.disciplines).map(([c, n]) => <option key={c} value={c}>{c} · {n}</option>)}
-            </select>
-            <input placeholder="ara: kanal, boru, PVC…" value={filter} onChange={(e) => setFilter(e.target.value)} />
-          </div>
+        <div className="row between sticky-bar">
+          <h3 style={{ margin: 0 }}>Kalem kataloğu <span className="count-pill">{cat.items.length}</span></h3>
+          <input placeholder="ara: kanal, boru, PVC…" value={filter} onChange={(e) => setFilter(e.target.value)} />
         </div>
-        {groups.map((g) => (
-          <div key={g.code}>
-            <h2>{g.code} · {g.name}</h2>
-            <table>
-              <thead><tr><th>Katman adı (örnek)</th><th>Kalem</th><th>Poz</th><th>Ölçüm</th><th>Birim</th><th>Özellik</th><th>Bileşenler</th><th>Reçete</th><th>Nasıl çizilir</th><th></th></tr></thead>
+        <div className="chips" style={{ margin: '10px 0 6px' }}>
+          <button className={`chip-btn${disc === '' ? ' on' : ''}`} onClick={() => setDisc('')}>Tümü</button>
+          {cat.by_discipline.map((g) => <button key={g.code} className={`chip-btn${disc === g.code ? ' on' : ''}`} onClick={() => setDisc(disc === g.code ? '' : g.code)}>{g.name} ({g.items.length})</button>)}
+        </div>
+        {groups.length === 0 && <p className="muted">Aramayla eşleşen kalem yok.</p>}
+        {groups.map((g, gi) => (
+          <details key={g.code} className="catalog-group" open={!!disc || !!f || gi === 0}>
+            <summary><b>{g.name}</b><span className="muted"> · {g.code} · {g.items.length} kalem</span></summary>
+            <table className="table-compact">
+              <thead><tr><th>Katman adı (örnek)</th><th>Kalem</th><th>Poz</th><th>Ölçüm</th><th>Birim</th><th>Özellik</th><th>Alt işler</th><th></th></tr></thead>
               <tbody>
-                {g.items.map((it) => (
-                  <tr key={it.code}>
-                    <td><code className="layer">{it.example}</code></td>
-                    <td>{it.name}{it.custom && <span className="muted"> (eklendi)</span>}</td>
-                    <td className="mono">{it.poz || <span className="muted">-</span>}</td>
-                    <td>{it.measure_label}</td>
-                    <td>{it.unit}</td>
-                    <td className="muted">{it.spec_label || '-'}</td>
-                    <td className="muted hint">{it.is_system ? it.components.map((c) => `${cat.items.find((x) => x.code === c.code)?.name ?? c.code} ×${c.factor}${c.spec ? ` (${c.spec})` : ''}`).join('; ') : '-'}</td>
-                    <td className="muted hint">{it.recipe?.length ? it.recipe.map((c) => `${cat.items.find((x) => x.code === c.code)?.name ?? c.code} ×${c.factor}${c.times === 'H' ? '·H' : ''}${c.spec ? ` (${c.spec})` : ''}`).join('; ') : '-'}</td>
-                    <td className="muted">{MEASURE_HINT[it.measure]}</td>
-                    <td><button className="danger small" onClick={() => { if (confirm(`${it.code} katalogdan silinsin mi?`)) run(() => Api.catalog.removeItem(it.code)) }}>Sil</button></td>
-                  </tr>
-                ))}
+                {g.items.map((it) => {
+                  const comps = it.is_system ? it.components.map((c) => `${cat.items.find((x) => x.code === c.code)?.name ?? c.code} ×${c.factor}${c.spec ? ` (${c.spec})` : ''}`).join('; ') : ''
+                  const rec = it.recipe?.length ? it.recipe.map((c) => `${cat.items.find((x) => x.code === c.code)?.name ?? c.code} ×${c.factor}${c.times === 'H' ? '·H' : c.times === 'PER' ? '·çevre' : c.times === 'WID' ? '·genişlik' : c.times === 'AREA' ? '·alan' : ''}${c.spec ? ` (${c.spec})` : ''}`).join('; ') : ''
+                  return (
+                    <tr key={it.code}>
+                      <td><code className="layer">{it.example}</code></td>
+                      <td>{it.name}{it.custom && <span className="muted"> (eklendi)</span>}</td>
+                      <td className="mono">{it.poz || <span className="muted">-</span>}</td>
+                      <td title={MEASURE_HINT[it.measure]}>{it.measure_label}</td>
+                      <td>{it.unit}</td>
+                      <td className="muted">{it.spec_label || '-'}</td>
+                      <td className="muted hint">
+                        {comps && <span className="sub" title={comps}><span className="badge none">sistem</span> {it.components.length} bileşen</span>}
+                        {rec && <span className="sub" title={rec}><span className="badge recipe">reçete</span> {it.recipe!.length} alt iş</span>}
+                        {!comps && !rec && '-'}
+                      </td>
+                      <td><button className="icon-button delete-button" title={`${it.code} kalemini sil`} aria-label={`${it.code} kalemini sil`} onClick={() => { if (confirm(`${it.code} katalogdan silinsin mi?`)) run(() => Api.catalog.removeItem(it.code)) }}><Icon name="trash" size={16} /></button></td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
-          </div>
+          </details>
         ))}
       </div>
     </>

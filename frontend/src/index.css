@@ -343,3 +343,31 @@ details > summary { cursor: pointer; }
 /* Uyarı ve hata: rozet değil sol şerit */
 .warn { border-left: 3px solid #e6a23c; background: #fffaf0; }
 .error { border-left: 3px solid var(--danger); }
+
+/* Elemanlar ve Standart sayfaları: yoğun tablo, yapışkan araç çubuğu, katlanır gruplar */
+.grid2.align-top { align-items: start; }
+.sticky-panel { position: sticky; top: 16px; }
+.sticky-bar { position: sticky; top: 0; z-index: 2; background: var(--panel); padding: 6px 0 10px; margin: -6px 0 4px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-btn { min-height: 28px; padding: 3px 10px; font-size: 12.5px; border-radius: 14px; border: 1px solid var(--border); background: #fff; color: var(--text); display: inline-flex; align-items: center; gap: 6px; }
+.chip-btn .dot { width: 8px; height: 8px; }
+.chip-btn.on { background: var(--primary-soft); border-color: #b9c8f2; color: var(--primary); }
+.table-compact th, .table-compact td { padding: 6px 8px; font-size: 13px; }
+.table-compact td input { min-height: 28px; padding: 2px 6px; font-size: 13px; }
+.table-compact td select { min-height: 28px; padding: 2px 6px; font-size: 13px; }
+.table-compact .icon-button { min-height: 28px; min-width: 28px; padding: 4px; }
+.meta-sep { display: inline-block; width: 1px; height: 12px; background: var(--border); margin: 0 10px; vertical-align: -1px; }
+.page-heading .badge { vertical-align: 1px; }
+.warn-section > summary { border-left: 3px solid #e6a23c; background: #fffaf0; }
+.warn-list { margin: 0; padding-left: 18px; }
+.warn-list li { margin: 4px 0; }
+details.catalog-group { margin: 8px 0; border: 1px solid var(--border); border-radius: var(--r-md); }
+details.catalog-group > summary { list-style: none; cursor: pointer; padding: 10px 14px; }
+details.catalog-group > summary::-webkit-details-marker { display: none; }
+details.catalog-group > summary::before { content: '▸ '; color: var(--muted); }
+details.catalog-group[open] > summary { border-bottom: 1px solid var(--border); }
+details.catalog-group[open] > summary::before { content: '▾ '; }
+details.catalog-group table { border-radius: 0 0 var(--r-md) var(--r-md); }
+.sub { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; white-space: nowrap; }
+.params-grid .field { min-width: 0; }
+.params-grid input, .params-grid select { width: 100%; }
