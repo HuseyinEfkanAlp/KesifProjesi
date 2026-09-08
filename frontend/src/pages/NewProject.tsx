@@ -33,9 +33,12 @@ export default function NewProject() {
   const step = project ? 2 : 1
   return (
     <>
-      <div className="row between">
-        <h1>Yeni proje</h1>
-        <Link to="/" className="muted">← Projeler</Link>
+      <div className="page-heading">
+        <div>
+          <div className="eyebrow"><Link to="/">← Projeler</Link></div>
+          <h1>Yeni proje</h1>
+          <p className="muted">Ad ve kat bilgilerini girin, planları bırakın; metraj, keşif ve maliyet kendiliğinden çıkar.</p>
+        </div>
       </div>
       <ol className="steps">
         <li className={step === 1 ? 'active' : 'done'}>1. Proje bilgileri</li>
@@ -45,19 +48,19 @@ export default function NewProject() {
       {error && <div className="error">{error}</div>}
 
       {!project && (
-        <div className="panel">
+        <div className="panel new-project">
           <form onSubmit={create}>
-            <div className="row">
-              <label className="field">Proje adı<input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Örn. Ataşehir Konut Bloğu" style={{ width: 300 }} /></label>
-              <label className="field">Açıklama<input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="ada / parsel, blok, işveren…" style={{ width: 300 }} /></label>
+            <h3 style={{ marginTop: 0 }}>Proje bilgileri</h3>
+            <div className="form-grid">
+              <label className="field span2">Proje adı<input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Örn. Ataşehir Konut Bloğu" required /></label>
+              <label className="field span2"><span>Açıklama <span className="muted">(isteğe bağlı)</span></span><input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="ada / parsel, blok, işveren…" /></label>
+              <label className="field">Kat yüksekliği H (m)<input type="number" step="0.05" min={2} value={storeyHeight} onChange={(e) => setStoreyHeight(+e.target.value)} /></label>
+              <label className="field">Döşeme kalınlığı d (m)<input type="number" step="0.01" min={0.05} value={slab} onChange={(e) => setSlab(+e.target.value)} /></label>
             </div>
-            <div className="row" style={{ marginTop: 8 }}>
-              <label className="field">Kat yüksekliği H (m)<input type="number" step="0.05" value={storeyHeight} onChange={(e) => setStoreyHeight(+e.target.value)} /></label>
-              <label className="field">Döşeme kalınlığı d (m)<input type="number" step="0.01" value={slab} onChange={(e) => setSlab(+e.target.value)} /></label>
-              <span className="muted">Kat yüksekliği her plan için ayrıca girilebilir; diğer parametreler (KDV, demir oranı, duvar yüksekliği, fire) proje sayfasında.</span>
-            </div>
-            <div className="row" style={{ marginTop: 12 }}>
-              <button type="submit" disabled={busy || !name.trim()}>{busy ? 'Oluşturuluyor...' : 'Oluştur ve planları yükle →'}</button>
+            <p className="muted hint">Duvar yüksekliği H − d alınır; her plan için kat yüksekliği ayrıca girilebilir. KDV, demir oranı, fire ve sıva / boya yüz sayısı proje sayfasında.</p>
+            <div className="row" style={{ marginTop: 14 }}>
+              <button type="submit" disabled={busy || !name.trim()}>{busy ? 'Oluşturuluyor…' : 'Oluştur ve planları yükle'}</button>
+              {!name.trim() && <span className="muted hint">Devam etmek için proje adı girin.</span>}
             </div>
           </form>
         </div>
@@ -66,12 +69,13 @@ export default function NewProject() {
       {project && (
         <>
           <div className="panel">
-            <h3>{project.name} <span className="muted">— planlarınızı yükleyin</span></h3>
+            <h3 style={{ marginTop: 0 }}>{project.name} <span className="muted" style={{ fontWeight: 400 }}>· planları yükleyin</span></h3>
             <PlanIntake projectId={project.id} storeyHeight={project.storey_height} onChanged={() => setRefresh((r) => r + 1)} />
           </div>
-          <div className="panel">
-            <PlanChecklist projectId={project.id} refreshKey={refresh} onLoaded={setCheck} />
-          </div>
+          <details className="section" open={!!check && !check.complete}>
+            <summary>Plan seti kontrolü<span className="muted">{check ? (check.complete ? 'tamam' : `${check.missing_required} gerekli plan eksik`) : ''}</span></summary>
+            <div className="panel"><PlanChecklist projectId={project.id} refreshKey={refresh} onLoaded={setCheck} /></div>
+          </details>
           <div className="panel row between">
             <span className="muted">
               {check?.complete
@@ -79,8 +83,8 @@ export default function NewProject() {
                 : check ? `${check.missing_required} gerekli plan eksik; daha sonra proje sayfasından da yükleyebilirsiniz.` : ''}
             </span>
             <div className="row">
-              <Link className="btn secondary-link" to={`/projects/${project.id}`}>Projeye git (çizimler, parametreler)</Link>
-              <button onClick={() => nav(`/projects/${project.id}/quantities`)}>Metraja geç →</button>
+              <Link className="btn secondary-link" to={`/projects/${project.id}`}>Projeye git</Link>
+              <button onClick={() => nav(`/projects/${project.id}/quantities`)}>Metraja geç</button>
             </div>
           </div>
         </>

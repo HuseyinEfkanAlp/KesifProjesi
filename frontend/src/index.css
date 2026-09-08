@@ -371,3 +371,13 @@ details.catalog-group table { border-radius: 0 0 var(--r-md) var(--r-md); }
 .sub { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; white-space: nowrap; }
 .params-grid .field { min-width: 0; }
 .params-grid input, .params-grid select { width: 100%; }
+
+/* Birim fiyatlar ve yeni proje */
+.price-table tr.general td { background: #f7f9fc; }
+.price-table td input.wide { width: 96px; }
+.price-table td input.dirty { border-color: var(--primary); background: var(--primary-soft); }
+.form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 18px; max-width: 760px; }
+.form-grid .field { min-width: 0; }
+.form-grid .field.span2 { grid-column: span 2; }
+.form-grid input { width: 100%; }
+@media (max-width: 760px) { .form-grid { grid-template-columns: 1fr 1fr; } .form-grid .field.span2 { grid-column: span 2; } }

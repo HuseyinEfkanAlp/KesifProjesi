@@ -390,6 +390,12 @@ export interface PriceItem {
   discipline: string
   discipline_label: string
   is_general: boolean
+  work_group: string
+  work_group_label: string
+  /** Keşifteki miktar (genel satırda yok) */
+  quantity: number | null
+  poz: string
+  recipe: boolean
 }
 
 /** KÇS kataloğu */

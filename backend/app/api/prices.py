@@ -7,7 +7,8 @@ from sqlmodel import Session, select
 from ..db import get_session
 from ..models import PriceItem
 from ..parser.layer_profile import DISCIPLINES
-from ..quantity.boq import KIND_META
+from ..quantity.boq import KIND_META, WORK_GROUPS
+from ..standard.rules import work_group_of
 from ..services import ensure_price_items, load_catalog, project_boq
 from .projects import get_project
 
@@ -24,11 +25,16 @@ class PriceIn(BaseModel):
     name: str | None = None
 
 
-def price_out(p: PriceItem, catalog=None) -> dict:
+def price_out(p: PriceItem, catalog=None, boq: dict | None = None) -> dict:
+    """boq: keşif kalemi anahtarı -> BoqItem (miktar, poz, reçete bilgisi fiyat satırına eklenir)."""
     d = p.model_dump()
     kind = p.key.split(":")[0]
     d["kind"] = kind
     d["is_general"] = p.key.endswith(":*")
+    it_b = (boq or {}).get(p.key)
+    d["quantity"] = round(it_b.quantity, 3) if it_b else None
+    d["poz"] = it_b.poz if it_b else ""
+    d["recipe"] = bool(it_b and it_b.detail.get("recipe"))
     if kind in KIND_META:
         d["discipline"] = KIND_META[kind][2]
         d["discipline_label"] = DISCIPLINES.get(d["discipline"], d["discipline"])
@@ -39,6 +45,8 @@ def price_out(p: PriceItem, catalog=None) -> dict:
         d["discipline"] = f"ksf:{it.discipline}" if it else "ksf:???"
         d["discipline_label"] = catalog.discipline_name(it.discipline) if it else "Katalog dışı"
         d["kind_label"] = it.name if it else kind
+    d["work_group"] = work_group_of(d["discipline"])
+    d["work_group_label"] = WORK_GROUPS.get(d["work_group"], d["work_group"])
     return d
 
 
@@ -47,7 +55,8 @@ def list_prices(project_id: int, session: Session = Depends(get_session)):
     p = get_project(project_id, session)
     items = project_boq(p, session)
     cat = load_catalog()
-    return [price_out(i, cat) for i in ensure_price_items(p, items, session)]
+    boq = {i.key: i for i in items}
+    return [price_out(i, cat, boq) for i in ensure_price_items(p, items, session)]
 
 
 @router.put("/{project_id}/prices")
