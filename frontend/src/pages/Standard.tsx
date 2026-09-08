@@ -12,7 +12,7 @@ export default function Standard() {
   const [error, setError] = useState('')
   const [filter, setFilter] = useState('')
   const [disc, setDisc] = useState('')
-  const [form, setForm] = useState({ code: '', discipline: 'HAV', name: '', measure: 'length', spec_label: '', components: '', poz: '' })
+  const [form, setForm] = useState({ code: '', discipline: 'HAV', name: '', measure: 'length', spec_label: '', components: '', poz: '', recipe: '' })
   const [dform, setDform] = useState({ code: '', name: '' })
   const [test, setTest] = useState('KSF-HAV-HAVA_KANAL-600x400')
   const [check, setCheck] = useState<LayerCheck | null>(null)
@@ -26,7 +26,7 @@ export default function Standard() {
   }
   const addItem = (e: React.FormEvent) => {
     e.preventDefault()
-    run(() => Api.catalog.upsertItem(form as Partial<CatalogItem> & { components: string })).then(() => setForm({ ...form, code: '', name: '', spec_label: '', components: '', poz: '' }))
+    run(() => Api.catalog.upsertItem(form as Partial<CatalogItem> & { components: string; recipe: string })).then(() => setForm({ ...form, code: '', name: '', spec_label: '', components: '', poz: '', recipe: '' }))
   }
   const addDisc = (e: React.FormEvent) => {
     e.preventDefault()
@@ -107,9 +107,14 @@ export default function Standard() {
               Bileşenler (katmanlı sistem)
               <input style={{ width: 300 }} value={form.components} placeholder="OSB×1:11; TASYUNU×1:10; MERTEK×1.7:5x10" onChange={(e) => setForm({ ...form, components: e.target.value })} />
             </label>
+            <label className="field" title="Reçete: bu kalem keşfe girince kendiliğinden yazılan alt işler (iskele, ankraj, kaynak, montaj saati…). Biçim: KOD×çarpan:özellik; çarpanın sonuna H yazılırsa kat yüksekliğiyle de çarpılır (KALIP_ISKELESI×1H)">
+              Reçete (alt işler)
+              <input style={{ width: 300 }} value={form.recipe} placeholder="IS_ISKELESI×1; ANKRAJ_BULONU×1.5:M12" onChange={(e) => setForm({ ...form, recipe: e.target.value })} />
+            </label>
             <button type="submit">Ekle</button>
           </form>
           <p className="muted hint">
+            Reçete satırları sorulmadan keşfe yazılır ("reçete" rozeti); bileşenin kendi reçetesi de zincirleme açılır (çelik çatı → çelik konstrüksiyon → ankraj → tij, somun, pul).
             Bileşenli kalem ölçüldüğünde (ör. çatı alanı) her bileşen için miktar = alan × çarpan yazılır; bileşen kodları katalogda olmalı.
             Var olan bir sistemi değiştirmek için aynı kodla yeniden ekleyin.
           </p>
@@ -138,7 +143,7 @@ export default function Standard() {
           <div key={g.code}>
             <h2>{g.code} · {g.name}</h2>
             <table>
-              <thead><tr><th>Katman adı (örnek)</th><th>Kalem</th><th>Poz</th><th>Ölçüm</th><th>Birim</th><th>Özellik</th><th>Bileşenler</th><th>Nasıl çizilir</th><th></th></tr></thead>
+              <thead><tr><th>Katman adı (örnek)</th><th>Kalem</th><th>Poz</th><th>Ölçüm</th><th>Birim</th><th>Özellik</th><th>Bileşenler</th><th>Reçete</th><th>Nasıl çizilir</th><th></th></tr></thead>
               <tbody>
                 {g.items.map((it) => (
                   <tr key={it.code}>
@@ -149,6 +154,7 @@ export default function Standard() {
                     <td>{it.unit}</td>
                     <td className="muted">{it.spec_label || '-'}</td>
                     <td className="muted hint">{it.is_system ? it.components.map((c) => `${cat.items.find((x) => x.code === c.code)?.name ?? c.code} ×${c.factor}${c.spec ? ` (${c.spec})` : ''}`).join('; ') : '-'}</td>
+                    <td className="muted hint">{it.recipe?.length ? it.recipe.map((c) => `${cat.items.find((x) => x.code === c.code)?.name ?? c.code} ×${c.factor}${c.times === 'H' ? '·H' : ''}${c.spec ? ` (${c.spec})` : ''}`).join('; ') : '-'}</td>
                     <td className="muted">{MEASURE_HINT[it.measure]}</td>
                     <td><button className="danger small" onClick={() => { if (confirm(`${it.code} katalogdan silinsin mi?`)) run(() => Api.catalog.removeItem(it.code)) }}>Sil</button></td>
                   </tr>

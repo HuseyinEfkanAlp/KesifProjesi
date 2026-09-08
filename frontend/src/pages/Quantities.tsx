@@ -46,8 +46,8 @@ export default function Quantities() {
                 <tr key={it.key} className={it.detail?.system ? 'system-row' : ''}>
                   <td className="mono" title={it.poz_name}>{it.poz || <span className="muted">-</span>}</td>
                   <td><span className={`badge disc-${it.discipline.split(':')[0]}`}>{it.discipline_label.split(' (')[0]}</span></td>
-                  <td>{it.kind_label}{it.detail?.system ? <span className="badge none" style={{ marginLeft: 6 }}>sistem</span> : null}{it.detail?.info ? <span className="badge none" style={{ marginLeft: 6 }}>bilgi</span> : null}</td>
-                  <td>{it.label}{it.detail?.system_code && !it.detail?.system ? <span className="muted hint"> ← {String(it.detail.system_code)}</span> : null}</td>
+                  <td>{it.kind_label}{it.detail?.system ? <span className="badge none" style={{ marginLeft: 6 }}>sistem</span> : null}{it.detail?.info ? <span className="badge none" style={{ marginLeft: 6 }}>bilgi</span> : null}{it.detail?.recipe ? <span className="badge recipe" style={{ marginLeft: 6 }} title={`Reçeteden türetildi: ${String(it.detail.parent ?? '')}`}>reçete</span> : null}</td>
+                  <td>{it.label}{it.detail?.system_code && !it.detail?.system ? <span className="muted hint"> ← {String(it.detail.system_code)}</span> : null}{it.detail?.recipe ? <span className="muted hint"> ← {String(it.detail.parent ?? '').split(':')[0]}</span> : null}</td>
                   <td className="num"><b>{fmt(it.quantity, it.unit === 'adet' || it.unit === 'kg' ? 0 : 2)}</b></td>
                   <td>{it.unit}</td>
                   <td className="num">{it.count ? fmt(it.count, 0) : '-'}</td>
@@ -78,6 +78,7 @@ export default function Quantities() {
               {Object.values(boq.rules).map((r) => <li key={r.text}>{r.text} <span className="hint">({r.source})</span></li>)}
             </ul>
             <p className="muted hint" style={{ marginBottom: 0 }}>Poz numarası boş olan kalemler için Standart sayfasındaki katalogda kaleme poz girin; sezgisel kalemlerde (beton, kalıp, gazbeton duvar, sıva, boya, demir) varsayılan ÇŞB pozları kullanılır.</p>
+            <p className="muted hint" style={{ marginBottom: 0 }}><b>Reçete</b> rozetli satırlar ana kalemden türetilen alt işlerdir (iskele, ankraj, tij / somun / pul, kaynak, antipas, montaj saati…); çarpanlar katalogda kalemin "Reçete" alanından düzenlenir, tümünü kapatmak için proje parametrelerinde <code className="layer">derived_off</code> listesine <code className="layer">recete</code> yazın.</p>
           </div>
         </details>
       )}

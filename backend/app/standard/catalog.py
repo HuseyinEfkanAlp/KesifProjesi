@@ -68,7 +68,12 @@ class CatalogItem:
     poz: str = ""             # ÇŞB birim fiyat poz numarası (ör. 15.225.1010); boşsa rules.default_poz denenir
     # Katmanlı sistem: bu kalem ölçüldüğünde (ör. çatı alanı) ayrı iş kalemi olarak yazılacak bileşenler.
     # [{"code": "OSB", "factor": 1.0, "spec": "11"}]: miktar = sistem miktarı × factor; spec varsayılan özellik.
+    # Sistem bileşenleri kullanıcıya sorulur (projede yazıyor / yok).
     components: list[dict] = field(default_factory=list)
+    # Reçete: bu kalem keşfe girdiğinde kendiliğinden yazılan alt işler (sarf, yardımcı imalat, işçilik): iskele, ankraj,
+    # kaynak, tij / somun / pul, montaj saati… Aynı biçim; "times": "H" ise çarpan ayrıca kat yüksekliğiyle çarpılır
+    # (kalıp iskelesi m³ = kalıp m² × H). Sorulmaz, "reçete varsayılanı" notuyla yazılır; katalogdan düzenlenir.
+    recipe: list[dict] = field(default_factory=list)
 
     def __post_init__(self):
         self.code = normalize_code(self.code)
@@ -80,15 +85,21 @@ class CatalogItem:
         if not self.example:
             self.example = f"KSF-{self.discipline}-{self.code}"
         self.components = normalize_components(self.components)
+        self.recipe = normalize_components(self.recipe)
 
     @property
     def is_system(self) -> bool:
         return bool(self.components)
 
+    @property
+    def has_recipe(self) -> bool:
+        return bool(self.recipe)
+
     def to_dict(self) -> dict:
         d = asdict(self)
         d["measure_label"] = MEASURES[self.measure][0]
         d["is_system"] = self.is_system
+        d["has_recipe"] = self.has_recipe
         return d
 
 
@@ -103,10 +114,11 @@ def normalize_components(comps) -> list[dict]:
             part = part.strip()
             if not part:
                 continue
-            m = re.match(r"^([^×x*:]+?)\s*(?:[×x*]\s*([0-9.,]+))?\s*(?::\s*(.+))?$", part)
+            m = re.match(r"^([^×x*:]+?)\s*(?:[×x*]\s*([0-9.,]+)(H)?)?\s*(?::\s*(.+))?$", part)
             if not m:
                 continue
-            parsed.append({"code": m.group(1), "factor": m.group(2) or 1, "spec": (m.group(3) or "").strip()})
+            parsed.append({"code": m.group(1), "factor": m.group(2) or 1, "spec": (m.group(4) or "").strip(),
+                           "times": "H" if m.group(3) else ""})
         comps = parsed
     out: list[dict] = []
     seen: set[str] = set()
@@ -123,7 +135,10 @@ def normalize_components(comps) -> list[dict]:
         if factor <= 0:
             continue
         seen.add(code)
-        out.append({"code": code, "factor": factor, "spec": str(c.get("spec") or "").strip()})
+        row = {"code": code, "factor": factor, "spec": str(c.get("spec") or "").strip()}
+        if str(c.get("times") or "").upper() == "H":
+            row["times"] = "H"
+        out.append(row)
     return out
 
 
@@ -134,12 +149,13 @@ def normalize_code(code: str) -> str:
     return c
 
 
-def _i(code, disc, name, measure, spec_label="", example="", components=None):
-    return CatalogItem(code, disc, name, measure, spec_label=spec_label, example=example, components=components or [])
+def _i(code, disc, name, measure, spec_label="", example="", components=None, unit="", recipe=None, poz=""):
+    return CatalogItem(code, disc, name, measure, unit=unit, spec_label=spec_label, example=example,
+                       components=components or [], recipe=recipe or [], poz=poz)
 
 
-def _c(code, factor=1.0, spec=""):
-    return {"code": code, "factor": factor, "spec": spec}
+def _c(code, factor=1.0, spec="", times=""):
+    return {"code": code, "factor": factor, "spec": spec, "times": times}
 
 
 DEFAULT_ITEMS: list[CatalogItem] = [
@@ -148,19 +164,43 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("GROBETON", "STA", "Grobeton", "volume", "kalınlık (cm)", "KSF-STA-GROBETON-10"),
     _i("DOLGU", "STA", "Dolgu / blokaj", "volume", "kalınlık (cm)", "KSF-STA-DOLGU-30"),
     _i("KAZI", "STA", "Kazı", "volume", "derinlik (cm)", "KSF-STA-KAZI-350"),
-    _i("KALIP", "STA", "Kalıp", "area", "", "KSF-STA-KALIP"),
+    _i("KALIP", "STA", "Kalıp", "area", "", "KSF-STA-KALIP", recipe=[_c("KALIP_ISKELESI", 1.0, "", "H")]),
+    _i("KALIP_ISKELESI", "STA", "Kalıp iskelesi (çelik boru)", "volume", "", "KSF-STA-KALIP_ISKELESI", unit="m³", poz="15.185.1006"),
+    _i("BETON_POMPAJ", "STA", "Beton pompajı / yerleştirme", "volume", "", "KSF-STA-BETON_POMPAJ", unit="m³"),
     _i("CELIK_PROFIL", "STA", "Çelik profil", "length", "profil (HEA200)", "KSF-STA-CELIK_PROFIL-HEA200"),
     _i("HASIR_CELIK", "STA", "Hasır çelik", "area", "tip (Q221)", "KSF-STA-HASIR_CELIK-Q221"),
+    # STA — çelik konstrüksiyon reçetesi (kg başına): ankraj, tij / somun / pul, kaynak, antipas + boya, montaj, vinç
+    _i("CELIK_KONSTRUKSIYON", "STA", "Çelik konstrüksiyon (imalat + montaj)", "count", "profil sınıfı (S235 / S275)", "KSF-STA-CELIK_KONSTRUKSIYON-S275",
+       unit="kg", recipe=[_c("ANKRAJ_BULONU", 0.01, "M20"), _c("KAYNAK", 0.04), _c("ANTIPAS", 0.02), _c("CELIK_BOYA", 0.02),
+                          _c("CELIK_MONTAJ", 0.03), _c("VINC", 0.004)]),
+    _i("ANKRAJ_BULONU", "STA", "Ankraj bulonu / kimyasal ankraj", "count", "çap (M20)", "KSF-STA-ANKRAJ_BULONU-M20",
+       recipe=[_c("TIJ", 1.0, "M20"), _c("SOMUN", 2.0, "M20"), _c("PUL", 2.0, "M20")]),
+    _i("TIJ", "STA", "Tij (dişli çubuk)", "count", "çap (M20)", "KSF-STA-TIJ-M20"),
+    _i("SOMUN", "STA", "Somun", "count", "çap (M20)", "KSF-STA-SOMUN-M20"),
+    _i("PUL", "STA", "Pul / rondela", "count", "çap (M20)", "KSF-STA-PUL-M20"),
+    _i("KAYNAK", "STA", "Kaynak (köşe / küt)", "length", "tip", "KSF-STA-KAYNAK"),
+    _i("ANTIPAS", "STA", "Antipas astar (çelik yüzey)", "area", "tip", "KSF-STA-ANTIPAS"),
+    _i("CELIK_BOYA", "STA", "Çelik son kat boya", "area", "tip", "KSF-STA-CELIK_BOYA"),
+    _i("CELIK_MONTAJ", "STA", "Çelik montaj işçiliği", "count", "", "KSF-STA-CELIK_MONTAJ", unit="saat"),
+    _i("VINC", "STA", "Vinç (mobil / kule)", "count", "kapasite (ton)", "KSF-STA-VINC", unit="saat"),
+    _i("IS_ISKELESI", "STA", "İş iskelesi (cephe / dış)", "area", "tip (CELIK_BORU)", "KSF-STA-IS_ISKELESI", unit="m²"),
     # MIM
     _i("DUVAR_YTONG", "MIM", "Ytong / gazbeton duvar", "wall_area", "kalınlık (cm) [x yükseklik (cm)]", "KSF-MIM-DUVAR_YTONG-20"),
     _i("DUVAR_TUGLA", "MIM", "Tuğla duvar", "wall_area", "kalınlık (cm)", "KSF-MIM-DUVAR_TUGLA-13.5"),
     _i("DUVAR_BIMS", "MIM", "Bims duvar", "wall_area", "kalınlık (cm)", "KSF-MIM-DUVAR_BIMS-19"),
     _i("DUVAR_ALCIPAN", "MIM", "Alçıpan bölme duvar", "wall_area", "sistem (2x12.5)", "KSF-MIM-DUVAR_ALCIPAN-2x12.5"),
-    _i("KAPI", "MIM", "Kapı", "count", "tip / ölçü (90x210)", "KSF-MIM-KAPI-K1_90x210"),
-    _i("PENCERE", "MIM", "Pencere", "count", "tip / ölçü (120x140)", "KSF-MIM-PENCERE-P1_120x140"),
+    _i("KAPI", "MIM", "Kapı", "count", "tip / ölçü (90x210)", "KSF-MIM-KAPI-K1_90x210",
+       recipe=[_c("LENTO", 1.0), _c("DOGRAMA_MONTAJ", 1.5), _c("MONTAJ_KOPUGU", 1.0)]),
+    _i("PENCERE", "MIM", "Pencere", "count", "tip / ölçü (120x140)", "KSF-MIM-PENCERE-P1_120x140",
+       recipe=[_c("LENTO", 1.0), _c("DOGRAMA_MONTAJ", 1.0), _c("MONTAJ_KOPUGU", 1.0)]),
+    _i("LENTO", "MIM", "Lento (kapı / pencere üstü)", "count", "tip (PREFABRIK / YERINDE)", "KSF-MIM-LENTO"),
+    _i("DOGRAMA_MONTAJ", "MIM", "Doğrama montaj işçiliği", "count", "", "KSF-MIM-DOGRAMA_MONTAJ", unit="saat"),
+    _i("MONTAJ_KOPUGU", "MIM", "Montaj köpüğü", "count", "", "KSF-MIM-MONTAJ_KOPUGU", unit="tüp"),
+    _i("DUVAR_TUTKAL", "MIM", "Gazbeton tutkalı", "count", "", "KSF-MIM-DUVAR_TUTKAL", unit="kg"),
     _i("CAM", "MIM", "Cam", "area", "tip (4+16+4)", "KSF-MIM-CAM-4+16+4"),
     _i("KOREKUYU", "MIM", "Korkuluk", "length", "tip", "KSF-MIM-KOREKUYU-CAM"),
-    _i("DOGRAMA", "MIM", "Doğrama (poz listesinden)", "count", "poz (EMP1)", "KSF-MIM-DOGRAMA-EMP1"),
+    _i("DOGRAMA", "MIM", "Doğrama (poz listesinden)", "count", "poz (EMP1)", "KSF-MIM-DOGRAMA-EMP1",
+       recipe=[_c("LENTO", 1.0), _c("DOGRAMA_MONTAJ", 1.5), _c("MONTAJ_KOPUGU", 1.0)]),
     # INC
     _i("SIVA", "INC", "Sıva", "wall_area", "tip (ALCI / CIMENTO)", "KSF-INC-SIVA-ALCI"),
     _i("BOYA", "INC", "Boya", "wall_area", "tip", "KSF-INC-BOYA-PLASTIK"),
@@ -177,11 +217,14 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("KORUMA_SAPI", "IZO", "Koruma şapı (temel yalıtımı üstü)", "area", "kalınlık (cm)", "KSF-IZO-KORUMA_SAPI-5"),
     _i("DRENAJ", "IZO", "Drenaj levhası / drenaj borusu", "area", "tip", "KSF-IZO-DRENAJ"),
     # CEP
-    _i("KOMPOZIT_PANEL", "CEP", "Kompozit cephe paneli", "area", "kalınlık / renk", "KSF-CEP-KOMPOZIT_PANEL-4MM"),
-    _i("GIYDIRME_CEPHE", "CEP", "Giydirme cephe", "area", "sistem", "KSF-CEP-GIYDIRME_CEPHE"),
-    _i("MANTOLAMA", "CEP", "Mantolama", "area", "malzeme + kalınlık (EPS_5)", "KSF-CEP-MANTOLAMA-EPS_5"),
-    _i("CEPHE_TASI", "CEP", "Cephe taşı / kaplama", "area", "tip", "KSF-CEP-CEPHE_TASI"),
-    _i("CEPHE_BOYA", "CEP", "Dış cephe boyası", "area", "tip", "KSF-CEP-CEPHE_BOYA"),
+    _i("KOMPOZIT_PANEL", "CEP", "Kompozit cephe paneli", "area", "kalınlık / renk", "KSF-CEP-KOMPOZIT_PANEL-4MM",
+       recipe=[_c("IS_ISKELESI", 1.0), _c("CEPHE_TASIYICI_PROFIL", 2.5, "ALU"), _c("ANKRAJ_BULONU", 1.5, "M10")]),
+    _i("GIYDIRME_CEPHE", "CEP", "Giydirme cephe", "area", "sistem", "KSF-CEP-GIYDIRME_CEPHE",
+       recipe=[_c("IS_ISKELESI", 1.0), _c("ANKRAJ_BULONU", 1.2, "M12"), _c("VINC", 0.05)]),
+    _i("MANTOLAMA", "CEP", "Mantolama", "area", "malzeme + kalınlık (EPS_5)", "KSF-CEP-MANTOLAMA-EPS_5", recipe=[_c("IS_ISKELESI", 1.0)]),
+    _i("CEPHE_TASI", "CEP", "Cephe taşı / kaplama", "area", "tip", "KSF-CEP-CEPHE_TASI", recipe=[_c("IS_ISKELESI", 1.0)]),
+    _i("CEPHE_BOYA", "CEP", "Dış cephe boyası", "area", "tip", "KSF-CEP-CEPHE_BOYA", recipe=[_c("IS_ISKELESI", 1.0)]),
+    _i("CEPHE_TASIYICI_PROFIL", "CEP", "Cephe taşıyıcı profil (alt konstrüksiyon)", "length", "malzeme (ALU / GALVANIZ)", "KSF-CEP-CEPHE_TASIYICI_PROFIL-ALU"),
     # CEP — mantolama sistemi bileşenleri
     _i("MANTOLAMA_YAPISTIRICI", "CEP", "Mantolama yapıştırıcısı", "area", "", "KSF-CEP-MANTOLAMA_YAPISTIRICI"),
     _i("MANTOLAMA_DUBEL", "CEP", "Mantolama dübeli", "count", "boy (mm)", "KSF-CEP-MANTOLAMA_DUBEL-120"),
@@ -191,15 +234,26 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("SOVE", "CEP", "Söve", "length", "tip / en (cm)", "KSF-CEP-SOVE-15"),
     _i("SILME", "CEP", "Silme / kat silmesi", "length", "tip", "KSF-CEP-SILME"),
     _i("DENIZLIK", "CEP", "Denizlik", "length", "tip (MERMER / ALU)", "KSF-CEP-DENIZLIK-MERMER"),
-    _i("PREKAST_PANEL", "CEP", "Prekast cephe paneli (etiket kodu bazında)", "label_count", "panel kodu (GP-4 / EP17)", "KSF-CEP-PREKAST_PANEL"),
+    _i("PREKAST_PANEL", "CEP", "Prekast cephe paneli (etiket kodu bazında)", "label_count", "panel kodu (GP-4 / EP17)", "KSF-CEP-PREKAST_PANEL",
+       recipe=[_c("ANKRAJ_BULONU", 4.0, "M20"), _c("KAYNAK", 1.2), _c("PREKAST_MONTAJ", 2.0), _c("VINC", 0.5), _c("PANEL_DERZ", 6.0)]),
+    _i("PREKAST_MONTAJ", "CEP", "Prekast panel montaj işçiliği", "count", "", "KSF-CEP-PREKAST_MONTAJ", unit="saat"),
+    _i("PANEL_DERZ", "CEP", "Panel derz dolgusu (mastik + fitil)", "length", "tip", "KSF-CEP-PANEL_DERZ"),
     _i("CEPHE_BRUT", "CEP", "Cephe brüt alanı (görünüş dış hattı)", "area", "cephe adı (ON / ARKA)", "KSF-CEP-CEPHE_BRUT-ON"),
     _i("MANTOLAMA_SISTEM", "CEP", "Mantolama sistemi (katmanlı)", "area", "yalıtım + kalınlık (EPS_5)",
        "KSF-CEP-MANTOLAMA_SISTEM-EPS_5",
        [_c("EPS", 1.0, "5"), _c("MANTOLAMA_YAPISTIRICI"), _c("MANTOLAMA_DUBEL", 6.0, "120"), _c("MANTOLAMA_FILE"),
-        _c("MANTOLAMA_SIVA"), _c("CEPHE_BOYA"), _c("KOSE_PROFILI", 0.3)]),
+        _c("MANTOLAMA_SIVA"), _c("CEPHE_BOYA"), _c("KOSE_PROFILI", 0.3)], recipe=[_c("IS_ISKELESI", 1.0)]),
     # CAT
     _i("CATI_MEMBRAN", "CAT", "Çatı membranı", "area", "tip", "KSF-CAT-CATI_MEMBRAN-3MM"),
-    _i("CATI_SANDVIC_PANEL", "CAT", "Sandviç panel", "area", "kalınlık (mm)", "KSF-CAT-CATI_SANDVIC_PANEL-50"),
+    _i("CATI_SANDVIC_PANEL", "CAT", "Sandviç panel", "area", "kalınlık (mm)", "KSF-CAT-CATI_SANDVIC_PANEL-50",
+       recipe=[_c("PANEL_VIDASI", 6.0), _c("MAHYA_KAPAMA", 0.15), _c("PANEL_MONTAJ", 0.25)]),
+    _i("PANEL_VIDASI", "CAT", "Panel vidası (matkap uçlu, contalı)", "count", "", "KSF-CAT-PANEL_VIDASI"),
+    _i("MAHYA_KAPAMA", "CAT", "Mahya / kenar kapama sacı", "length", "tip", "KSF-CAT-MAHYA_KAPAMA"),
+    _i("PANEL_MONTAJ", "CAT", "Panel montaj işçiliği", "count", "", "KSF-CAT-PANEL_MONTAJ", unit="saat"),
+    # CAT — çelik çatı sistemi (m² çatı alanı): çelik konstrüksiyon kg/m² reçetesi zincirleme açılır
+    _i("CELIK_CATI", "CAT", "Çelik çatı sistemi (katmanlı)", "area", "kaplama (SANDVIC_PANEL / TRAPEZ)", "KSF-CAT-CELIK_CATI-SANDVIC_PANEL",
+       [_c("CELIK_KONSTRUKSIYON", 25.0, "S275"), _c("ASIK", 1.6, "C120"), _c("CATI_SANDVIC_PANEL", 1.05, "50"),
+        _c("CATI_OLUK", 0.12), _c("CATI_DERE", 0.05, "100")]),
     _i("CATI_KIREMIT", "CAT", "Kiremit / shingle", "area", "tip", "KSF-CAT-CATI_KIREMIT"),
     _i("CATI_OLUK", "CAT", "Oluk", "length", "tip", "KSF-CAT-CATI_OLUK-PVC"),
     _i("CATI_DERE", "CAT", "Dere / yağmur iniş borusu", "length", "çap (mm)", "KSF-CAT-CATI_DERE-100"),
@@ -346,10 +400,11 @@ class Catalog:
     def upsert_item(self, data: dict) -> CatalogItem:
         it = CatalogItem(code=data["code"], discipline=data["discipline"], name=data["name"], measure=data["measure"],
                          unit=data.get("unit") or "", spec_label=data.get("spec_label") or "", example=data.get("example") or "",
-                         custom=True, components=data.get("components") or [], poz=(data.get("poz") or "").strip())
+                         custom=True, components=data.get("components") or [], poz=(data.get("poz") or "").strip(),
+                         recipe=data.get("recipe") or [])
         if it.discipline not in self.disciplines:
             raise ValueError(f"Bilinmeyen disiplin kodu: {it.discipline}")
-        for c in it.components:
+        for c in it.components + it.recipe:
             if c["code"] == it.code:
                 raise ValueError("Kalem kendi bileşeni olamaz")
             if c["code"] not in self.items:
@@ -386,7 +441,7 @@ class Catalog:
         for c in data.get("removed") or []:
             cat.items.pop(c, None)
         for d in data.get("items") or []:
-            d = {k: v for k, v in d.items() if k in {"code", "discipline", "name", "measure", "unit", "spec_label", "example", "custom", "components", "poz"}}
+            d = {k: v for k, v in d.items() if k in {"code", "discipline", "name", "measure", "unit", "spec_label", "example", "custom", "components", "poz", "recipe"}}
             it = CatalogItem(**d)
             cat.items[it.code] = it
         return cat

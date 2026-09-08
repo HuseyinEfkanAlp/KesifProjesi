@@ -69,7 +69,7 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "finish_area_m2": None,       # şap / kaplama alanı elle (m²); doluysa mahal yazıları kullanılmaz
     "screed_cm": 5.0,             # şap kalınlığı (cm) — seçili mahal alanından türetilir
     "lean_concrete_cm": 10.0,     # grobeton kalınlığı (cm) — temel alanından türetilir
-    "derived_off": "",            # kapatılan türetme kuralları (virgülle: astar,tavan,sap,kaplama,temel_yalitim,grobeton,koruma_sapi)
+    "derived_off": "",            # kapatılan türetme kuralları (virgülle: astar,tavan,sap,kaplama,temel_yalitim,grobeton,koruma_sapi,recete)
 }
 
 

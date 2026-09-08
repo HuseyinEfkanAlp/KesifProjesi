@@ -19,6 +19,7 @@ from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary
                            expand_systems, slug, sort_items, standard_items, structural_items)
 from .standard.catalog import Catalog, parse_layer
 from .quantity.engine import ElementData, QuantityLine, QuantityParams, compute_all
+from .quantity.recipes import expand_recipes
 from .quantity.summary import summarize
 
 MIN_INCLUDED_CONFIDENCE = 0.4   # altı: eleman listede kalır ama metraja dahil edilmez (kullanıcı açabilir)
@@ -249,6 +250,8 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
         systems = project_systems(project, session, catalog=catalog, items=items, drawings=drawings)
         if systems["systems"]:
             items = expand_systems(items, systems["systems"], catalog)
+        off = {x.strip() for x in str(params.get("derived_off") or "").split(",") if x.strip()}
+        items = expand_recipes(items, catalog, storey_height=project.storey_height, off="recete" in off)
     return sort_items(items)
 
 

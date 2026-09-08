@@ -107,3 +107,20 @@ def default_poz(kind: str, group: str) -> tuple[str, str] | None:
         if k == kind and rx.match(group or ""):
             return poz, name
     return None
+
+
+# ---------------------------------------------------------------- reçeteler (sezgisel kalemler)
+#
+# Katalog kalemlerinin reçetesi CatalogItem.recipe içindedir. Sezgisel (katalog dışı) türler için reçete burada:
+# tür -> [{"code", "factor", "spec", "times"}]. Miktar = kalem miktarı × factor (× H, times == "H" ise).
+# Değerler yaygın uygulama varsayılanıdır; kalem notunda "reçete varsayılanı" yazar, katalogdan düzenlenir.
+RECIPES_BY_KIND: dict[str, list[dict]] = {
+    "kalip": [{"code": "KALIP_ISKELESI", "factor": 1.0, "spec": "", "times": "H"}],   # m³ = kalıp m² × kat yüksekliği
+    "beton": [{"code": "BETON_POMPAJ", "factor": 1.0, "spec": "", "times": ""}],
+    "duvar": [{"code": "DUVAR_TUTKAL", "factor": 4.0, "spec": "", "times": ""}],      # kg / m² (gazbeton tutkalı, 20 cm blok)
+    "pencere": [{"code": "LENTO", "factor": 1.0, "spec": "", "times": ""}, {"code": "DOGRAMA_MONTAJ", "factor": 1.0, "spec": "", "times": ""},
+                {"code": "MONTAJ_KOPUGU", "factor": 1.0, "spec": "", "times": ""}],
+    "kapi": [{"code": "LENTO", "factor": 1.0, "spec": "", "times": ""}, {"code": "DOGRAMA_MONTAJ", "factor": 1.5, "spec": "", "times": ""},
+             {"code": "MONTAJ_KOPUGU", "factor": 1.0, "spec": "", "times": ""}],
+}
+RECIPE_MAX_DEPTH = 4

@@ -408,6 +408,9 @@ export interface CatalogItem {
   /** Katmanlı sistem: ölçülünce ayrı kalem olarak yazılacak bileşenler (miktar × factor) */
   components: { code: string; factor: number; spec: string }[]
   is_system: boolean
+  /** Reçete: keşfe girince kendiliğinden yazılan alt işler; times "H": çarpan × kat yüksekliği */
+  recipe?: { code: string; factor: number; spec: string; times?: string }[]
+  has_recipe?: boolean
 }
 
 /** Projedeki katmanlı sistemler ve bileşen kararları */

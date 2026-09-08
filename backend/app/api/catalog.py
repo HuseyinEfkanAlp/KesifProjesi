@@ -22,6 +22,7 @@ class ItemIn(BaseModel):
     example: str | None = None
     components: list[dict] | str | None = None   # [{"code","factor","spec"}] ya da "OSB×1:11; MERTEK×1.7"
     poz: str | None = None                       # ÇŞB poz numarası
+    recipe: list[dict] | str | None = None       # reçete: "IS_ISKELESI×1; ANKRAJ_BULONU×1.5:M12; KALIP_ISKELESI×1H"
 
 
 class DisciplineIn(BaseModel):

@@ -412,6 +412,26 @@ Katalogdaki kalemin `poz` alanı doluysa (Standart sayfası) o kullanılır; sez
 denenir. Keşif yanıtı `by_group` (iş grubu bazında), `rules` (uygulanan kurallar) ve her kalemde `poz` / `work_group`
 taşır; Excel'de "İş grubu" ve "Poz" sütunları vardır. Kaynaklar: yfk.csb.gov.tr birim fiyat tarifleri, birimfiyat.net poz sayfaları.
 
+## Reçeteler: her kalemden alt işler (`quantity/recipes.py`, `CatalogItem.recipe`, `rules.RECIPES_BY_KIND`)
+
+Zaman ya da maliyet doğuran her alt iş keşfe girer: ana kalem keşfe yazılınca reçetesi sorulmadan açılır ("reçete" rozeti,
+`detail.recipe / parent / depth`), bileşenin kendi reçetesi de zincirleme açılır (derinlik ≤ 4, aynı kod zincirde tekrar etmez):
+
+```
+Çelik çatı 1.000 m²   → çelik konstrüksiyon 25 t → ankraj bulonu 250 → tij 250, somun 500, pul 500
+                                                 → kaynak 1.000 m, antipas 500 m², boya 500 m², montaj 750 saat, vinç 100 saat
+                      → aşık 1.600 m, sandviç panel 1.050 m² → panel vidası, mahya kapama, panel montajı
+Kalıp 800 m²          → kalıp iskelesi 800 × H m³ (ÇŞB 15.185.1006)     Beton → pompaj m³
+Cephe (mantolama / kompozit / giydirme / taş / boya) → iş iskelesi m² (+ taşıyıcı profil, ankraj, vinç)
+Prekast panel (adet)  → ankraj 4, kaynak 1,2 m, montaj 2 saat, vinç 0,5 saat, derz 6 m
+Pencere / kapı / doğrama (adet) → lento, montaj saati, montaj köpüğü      Duvar m² → gazbeton tutkalı 4 kg
+```
+
+Reçete biçimi (Standart sayfası): `KOD×çarpan:özellik; …`, çarpan sonundaki `H` kat yüksekliğiyle çarpar
+(`KALIP_ISKELESI×1H`). Çarpanlar yaygın uygulama varsayılanıdır; satır notunda "reçete varsayılanı" yazar. Çizimde zaten
+ölçülmüş bir kalem (ör. iskele) reçeteyle çift yazılmaz, not düşülür. Tümünü kapatmak: `derived_off` içine `recete`.
+İşçilik saatleri (montaj, kaynak) ayrı kalemdir ve Birim Fiyatlar'da adam-saat / fiyatla maliyete girer.
+
 ## Aynı paftada birden çok disiplin (`analyzer.analyze_drawing(extra_disciplines=…)`)
 
 Bir paftada mimari + elektrik ya da elektrik + mekanik birlikte çizilmiş olabilir. Her çizimin bir **ana disiplini** ve

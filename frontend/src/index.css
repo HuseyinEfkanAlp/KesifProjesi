@@ -299,3 +299,4 @@ details.section > summary::before { margin-right: 8px; }
 .chip-btn { background: #eef2f6; color: var(--text); border: 1px dashed var(--border); border-radius: 10px; padding: 1px 8px; font-size: 11px; }
 .chip-btn.on { background: #d9efd9; border-style: solid; border-color: #9fcf9f; color: #1e5e1e; }
 .chip-btn:hover { background: #e0e6ec; }
+.badge.recipe { background: #e8f1fb; color: #1f4e78; }
