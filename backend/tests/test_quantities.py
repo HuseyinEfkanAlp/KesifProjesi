@@ -77,4 +77,5 @@ def test_end_to_end_storey(storey_dxf):
     wb = load_workbook(BytesIO(xlsx))
     assert wb.sheetnames == ["Keşif", "Statik Özet", "Kat Bazında", "Eleman Metrajı", "Maliyet"]
     assert wb["Eleman Metrajı"].max_row == 1 + len(lines)
-    assert wb["Keşif"].max_row == 4 + len(items)
+    assert wb["Keşif"].max_row >= 4 + len(items) + 3      # kalemler + tür toplamları bloğu
+    assert any(c.value == "TÜR TOPLAMLARI" for row in wb["Keşif"].iter_rows(min_col=1, max_col=1) for c in row)

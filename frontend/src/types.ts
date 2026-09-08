@@ -371,6 +371,8 @@ export interface Boq {
   by_discipline: { discipline: string; label: string; items: BoqItem[] }[]
   /** İş grubuna göre (kaba yapı, ince işler, mekanik, elektrik, altyapı) */
   by_group: { group: string; label: string; items: BoqItem[] }[]
+  /** Tür toplamları: tüm duvar m², tüm cam m², tüm kapı adet… (sistem başlığı ve bilgi satırları hariç) */
+  kind_totals: { kind: string; label: string; unit: string; quantity: number; count: number; items: number; work_group: string; work_group_label: string }[]
   work_groups: Record<string, string>
   /** Uygulanan ölçü kuralları (ÇŞB tarifleri) */
   rules: Record<string, { text: string; source: string }>

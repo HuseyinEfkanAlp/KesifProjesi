@@ -102,10 +102,10 @@ def test_boq_schedule_poz_not_double_counted():
     win = {"etype": "window", "b": 1.4, "h": 1.9, "count": 1, "name": "EMP1", "meta": {"poz": "EMP1"}}
     drawings = [{"label": "Z", "storey_count": 1, "storey_height": 3.0, "slab_thickness": 0.0, "elements": walls + [win]}]
     items = {i.key: i for i in architectural_items(drawings, {}, schedule_poz={"EMP1"})}
-    assert "pencere:emp1_140x190" not in items and "cam:*" not in items
+    assert "pencere:emp1_140x190" not in items and not any(k.startswith("cam:") for k in items)
     assert items["duvar:ytong:20"].quantity == pytest.approx(10 * 3.0 - 1.4 * 1.9)
     items = {i.key: i for i in architectural_items(drawings, {})}
-    assert "pencere:emp1_140x190" in items and items["cam:*"].quantity == pytest.approx(1.4 * 1.9)
+    assert "pencere:emp1_140x190" in items and items["cam:140x190"].quantity == pytest.approx(1.4 * 1.9)
     # poz listesi kalemi: ölçü biliniyorsa cam m² (kapı hariç)
     cat = Catalog()
     dog = [{"etype": "dograma", "subtype": "EMP1", "name": "EMP1", "layer": "(poz listesi)", "count": 82, "length": 0, "area": 0,
@@ -114,7 +114,7 @@ def test_boq_schedule_poz_not_double_counted():
             "b": 1.3, "h": 2.5, "meta": {"ksf_code": "DOGRAMA", "measure": "count", "spec": "EMP3", "opening_kind": "door"}}]
     std = {i.key: i for i in standard_items([{"label": "D", "storey_count": 1, "elements": dog}], {}, cat)}
     assert std["dograma:emp1"].quantity == 82 and std["dograma:emp3"].quantity == 9
-    assert std["cam:*"].quantity == pytest.approx(82 * 1.4 * 1.9)
+    assert std["cam:140x190"].quantity == pytest.approx(82 * 1.4 * 1.9)
 
 
 def test_geometry_poor_plan_warns(tmp_path):

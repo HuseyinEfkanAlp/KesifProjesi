@@ -257,13 +257,14 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
             if (_g(e, "meta") or {}).get("poz") in schedule_poz:
                 continue
             name = _g(e, "name") or f"{_fmt_cm(b)}x{_fmt_cm(h)}"
-            group = slug(f"{name}_{_fmt_cm(b)}x{_fmt_cm(h)}")
+            size = f"{_fmt_cm(b)}x{_fmt_cm(h)}"
+            group = slug(f"{name}_{size}")
             kind = "kapi" if et == "door" else "pencere"
             acc.add(kind, group, f"{KIND_META[kind][0]} {name} ({_fmt_cm(b)}×{_fmt_cm(h)} cm)", n * mult, count=n * mult,
-                    width_cm=0, area_m2=area * mult, perimeter_m=2 * (b + h) * n * mult, width_m=b * n * mult)
+                    width_cm=0, area_m2=area * mult, perimeter_m=2 * (b + h) * n * mult, width_m=b * n * mult, size=size)
             if et == "window":
-                acc.add("cam", "*", "Cam (pencere alanı)", area * mult, count=n * mult,
-                        note="Pencere genişlik × yükseklik; doğrama payı düşülmedi")
+                acc.add("cam", slug(size), f"Cam {_fmt_cm(b)}×{_fmt_cm(h)} cm ({name})", area * mult, count=n * mult,
+                        note="Pencere genişlik × yükseklik; doğrama payı düşülmedi", size=size)
         gross = sum(wall_groups.values())
         # boşluklar duvar gruplarından alanlarıyla orantılı düşülür (0,10 m² altı boşluk düşülmez: ÇŞB 15.225)
         net_total = 0.0
@@ -400,14 +401,16 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
                     if len(dims) >= 2:
                         b, h = dims[-2] / 100.0, dims[-1] / 100.0
                 if b and h:
-                    extra.update(area_m2=b * h * n * mult, perimeter_m=2 * (b + h) * n * mult, width_m=b * n * mult)
+                    extra.update(area_m2=b * h * n * mult, perimeter_m=2 * (b + h) * n * mult, width_m=b * n * mult,
+                                 size=f"{_fmt_cm(b)}x{_fmt_cm(h)}")
                     if kind == "dograma":
                         note = f"{_fmt_cm(b)}×{_fmt_cm(h)} cm ({'kapı' if okind == 'door' else 'pencere / vitrin'}); ölçü görünüş / doğrama paftasından"
             acc.add(kind, group, label, qty * mult, count=n * mult, note=note,
                     meta=(kname, unit, disc_key, catalog.discipline_name(p.discipline)), poz=(item.poz if item else ""), **extra)
             if kind == "dograma" and b and h and meta.get("opening_kind", "window") == "window":
-                acc.add("cam", "*", "Cam (doğrama poz listesi)", b * h * n * mult, count=n * mult,
-                        note="Poz adedi × doğrama ölçüsü (genişlik × yükseklik); kapı pozları hariç, doğrama payı düşülmedi")
+                acc.add("cam", slug(f"{_fmt_cm(b)}x{_fmt_cm(h)}"), f"Cam {_fmt_cm(b)}×{_fmt_cm(h)} cm ({spec})", b * h * n * mult, count=n * mult,
+                        note="Poz adedi × doğrama ölçüsü (genişlik × yükseklik); kapı pozları hariç, doğrama payı düşülmedi",
+                        size=f"{_fmt_cm(b)}x{_fmt_cm(h)}")
     return list(acc.items.values())
 
 
@@ -469,11 +472,22 @@ def boq_summary(items: list[BoqItem]) -> dict:
     kinds = {k: {"label": v[0], "unit": v[1], "discipline": v[2]} for k, v in KIND_META.items()}
     for it in items:
         kinds.setdefault(it.kind, {"label": it.kind_label, "unit": it.unit, "discipline": it.discipline})
+    # tür toplamları: aynı türün (duvar, cam, kapı, körkasa…) tüm kalemleri; sistem başlığı ve bilgi satırları hariç
+    totals: dict[str, dict] = {}
+    for it in sort_items(items):
+        if it.detail.get("system") or it.detail.get("info") or it.quantity <= 0:
+            continue
+        t = totals.setdefault(it.kind, {"kind": it.kind, "label": it.kind_label, "unit": it.unit, "quantity": 0.0, "count": 0.0,
+                                        "items": 0, "work_group": it.work_group, "work_group_label": WORK_GROUPS.get(it.work_group, it.work_group)})
+        t["quantity"] = round(t["quantity"] + it.quantity, 3)
+        t["count"] += it.count
+        t["items"] += 1
     return {
         "items": [it.to_dict() for it in sort_items(items)],
         "by_discipline": [{"discipline": d, "label": lbl, "items": its} for d, (lbl, its) in by_disc.items()],
         "by_group": [{"group": g, "label": WORK_GROUPS.get(g, g), "items": by_group[g]}
                      for g in WORK_GROUP_ORDER + [g for g in by_group if g not in WORK_GROUPS] if g in by_group],
+        "kind_totals": list(totals.values()),
         "work_groups": WORK_GROUPS,
         "rules": {k: {"text": r.text, "source": r.source} for k, r in RULES.items()},
         "kinds": kinds,

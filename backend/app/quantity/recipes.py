@@ -28,60 +28,71 @@ def recipe_of(item: BoqItem, catalog: Catalog) -> list[dict]:
 
 def expand_recipes(items: list[BoqItem], catalog: Catalog, storey_height: float | None = None,
                    off: bool = False) -> list[BoqItem]:
-    """Kalem listesine reçete satırlarını ekler (var olanlar korunur). off=True: reçete kapalı."""
+    """Kalem listesine reçete satırlarını ekler (var olanlar korunur). off=True: reçete kapalı.
+
+    Seviye seviye açılır: bir derinlikteki tüm üst kalemler işlendikten sonra o derinlikte oluşan her alt kalem **bir kez**
+    (toplanmış miktarıyla) bir sonraki seviyenin üst kalemi olur. Böylece aynı alt kaleme birden çok üst kalemden gelen
+    katkılar torun kalemlerde tekrar çarpılmaz (170 lento 14 pozdan geliyorsa lento betonu yine 170 × 0,03'tür)."""
     if off:
         return items
     H = float(storey_height or 0.0)
     acc = _Acc()
-    queue: list[tuple[BoqItem, int, tuple[str, ...]]] = [(it, 0, (it.kind,)) for it in items if not it.detail.get("recipe")]
-    warnings: list[str] = []
-    while queue:
-        parent, depth, chain = queue.pop(0)
-        if depth >= RECIPE_MAX_DEPTH or parent.quantity <= 0:
-            continue
-        for comp in recipe_of(parent, catalog):
-            code = comp["code"]
-            kind = code.lower()
-            if kind in chain:
-                continue
-            cit = catalog.get(code)
-            if not cit:
-                warnings.append(f"{parent.label}: reçetedeki {code} katalogda yok")
-                continue
-            when = str(comp.get("when") or "")
-            if when and parent.detail.get("opening_kind", "window") != when:
-                continue   # yalnız pencere (ya da yalnız kapı) pozlarına uygulanan bileşen
-            factor = float(comp.get("factor") or 1.0)
-            times = str(comp.get("times") or "").upper()
-            times_h = times == "H"
-            base = parent.quantity
-            if times_h:
-                if H <= 0:
-                    warnings.append(f"{parent.label} → {cit.name}: kat yüksekliği girilmedi, miktar hesaplanamadı")
-                    continue
-                factor *= H
-            elif times in ("PER", "WID", "AREA"):
-                key_d = {"PER": "perimeter_m", "WID": "width_m", "AREA": "area_m2"}[times]
-                base = float(parent.detail.get(key_d) or 0.0)
-                if base <= 0:
-                    continue   # boşluk ölçüsü bilinmiyor (poz ölçüsü okunmadı): çevre / genişlik kalemi yazılmaz
-            spec = str(comp.get("spec") or "").strip()
-            group = slug(spec) if spec else "*"
-            qty = base * factor
-            key = f"{kind}:{group}"
-            first = key not in acc.items
-            times_txt = {"H": " × H", "PER": " × boşluk çevresi", "WID": " × boşluk genişliği", "AREA": " × boşluk alanı"}.get(times, "")
-            note = (f"Reçete varsayılanı: {parent.kind_label} × {float(comp.get('factor') or 1.0):g}{times_txt}"
-                    + "; çarpan katalogdan düzenlenir") if first else None
-            child = acc.add(kind, group, cit.name + (f" {spec}" if spec else ""), qty, note=note,
-                            meta=(cit.name, cit.unit, f"ksf:{cit.discipline}", catalog.discipline_name(cit.discipline)),
-                            poz=cit.poz, recipe=True, parents=1, **({"parent": parent.key, "depth": depth + 1} if first else {}))
-            src = child.detail.setdefault("from", [])
-            if isinstance(src, list) and len(src) < 8 and parent.label not in src:
-                src.append(parent.label)
-            queue.append((child, depth + 1, chain + (kind,)))
-    out = list(items)
     existing = {it.key for it in items}
+    chains: dict[str, frozenset] = {it.key: frozenset([it.kind]) for it in items}
+    frontier: list[BoqItem] = [it for it in items if not it.detail.get("recipe")]
+    depth = 0
+    while frontier and depth < RECIPE_MAX_DEPTH:
+        new_keys: dict[str, frozenset] = {}
+        for parent in frontier:
+            if parent.quantity <= 0:
+                continue
+            chain = chains.get(parent.key, frozenset([parent.kind]))
+            for comp in recipe_of(parent, catalog):
+                code = comp["code"]
+                kind = code.lower()
+                if kind in chain:
+                    continue
+                cit = catalog.get(code)
+                if not cit:
+                    continue
+                when = str(comp.get("when") or "")
+                if when and parent.detail.get("opening_kind", "window") != when:
+                    continue   # yalnız pencere (ya da yalnız kapı) pozlarına uygulanan bileşen
+                factor = float(comp.get("factor") or 1.0)
+                times = str(comp.get("times") or "").upper()
+                times_h = times == "H"
+                base = parent.quantity
+                if times_h:
+                    if H <= 0:
+                        continue
+                    factor *= H
+                elif times in ("PER", "WID", "AREA"):
+                    key_d = {"PER": "perimeter_m", "WID": "width_m", "AREA": "area_m2"}[times]
+                    base = float(parent.detail.get(key_d) or 0.0)
+                    if base <= 0:
+                        continue   # boşluk ölçüsü bilinmiyor (poz ölçüsü okunmadı): çevre / genişlik kalemi yazılmaz
+                spec = str(comp.get("spec") or "").strip()
+                if spec == "$SIZE":
+                    spec = str(parent.detail.get("size") or "")     # üst kalemin ölçüsü (körkasa 140x190, kasa 90x210)
+                group = slug(spec) if spec else "*"
+                qty = base * factor
+                key = f"{kind}:{group}"
+                first = key not in acc.items
+                times_txt = {"H": " × H", "PER": " × boşluk çevresi", "WID": " × boşluk genişliği", "AREA": " × boşluk alanı"}.get(times, "")
+                note = (f"Reçete varsayılanı: {parent.kind_label} × {float(comp.get('factor') or 1.0):g}{times_txt}"
+                        + "; çarpan katalogdan düzenlenir") if first else None
+                child = acc.add(kind, group, cit.name + (f" {spec}" if spec else ""), qty, note=note,
+                                meta=(cit.name, cit.unit, f"ksf:{cit.discipline}", catalog.discipline_name(cit.discipline)),
+                                poz=cit.poz, recipe=True, parents=1, **({"parent": parent.key, "depth": depth + 1} if first else {}),
+                                **({"size": spec} if spec and comp.get("spec") == "$SIZE" else {}))
+                src = child.detail.setdefault("from", [])
+                if isinstance(src, list) and len(src) < 8 and parent.label not in src:
+                    src.append(parent.label)
+                new_keys[key] = new_keys.get(key, frozenset()) | chain | {kind}
+        chains.update(new_keys)
+        frontier = [acc.items[k] for k in new_keys]
+        depth += 1
+    out = list(items)
     for it in acc.items.values():
         if it.key in existing:
             # aynı kalem zaten ölçülmüş (ör. çizimde iskele çizilmiş): reçete miktarı üstüne eklenmez, not düşülür
@@ -89,7 +100,4 @@ def expand_recipes(items: list[BoqItem], catalog: Catalog, storey_height: float 
             base.notes.append(f"Reçete de {it.quantity:,.1f} {it.unit} öneriyor (çizimden ölçülen esas alındı)")
             continue
         out.append(it)
-    for w in warnings:
-        if out and w not in out[0].notes:
-            pass
     return out

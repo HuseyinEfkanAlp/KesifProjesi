@@ -50,6 +50,21 @@ def build_workbook(project: dict, lines: list[QuantityLine], summary: dict, cost
     for it in boq:
         ws.append([it.get("work_group_label") or "", it.get("poz") or "", it["discipline_label"], it["kind_label"], it["label"],
                    it["unit"], it["quantity"], it.get("count") or "", "; ".join(it.get("notes") or [])])
+    # tür toplamları (duvar, cam, kapı, körkasa…): sistem başlığı ve bilgi satırları hariç
+    totals: dict[str, list] = {}
+    for it in boq:
+        d = it.get("detail") or {}
+        if d.get("system") or d.get("info"):
+            continue
+        t = totals.setdefault(it["kind"], [it.get("work_group_label") or "", it["kind_label"], it["unit"], 0.0, 0])
+        t[3] += float(it["quantity"] or 0)
+        t[4] += 1
+    if totals:
+        ws.append([])
+        ws.append(["TÜR TOPLAMLARI"])
+        ws.append(["İş grubu", "Tür", "Birim", "Miktar", "Kalem sayısı"])
+        for t in totals.values():
+            ws.append([t[0], t[1], t[2], round(t[3], 3), t[4]])
     _autosize(ws)
 
     # ---- Statik Metraj Özeti ----

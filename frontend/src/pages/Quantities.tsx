@@ -39,13 +39,46 @@ export default function Quantities() {
         </div>
       )}
 
+      {boq.kind_totals.length > 0 && (
+        <div className="panel">
+          <h3 style={{ marginTop: 0 }}>Tür toplamları <span className="muted" style={{ fontWeight: 400 }}>· proje geneli</span></h3>
+          <div className="totals-grid">
+            {boq.by_group.map((g) => {
+              const rows = boq.kind_totals.filter((t) => t.work_group === g.group)
+              if (rows.length === 0) return null
+              return (
+                <div key={g.group} className="totals-block">
+                  <div className="eyebrow">{g.label}</div>
+                  <table className="table-compact totals-table">
+                    <tbody>
+                      {rows.map((t) => (
+                        <tr key={t.kind}>
+                          <td>{t.label}{t.items > 1 && <span className="muted hint"> · {t.items} kalem</span>}</td>
+                          <td className="num"><b>{fmt(t.quantity, t.unit === 'adet' || t.unit === 'kg' ? 0 : 1)}</b> {t.unit}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {boq.by_group.map((g) => (
         <div className="panel" key={g.group}>
           <h3>{g.label} <span className="muted" style={{ fontWeight: 400 }}>· {g.items.length} kalem</span></h3>
           <table>
             <thead><tr><th>Poz</th><th>Disiplin</th><th>Tür</th><th>Kalem</th><th className="num">Miktar</th><th>Birim</th><th className="num">Adet / hat</th><th>Not</th></tr></thead>
             <tbody>
-              {g.items.map((it) => (
+              {g.items.map((it, idx) => {
+                const next = g.items[idx + 1]
+                const sameKind = g.items.filter((x) => x.kind === it.kind && !x.detail?.system && !x.detail?.info)
+                const showSubtotal = (!next || next.kind !== it.kind) && sameKind.length > 1
+                const subtotal = sameKind.reduce((s, x) => s + x.quantity, 0)
+                return (
+                <>
                 <tr key={it.key} className={it.detail?.system ? 'system-row' : ''}>
                   <td className="mono" title={it.poz_name}>{it.poz || <span className="muted">-</span>}</td>
                   <td><span className={`badge disc-${it.discipline.split(':')[0]}`}>{it.discipline_label.split(' (')[0]}</span></td>
@@ -56,7 +89,19 @@ export default function Quantities() {
                   <td className="num">{it.count ? fmt(it.count, 0) : '-'}</td>
                   <td className="muted">{it.notes.join('; ')}</td>
                 </tr>
-              ))}
+                {showSubtotal && (
+                  <tr key={`${it.key}-sub`} className="subtotal">
+                    <td colSpan={3} className="muted">{it.kind_label} toplamı</td>
+                    <td className="muted">{sameKind.length} kalem</td>
+                    <td className="num"><b>{fmt(subtotal, it.unit === 'adet' || it.unit === 'kg' ? 0 : 2)}</b></td>
+                    <td>{it.unit}</td>
+                    <td className="num">{sameKind.reduce((s, x) => s + x.count, 0) ? fmt(sameKind.reduce((s, x) => s + x.count, 0), 0) : ''}</td>
+                    <td></td>
+                  </tr>
+                )}
+                </>
+                )
+              })}
             </tbody>
           </table>
           {g.group === 'INCE' && (

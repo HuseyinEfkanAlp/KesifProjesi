@@ -163,7 +163,7 @@ def test_multi_discipline_flow(client, storey_dxf, arch_dxf, elec_dxf):
     q = client.get(f"/api/projects/{pid}/quantities").json()
     assert q["summary"]["groups"]                      # statik özet
     keys = {i["key"] for i in q["boq"]["items"]}
-    assert {"beton:column", "duvar:ytong:20", "pencere:p9_100x100", "cam:*", "siva:*", "tava:200x60", "kablo:nyy_4x16",
+    assert {"beton:column", "duvar:ytong:20", "pencere:p9_100x100", "cam:100x100", "siva:*", "tava:200x60", "kablo:nyy_4x16",
             "armatur:priz_priz_toprakli"} <= keys, keys
     p9 = next(i for i in q["boq"]["items"] if i["key"] == "pencere:p9_100x100")
     assert p9["quantity"] == 6                          # 3 adet × 2 kat

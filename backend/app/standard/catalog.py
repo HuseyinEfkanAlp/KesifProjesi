@@ -205,7 +205,8 @@ DEFAULT_ITEMS: list[CatalogItem] = [
        recipe=[_c("LENTO", 1.0), _c("DOGRAMA_MONTAJ", 1.0), _c("MONTAJ_KOPUGU", 1.0)]),
     _i("LENTO", "MIM", "Lento (kapı / pencere üstü)", "count", "tip (PREFABRIK / YERINDE)", "KSF-MIM-LENTO"),
     # doğrama alt işleri: körkasa, cam takma / izolasyon, kapı aksesuarları
-    _i("KORKASA", "MIM", "Körkasa (galvaniz / ahşap)", "count", "tip", "KSF-MIM-KORKASA"),
+    _i("KORKASA", "MIM", "Körkasa (galvaniz / ahşap)", "count", "ölçü (140x190)", "KSF-MIM-KORKASA-140x190"),
+    _i("KORKASA_PROFIL", "MIM", "Körkasa profili (galvaniz U / ahşap)", "length", "tip", "KSF-MIM-KORKASA_PROFIL"),
     _i("KORKASA_MONTAJ", "MIM", "Körkasa montaj işçiliği", "count", "", "KSF-MIM-KORKASA_MONTAJ", unit="saat"),
     _i("DUBEL_VIDA", "MIM", "Dübel + vida (doğrama sabitleme)", "count", "", "KSF-MIM-DUBEL_VIDA"),
     _i("CAM_FITIL", "MIM", "Cam fitili / EPDM conta", "length", "", "KSF-MIM-CAM_FITIL"),
@@ -489,16 +490,16 @@ DEFAULT_RECIPES: dict[str, list[tuple]] = {
     "DUVAR_ALCIPAN": [("DUVAR_ISCILIK", 0.9), ("ALCIPAN_PROFIL", 3.0), ("ALCIPAN_VIDA", 30.0), ("DERZ_BANDI", 2.0), ("TASYUNU", 1.0, "5")],
     "CAM": [("CAM_MONTAJ", 0.5)],   # fitil / silikon pencere ve doğrama reçetesinde (boşluk çevresinden); cam m² ile çift yazılmaz
     # pencere: körkasa + sabitleme + cam izolasyonu (çevre) + denizlik (genişlik)
-    "PENCERE": [("KORKASA", 1.0), ("KORKASA_MONTAJ", 0.5), ("DUBEL_VIDA", 8.0), ("CAM_FITIL", 1.0, "", "PER"),
-                ("SILIKON", 1.0, "", "PER"), ("MASTIK", 1.0, "", "PER"), ("DENIZLIK", 1.0, "", "WID")],
+    "PENCERE": [("KORKASA", 1.0, "$SIZE"), ("KORKASA_PROFIL", 1.0, "", "PER"), ("KORKASA_MONTAJ", 0.5), ("DUBEL_VIDA", 8.0),
+                ("CAM_FITIL", 1.0, "", "PER"), ("SILIKON", 1.0, "", "PER"), ("MASTIK", 1.0, "", "PER"), ("DENIZLIK", 1.0, "", "WID")],
     # kapı: kasa, pervaz (iki yüz ≈ çevre), menteşe, kilit, kol, stoper, eşik (genişlik), sabitleme, derz silikonu
-    "KAPI": [("KAPI_KASASI", 1.0), ("PERVAZ", 1.0, "", "PER"), ("MENTESE", 3.0), ("KILIT", 1.0), ("KAPI_KOLU", 1.0), ("STOPER", 1.0),
+    "KAPI": [("KAPI_KASASI", 1.0, "$SIZE"), ("PERVAZ", 1.0, "", "PER"), ("MENTESE", 3.0), ("KILIT", 1.0), ("KAPI_KOLU", 1.0), ("STOPER", 1.0),
              ("ESIK", 1.0, "", "WID"), ("DUBEL_VIDA", 6.0), ("SILIKON", 1.0, "", "PER")],
     # doğrama (poz listesi): pencere pozlarına pencere alt işleri, kapı pozlarına kapı alt işleri (opening_kind)
-    "DOGRAMA": [("KORKASA", 1.0, "", "", "window"), ("KORKASA_MONTAJ", 0.5, "", "", "window"), ("DUBEL_VIDA", 8.0),
+    "DOGRAMA": [("KORKASA", 1.0, "$SIZE", "", "window"), ("KORKASA_PROFIL", 1.0, "", "PER", "window"), ("KORKASA_MONTAJ", 0.5, "", "", "window"), ("DUBEL_VIDA", 8.0),
                 ("CAM_FITIL", 1.0, "", "PER", "window"), ("SILIKON", 1.0, "", "PER"), ("MASTIK", 1.0, "", "PER", "window"),
                 ("DENIZLIK", 1.0, "", "WID", "window"),
-                ("KAPI_KASASI", 1.0, "", "", "door"), ("PERVAZ", 1.0, "", "PER", "door"), ("MENTESE", 3.0, "", "", "door"),
+                ("KAPI_KASASI", 1.0, "$SIZE", "", "door"), ("PERVAZ", 1.0, "", "PER", "door"), ("MENTESE", 3.0, "", "", "door"),
                 ("KILIT", 1.0, "", "", "door"), ("KAPI_KOLU", 1.0, "", "", "door"), ("STOPER", 1.0, "", "", "door"), ("ESIK", 1.0, "", "WID", "door")],
     "KOREKUYU": [("KOREKUYU_MONTAJ", 0.8), ("ANKRAJ_BULONU", 2.0, "M10")],
     # INC

@@ -121,7 +121,8 @@ def test_arch_boq(arch_dxf):
     assert ytong.quantity + tugla.quantity == pytest.approx((gross - openings) * 2, rel=0.02)
     assert by["kapi:k1_90x210"].quantity == 2       # 1 adet × 2 kat
     assert by["pencere:p1_120x140"].quantity == 4
-    assert by["cam:*"].quantity == pytest.approx((2 * 1.2 * 1.4 + 0.36) * 2)
+    assert sum(i.quantity for i in by.values() if i.kind == "cam") == pytest.approx((2 * 1.2 * 1.4 + 0.36) * 2)
+    assert by["cam:120x140"].quantity == pytest.approx(2 * 1.2 * 1.4 * 2)   # cam ölçü bazında
     assert by["siva:*"].quantity == pytest.approx((ytong.quantity + tugla.quantity) * 2)
     assert by["boya:*"].quantity == pytest.approx((ytong.quantity + tugla.quantity) * 2)
 
