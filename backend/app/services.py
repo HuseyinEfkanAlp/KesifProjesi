@@ -81,10 +81,18 @@ def save_catalog(cat: Catalog) -> None:
 
 def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> Drawing:
     """Çizimi (yeniden) analiz eder; otomatik elemanları yeniler, elle eklenenleri korur."""
-    result = analyze_file(drawing.stored_path, project_profile(project), detect_params(project, session),
+    from .planset import PLAN_TYPE_BY_CODE
+    params = detect_params(project, session)
+    pt = PLAN_TYPE_BY_CODE.get(drawing.plan_type or "")
+    if pt is not None and not pt.analyze:
+        params.auto_map = False    # kesit / detay / şema paftası: kesitteki duvar taraması plan duvarı değildir, otomatik eşleme yok
+    result = analyze_file(drawing.stored_path, project_profile(project), params,
                           unit_override=drawing.unit_override, discipline=drawing.discipline or DEFAULT_DISCIPLINE,
                           catalog=load_catalog(), label=drawing.label or drawing.filename,
                           extra_disciplines=tuple(drawing.disciplines or []))
+    if pt is not None and not pt.analyze:
+        result.warnings.insert(0, f"{pt.label}: metraja girmez; katman adından otomatik eşleme kapalı (kesitteki duvar / sıva taraması plan miktarı değildir). "
+                                  "Kesit notları çatı / cephe sistemi kanıtı ve kotlar için okunur.")
 
     for old in session.exec(select(Element).where(Element.drawing_id == drawing.id, Element.manual == False)):  # noqa: E712
         session.delete(old)

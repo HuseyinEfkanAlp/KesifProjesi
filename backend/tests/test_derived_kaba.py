@@ -64,3 +64,20 @@ def test_auto_mapping_on_mapped_drawing(tmp_path):
     prof = LayerProfile().with_layer(None, "ASMA TAVAN")
     res2 = analyze_file(str(p), profile=prof, discipline="mapped", catalog=cat)
     assert "ASMA_TAVAN" not in {e.meta.get("ksf_code") for e in res2.elements}
+
+
+def test_no_auto_mapping_on_section_sheets(tmp_path):
+    """Kesit / detay paftası (analyze=False) otomatik eşlenmez: kesitteki duvar taraması plan duvarı sayılmaz."""
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 5
+    doc.layers.add("brn_duvar_gazbeton")
+    msp = doc.modelspace()
+    msp.add_lwpolyline([(0, 0), (1000, 0), (1000, 300), (0, 300)], close=True, dxfattribs={"layer": "brn_duvar_gazbeton"})
+    for i in range(22):
+        msp.add_text(f"+{i}.00", dxfattribs={"height": 20}).set_placement((i * 50, 400))
+    p = tmp_path / "kesit.dxf"
+    doc.saveas(p)
+    from app.parser.detectors.base import DetectParams
+    cat = Catalog()
+    assert analyze_file(str(p), discipline="mapped", catalog=cat).elements                      # plan gibi: otomatik eşlenir
+    assert not analyze_file(str(p), params=DetectParams(auto_map=False), discipline="mapped", catalog=cat).elements

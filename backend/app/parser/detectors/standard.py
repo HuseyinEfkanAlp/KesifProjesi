@@ -225,7 +225,7 @@ def detect_mapped(drawing: Drawing, profile, catalog: Catalog, params: DetectPar
                            "suggested": None}
         else:
             sug = suggest_item(layer, catalog, materials, getattr(params, "system_overrides", None))
-            if sug and not profile.is_ignored(layer) and catalog.get(sug):
+            if sug and getattr(params, "auto_map", True) and not profile.is_ignored(layer) and catalog.get(sug):
                 # katman adından güçlü öneri: onay beklemeden ölçülür (düşük güven, "otomatik" işaretli);
                 # kullanıcı Elemanlar sayfasında değiştirir ya da "ölçülmez" yapar
                 item = catalog.get(sug)
