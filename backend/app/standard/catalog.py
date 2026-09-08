@@ -173,6 +173,7 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("GROBETON", "STA", "Grobeton", "volume", "kalınlık (cm)", "KSF-STA-GROBETON-10"),
     _i("DOLGU", "STA", "Dolgu / blokaj", "volume", "kalınlık (cm)", "KSF-STA-DOLGU-30"),
     _i("KAZI", "STA", "Kazı", "volume", "derinlik (cm)", "KSF-STA-KAZI-350"),
+    _i("DEMIR", "STA", "Nervürlü demir (kg)", "count", "çap (mm)", "KSF-STA-DEMIR-12", unit="kg", poz="15.160.1003"),
     _i("KALIP", "STA", "Kalıp", "area", "", "KSF-STA-KALIP", recipe=[_c("KALIP_ISKELESI", 1.0, "", "H")]),
     _i("KALIP_ISKELESI", "STA", "Kalıp iskelesi (çelik boru)", "volume", "", "KSF-STA-KALIP_ISKELESI", unit="m³", poz="15.185.1006"),
     _i("BETON_POMPAJ", "STA", "Beton pompajı / yerleştirme", "volume", "", "KSF-STA-BETON_POMPAJ", unit="m³"),
@@ -340,6 +341,7 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("VANA", "MEK", "Vana", "count", "çap / tip", "KSF-MEK-VANA-DN50_KURESEL"),
     _i("POMPA", "MEK", "Pompa", "count", "tip", "KSF-MEK-POMPA"),
     _i("KAZAN", "MEK", "Kazan / chiller / ısı pompası", "count", "kapasite", "KSF-MEK-KAZAN-500KW"),
+    _i("MEKANIK_CIHAZ", "MEK", "Mekanik cihaz (türü belirsiz)", "count", "tip", "KSF-MEK-MEKANIK_CIHAZ"),
     # HAV
     _i("HAVA_KANAL", "HAV", "Havalandırma kanalı (dikdörtgen)", "length", "en x yükseklik (mm)", "KSF-HAV-HAVA_KANAL-600x400"),
     _i("HAVA_KANAL_YUVARLAK", "HAV", "Havalandırma kanalı (yuvarlak)", "length", "çap (mm)", "KSF-HAV-HAVA_KANAL_YUVARLAK-315"),
@@ -476,6 +478,9 @@ DEFAULT_RECIPES: dict[str, list[tuple]] = {
     "KALIP": [("KALIP_ISCILIK", 1.2), ("KALIP_ISKELESI", 1.0, "", "H")],
     "CELIK_PROFIL": [("KAYNAK", 0.5), ("ANTIPAS", 0.3), ("CELIK_BOYA", 0.3), ("CELIK_MONTAJ", 0.4), ("ANKRAJ_BULONU", 0.2, "M20")],
     "HASIR_CELIK": [("DEMIR_ISCILIK", 0.05)],
+    "DEMIR": [("DEMIR_ISCILIK", 0.02)],
+    # lento: yerinde döküm varsayımı (adet başına 0,03 m³ beton, 3 kg demir, 0,3 m² kalıp); prefabrik ise katalogdan sıfırlayın
+    "LENTO": [("BETON", 0.03, "25"), ("DEMIR", 3.0, "12"), ("KALIP", 0.3)],
     "SAHA_BETONU": [("BETON_ISCILIK", 0.8), ("BETON_KUR", 1.0), ("BETON_POMPAJ", 1.0)],
     # MIM
     "DUVAR_YTONG": [("DUVAR_ISCILIK", 0.8), ("DUVAR_TUTKAL", 4.0)],
@@ -552,6 +557,7 @@ DEFAULT_RECIPES: dict[str, list[tuple]] = {
     "FANCOIL": [("CIHAZ_MONTAJ", 4.0)], "VRF_IC_UNITE": [("CIHAZ_MONTAJ", 4.0)], "VRF_DIS_UNITE": [("CIHAZ_MONTAJ", 12.0), ("VINC", 2.0)],
     "RADYATOR": [("CIHAZ_MONTAJ", 2.0)], "VANA": [("CIHAZ_MONTAJ", 0.5)], "POMPA": [("CIHAZ_MONTAJ", 6.0)],
     "KAZAN": [("CIHAZ_MONTAJ", 40.0), ("VINC", 4.0)],
+    "MEKANIK_CIHAZ": [("CIHAZ_MONTAJ", 2.0)],
     # HAV
     "HAVA_KANAL": [("KANAL_MONTAJ", 0.6), ("KANAL_ASKI", 0.8), ("FLANS", 0.7)],
     "HAVA_KANAL_YUVARLAK": [("KANAL_MONTAJ", 0.4), ("KANAL_ASKI", 0.7)],

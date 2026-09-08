@@ -1,4 +1,4 @@
-export type Discipline = 'structural' | 'architectural' | 'electrical' | 'standard' | 'rebar' | 'mapped'
+export type Discipline = 'structural' | 'architectural' | 'electrical' | 'mechanical' | 'standard' | 'rebar' | 'mapped'
 /** Yüklerken "auto": disiplin, başlıktan tanınan plan tipinden gelir */
 export type DisciplineChoice = Discipline | 'auto'
 
@@ -7,6 +7,7 @@ export const DISCIPLINES: Record<Discipline, string> = {
   rebar: 'Donatı planı (demir metraj tablosu)',
   architectural: 'Mimari (sezgisel)',
   electrical: 'Elektrik (sezgisel)',
+  mechanical: 'Mekanik (sezgisel)',
   standard: 'KSF standart çizim (tüm disiplinler)',
   mapped: 'Katman eşlemeli (cephe / çatı / peyzaj / diğer)',
 }
@@ -15,6 +16,7 @@ export type EType =
   | 'column' | 'shear_wall' | 'beam' | 'slab' | 'foundation'
   | 'wall' | 'door' | 'window'
   | 'tray' | 'cable' | 'conduit' | 'fixture'
+  | 'pipe' | 'duct' | 'mech_fixture'
 
 export const ETYPE_LABELS: Record<EType, string> = {
   column: 'Kolon',
@@ -29,12 +31,16 @@ export const ETYPE_LABELS: Record<EType, string> = {
   cable: 'Kablo',
   conduit: 'Boru',
   fixture: 'Armatür / priz / anahtar',
+  pipe: 'Boru (mekanik)',
+  duct: 'Hava kanalı',
+  mech_fixture: 'Mekanik cihaz / vitrifiye',
 }
 
 export const ETYPES_BY_DISCIPLINE: Record<Discipline, EType[]> = {
   structural: ['column', 'shear_wall', 'beam', 'slab', 'foundation'],
   architectural: ['wall', 'door', 'window'],
   electrical: ['tray', 'cable', 'conduit', 'fixture'],
+  mechanical: ['pipe', 'duct', 'mech_fixture'],
   standard: [],   // KSF çiziminde tipler katman adından gelir (katalog kalem kodu)
   rebar: [],      // donatı paftası: yalnız metraj tablosu okunur
   mapped: [],     // katman -> katalog kalemi eşlemesi
@@ -56,12 +62,13 @@ export function layerTypeLabels(discipline: Discipline, extras: Discipline[] = [
 }
 
 /** Aynı paftaya eklenebilen (sezgisel) disiplinler */
-export const HEURISTIC_DISCIPLINES: Discipline[] = ['structural', 'architectural', 'electrical']
+export const HEURISTIC_DISCIPLINES: Discipline[] = ['structural', 'architectural', 'electrical', 'mechanical']
 
 export const ETYPE_COLORS: Record<EType, string> = {
   column: '#d62728', shear_wall: '#9467bd', beam: '#1f77b4', slab: '#2ca02c', foundation: '#ff7f0e',
   wall: '#8c564b', door: '#e377c2', window: '#17becf',
   tray: '#bcbd22', cable: '#ff9896', conduit: '#c5b0d5', fixture: '#7f7f7f',
+  pipe: '#2a9d8f', duct: '#8ab17d', mech_fixture: '#e9c46a',
 }
 
 /** Alt tip açıklaması (statik: temel tipi; mimari: malzeme; elektrik: boyut/kesit/kategori) */
@@ -154,6 +161,8 @@ export interface PlanCheck extends PlanCheckSummary {
 }
 
 export interface LayerInfo {
+  /** Eşleme kullanıcı onayı olmadan katman adından yapıldı (düşük güven) */
+  auto?: boolean
   name: string
   count: number
   etype: string | null

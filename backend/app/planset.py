@@ -91,16 +91,16 @@ PLAN_TYPES: list[PlanType] = [
              pattern=r"ELEKTRIK", satisfies=("elk_aydinlatma", "elk_kuvvet"),
              hint="Aydınlatma ve kuvvet tek paftadaysa bu tip ikisini de karşılar."),
     # --- Mekanik
-    PlanType("mek_yangin", "MEK", "Yangın tesisatı (sprinkler / dolap) planı", "mapped",
-             pattern=r"SPRINK|YANGIN|HIDRANT|SONDURME", hint="KSF katmanlıysa disiplini 'KSF standart' seçin."),
-    PlanType("mek_hav", "MEK", "Havalandırma planı", "mapped",
-             pattern=r"HAVALANDIRMA|HAVA\s*KANAL|EGZOZ|KLIMA\s*SANTRAL", hint="Kanal m² / m, menfez adet."),
-    PlanType("mek_isitma", "MEK", "Isıtma / soğutma planı", "mapped",
+    PlanType("mek_yangin", "MEK", "Yangın tesisatı (sprinkler / dolap) planı", "mechanical",
+             pattern=r"SPRINK|YANGIN|HIDRANT|SONDURME", hint="Yangın borusu m (çap), sprinkler / dolap adet; KSF katmanlıysa 'KSF standart'."),
+    PlanType("mek_hav", "MEK", "Havalandırma planı", "mechanical",
+             pattern=r"HAVALANDIRMA|HAVA\s*KANAL|EGZOZ|KLIMA\s*SANTRAL", hint="Kanal m (boyut bazında), menfez / fan adet."),
+    PlanType("mek_isitma", "MEK", "Isıtma / soğutma planı", "mechanical",
              pattern=r"ISITMA|SOGUTMA|KLIMA|RADYATOR|FANCOIL|\bVRF\b|\bVRV\b|KAZAN|CHILLER|MEKANIK",
              hint="Boru m (çap bazında), cihaz adet."),
-    PlanType("mek_sihhi", "MEK", "Sıhhi tesisat planı", "mapped",
+    PlanType("mek_sihhi", "MEK", "Sıhhi tesisat planı", "mechanical",
              pattern=r"SIHHI|TEMIZ\s*SU|PIS\s*SU|ATIK\s*SU|KULLANMA\s*SUYU|VITRIFIYE|TESISAT", exclude="ELEKTRIK",
-             hint="Temiz / pis su boruları, vitrifiye adet."),
+             hint="Temiz / pis su boruları (çap bazında), vitrifiye adet."),
     # --- Altyapı / peyzaj / asansör
     PlanType("alt_altyapi", "ALT", "Altyapı planı", "mapped",
              pattern=r"ALTYAPI|ALT\s*YAPI|KANALIZASYON|YAGMUR\s*SUYU|ICME\s*SUYU|DRENAJ|ROGAR|SAHA\s*TESISAT|DIS\s*TESISAT",
@@ -191,7 +191,7 @@ def discipline_from_layers(layers: dict[str, int] | None) -> str | None:
         if name.upper().startswith("KSF-") or name.upper().startswith("KSF_"):
             hits["standard"] = hits.get("standard", 0) + n
             continue
-        for disc in ("structural", "architectural", "electrical"):
+        for disc in ("structural", "architectural", "electrical", "mechanical"):
             if prof.classify(name, disc):
                 hits[disc] = hits.get(disc, 0) + n
                 break

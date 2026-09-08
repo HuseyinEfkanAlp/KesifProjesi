@@ -10,6 +10,7 @@ from html import escape
 from ..parser.loader import Drawing
 
 COLORS = {
+    "pipe": "#2a9d8f", "duct": "#8ab17d", "mech_fixture": "#e9c46a",
     "column": "#d62728",
     "shear_wall": "#9467bd",
     "beam": "#1f77b4",

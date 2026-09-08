@@ -16,6 +16,7 @@ DISCIPLINES: dict[str, str] = {
     "structural": "Statik (kalıp planı)",
     "architectural": "Mimari (sezgisel)",
     "electrical": "Elektrik (sezgisel)",
+    "mechanical": "Mekanik (sezgisel)",
     "standard": "KSF standart çizim (tüm disiplinler)",
     "rebar": "Donatı planı (demir metraj tablosu)",
     "mapped": "Katman eşlemeli (cephe / çatı / peyzaj / diğer)",
@@ -44,14 +45,20 @@ ELECTRICAL_TYPES: dict[str, str] = {
     "conduit": "Boru",
     "fixture": "Armatür / priz / anahtar",
 }
+MECHANICAL_TYPES: dict[str, str] = {
+    "pipe": "Boru (mekanik / sıhhi / yangın)",
+    "duct": "Hava kanalı",
+    "mech_fixture": "Mekanik cihaz / vitrifiye",
+}
 TYPES_BY_DISCIPLINE: dict[str, dict[str, str]] = {
     "structural": STRUCTURAL_TYPES,
     "architectural": ARCHITECTURAL_TYPES,
     "electrical": ELECTRICAL_TYPES,
+    "mechanical": MECHANICAL_TYPES,
 }
 # Geriye uyumluluk: ELEMENT_TYPES statik tipler (metraj motoru, özet); ALL_ELEMENT_TYPES tüm disiplinler
 ELEMENT_TYPES = STRUCTURAL_TYPES
-ALL_ELEMENT_TYPES: dict[str, str] = {**STRUCTURAL_TYPES, **ARCHITECTURAL_TYPES, **ELECTRICAL_TYPES}
+ALL_ELEMENT_TYPES: dict[str, str] = {**STRUCTURAL_TYPES, **ARCHITECTURAL_TYPES, **ELECTRICAL_TYPES, **MECHANICAL_TYPES}
 TYPE_DISCIPLINE: dict[str, str] = {t: d for d, types in TYPES_BY_DISCIPLINE.items() for t in types}
 
 AUX_TYPES: dict[str, str] = {"hole": "Döşeme boşluğu"}
@@ -71,7 +78,8 @@ def types_for(discipline: str) -> dict[str, str]:
 # Öncelik sırası: daha spesifik tipler önce (ör. "DÖŞEME ŞAFT" -> hole, "TEMEL_KIRIS" -> temel, "KABLO TAVASI" -> tava)
 MATCH_ORDER = ("hole", "foundation", "shear_wall", "column", "beam", "slab",
                "window", "door", "wall",
-               "tray", "conduit", "fixture", "cable")
+               "tray", "conduit", "fixture", "cable",
+               "pipe", "duct", "mech_fixture")
 
 DEFAULT_PROFILE: dict[str, list[str]] = {
     # statik
@@ -94,6 +102,17 @@ DEFAULT_PROFILE: dict[str, list[str]] = {
     "fixture": [r"ARMAT[UÜ]R", r"AYDINLATMA", r"\bLIGHT", r"E[-_]?LITE", r"FIXTURE", r"LUMIN", r"PR[Iİ]Z", r"SOCKET",
                 r"ANAHTAR", r"SWITCH", r"\bBUAT", r"S[Iİ]GORTA", r"PANO", r"\bDEV[Iİ]CE", r"DETEKT[OÖ]R", r"SENS[OÖ]R",
                 r"S[Iİ]REN", r"YANGIN", r"ACIL", r"EXIT", r"\bTV\b", r"DATA\s*PR"],
+    # mekanik: boru hatları (sistem adıyla), hava kanalları, cihaz / vitrifiye blokları
+    "pipe": [r"\bBORU", r"\bPIPE", r"PPRC", r"\bPVC\b", r"TEM[Iİ]Z\s*SU", r"P[Iİ]S\s*SU", r"P[Iİ]SSU", r"SO[GĞ]UK\s*SU", r"SICAK\s*SU",
+             r"KULLANMA\s*SU", r"AT[Iİ]K\s*SU", r"DRENAJ", r"YA[GĞ]MUR\s*(SU|HAT|BORU)", r"ISITMA", r"SO[GĞ]UTMA", r"\bCHW\b", r"\bHHW\b",
+             r"\bDN\s*\d", r"BAKIR", r"COPPER", r"YANGIN\s*(BORU|HAT)", r"SPR[Iİ]NK.*(BORU|HAT|P[Iİ]PE)", r"\bGAZ\s*(BORU|HAT)",
+             r"M[-_]?PIPE", r"P[-_]?(CW|HW|SAN|WASTE|VENT)\b", r"HAVALIK|VENT\b"],
+    "duct": [r"KANAL(?!\s*[Iİ]ZASYON)", r"\bDUCT", r"HAVA\b", r"EGZO[SZ]T?", r"EXHAUST", r"TAZE", r"SUPPLY", r"RETURN", r"\bFLEX", r"SP[Iİ]RAL"],
+    "mech_fixture": [r"MENFEZ", r"D[Iİ]F[UÜ]Z", r"GRILLE", r"ANEMOSTAT", r"VANA", r"VALVE", r"SPR[Iİ]NK", r"RADYAT", r"FANCOIL", r"\bFCU\b",
+                     r"\bVRF\b", r"\bVRV\b", r"KL[Iİ]MA", r"\bAHU\b", r"SANTRAL", r"\bFAN\b", r"ASP[Iİ]RAT", r"DAMPER", r"V[Iİ]TR[Iİ]F[Iİ]YE",
+                     r"LAVABO", r"KLOZET", r"\bWC\b", r"P[Iİ]SUAR", r"P[Iİ]SUVAR", r"BATARYA", r"EV[Iİ]YE", r"S[UÜ]ZGE[CÇ]", r"POMPA", r"\bPUMP",
+                     r"KAZAN", r"BOILER", r"CHILLER", r"H[Iİ]DROFOR", r"DEPO", r"\bTANK", r"YANGIN\s*DOLAB", r"H[Iİ]DRANT", r"T[UÜ]P\b",
+                     r"KOLLEKT", r"KOLEKT", r"SAYA[CÇ]", r"M[-_]?EQUIP", r"P[-_]?FIXT", r"SANITARY", r"TES[Iİ]SAT\s*C[Iİ]HAZ"],
 }
 
 # Bu katmanlar hiçbir zaman eleman sayılmaz (yazı, ölçü, aks, detay, donatı, tarama vb.)
@@ -170,6 +189,11 @@ class LayerProfile:
                 if pat.search(name):
                     return etype
         return None
+
+    def is_ignored(self, layer: str) -> bool:
+        """Kullanıcı bu katmanı açıkça 'ölçülmez' yaptı mı (tam ad yok-sayma)?"""
+        name = _upper(layer)
+        return any(_is_exact(pat) and pat.search(name) for pat in self._compiled.get("ignore", []))
 
     def layers_for(self, etype: str, layers: list[str], discipline: str | None = None) -> list[str]:
         disc = discipline or TYPE_DISCIPLINE.get(etype, DEFAULT_DISCIPLINE)

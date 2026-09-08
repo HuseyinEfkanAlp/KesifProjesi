@@ -176,10 +176,13 @@ SYSTEM_UPGRADES: dict[str, list[str]] = {
 UPGRADE_NEEDS_EVIDENCE = {"KENET_CATI": True, "TERAS_CATI": True, "KIREMIT_CATI": True, "MANTOLAMA_SISTEM": False}
 
 
-def suggest_item(layer: str, catalog: Catalog, materials: dict | None = None) -> str | None:
+def suggest_item(layer: str, catalog: Catalog, materials: dict | None = None, overrides: dict | None = None) -> str | None:
+    """overrides: {öneri kodu: proje parametresiyle seçilen sistem} (roof_system → ÇATI katmanı o sisteme gider)."""
     n = layer.replace("i", "İ").upper()
     for pat, code in _SUGGEST:
         if pat.search(n) and catalog.get(code):
+            if overrides and overrides.get(code) and catalog.get(overrides[code]):
+                return overrides[code]
             for sys_code in SYSTEM_UPGRADES.get(code, []):
                 if not catalog.get(sys_code):
                     continue
@@ -198,6 +201,7 @@ def detect_mapped(drawing: Drawing, profile, catalog: Catalog, params: DetectPar
     warnings: list[str] = []
     info: dict = {}
     mapped_n = 0
+    auto: list[tuple[str, str, int]] = []
     for layer in drawing.layers:
         if not drawing.by_layer(layer):
             continue
@@ -220,11 +224,33 @@ def detect_mapped(drawing: Drawing, profile, catalog: Catalog, params: DetectPar
                            "label": (item.name if item else code) + f" · {MEASURE_LABELS.get(measure, measure)}" + (f" · desen {pattern}" if pattern else ""),
                            "suggested": None}
         else:
-            sug = suggest_item(layer, catalog, materials)
-            info[layer] = {"code": None, "measure": None, "label": None, "suggested": sug}
-    if not mapped_n:
-        warnings.append("Henüz katman eşlenmedi: Elemanlar sayfasında her katmanı bir katalog kalemine (ve ölçüm kuralına) atayın; "
-                        "öneriler katman adından üretildi.")
+            sug = suggest_item(layer, catalog, materials, getattr(params, "system_overrides", None))
+            if sug and not profile.is_ignored(layer) and catalog.get(sug):
+                # katman adından güçlü öneri: onay beklemeden ölçülür (düşük güven, "otomatik" işaretli);
+                # kullanıcı Elemanlar sayfasında değiştirir ya da "ölçülmez" yapar
+                item = catalog.get(sug)
+                measure = item.measure
+                spec = None
+                nums = re.findall(r"\d+(?:[.,]\d+)?", layer)
+                if nums and item.measure in ("wall_area", "volume"):
+                    spec = nums[0]
+                els, w = measure_layer(drawing, layer, sug, item, measure, spec, params, base_conf=0.55,
+                                       meta={"ksf_code": sug, "measure": measure, "spec": spec, "discipline": item.discipline, "auto_mapped": True})
+                for el in els:
+                    el.warnings.append("Katman adından otomatik eşlendi; Elemanlar sayfasında onaylayın")
+                elements.extend(els)
+                warnings.extend(w)
+                auto.append((layer, item.name, len(els)))
+                info[layer] = {"code": sug, "measure": measure, "pattern": None, "auto": True,
+                               "label": f"{item.name} · {MEASURE_LABELS.get(measure, measure)} · otomatik", "suggested": sug}
+            else:
+                info[layer] = {"code": None, "measure": None, "label": None, "suggested": sug}
+    if auto:
+        warnings.append(f"Katman adından otomatik eşlendi ({len(auto)} katman): "
+                        + "; ".join(f"{l} → {n} ({k})" for l, n, k in auto[:8]) + ("…" if len(auto) > 8 else "")
+                        + ". Yanlışsa Elemanlar sayfasında değiştirin ya da 'ölçülmez' yapın.")
+    elif not mapped_n:
+        warnings.append("Katman eşlenmedi ve katman adlarından kalem tanınamadı: Elemanlar sayfasında katmanları katalog kalemine atayın.")
     return elements, warnings, info
 
 

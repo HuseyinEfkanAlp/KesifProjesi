@@ -10,10 +10,12 @@ const FIELDS: Record<EType, Array<'b' | 'h' | 'thickness' | 'length' | 'area'>> 
   column: ['b', 'h'], shear_wall: ['b', 'length'], beam: ['b', 'h', 'length'], slab: ['thickness', 'area'], foundation: ['b', 'h', 'thickness', 'length', 'area'],
   wall: ['b', 'h', 'length'], door: ['b', 'h'], window: ['b', 'h'],
   tray: ['b', 'h', 'length'], cable: ['length'], conduit: ['length'], fixture: [],
+  pipe: ['b', 'length'], duct: ['b', 'h', 'length'], mech_fixture: [],
 }
 const SUBTYPE_HINT: Partial<Record<EType, string>> = {
   wall: 'malzeme (ytong / tugla / bims / alcipan)', tray: 'boyut, ör. 200x60', cable: 'kesit, ör. NYY 4x16', conduit: 'çap, ör. Ø20 PVC',
   fixture: 'kategori (armatur / priz / anahtar / data / yangin / pano)',
+  pipe: 'çap (110, DN65, 32)', duct: 'boyut (600x400, 315)',
 }
 
 export default function Elements() {
@@ -199,6 +201,12 @@ export default function Elements() {
                           {!l.mapped_code && l.suggested && (
                             <button className="small secondary" disabled={busy} title={`Öneri: ${itemName(l.suggested)}`}
                               onClick={() => mapItem(l.name, l.suggested!, measureSel[l.name] ?? '')}>öneri: {itemName(l.suggested)}</button>
+                          )}
+                          {l.auto && l.mapped_code && (
+                            <>
+                              <span className="badge none" title="Katman adından otomatik eşlendi; onaylamak için 'Onayla', ölçülmesin istiyorsanız '— ölçülmez —' seçin">otomatik</span>
+                              <button className="small secondary" disabled={busy} onClick={() => mapItem(l.name, l.mapped_code!, l.mapped_measure ?? '', l.mapped_pattern ?? '')}>Onayla</button>
+                            </>
                           )}
                         </div>
                       ) : isStd ? (l.etype_label ? <span>{l.etype_label}</span> : <span className="muted">— standart dışı, yok sayılır —</span>) : (

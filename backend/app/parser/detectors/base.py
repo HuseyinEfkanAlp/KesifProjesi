@@ -41,6 +41,8 @@ class DetectParams:
     poz_sizes: dict = field(default_factory=dict)   # poz -> (genişlik, yükseklik) m
     poz_kinds: dict = field(default_factory=dict)   # poz -> "door" | "window"
     poz_wall_radius: float = 2.0            # poz yazısı bu mesafede bir duvara yakınsa plandaki boşluktur (görünüşteki değil)
+    # eşlemeli paftada otomatik eşleme: proje parametresiyle seçilen sistem (roof_system / facade_system) katman önerisini yönlendirir
+    system_overrides: dict = field(default_factory=dict)   # {"CATI_KIREMIT": "TERAS_CATI", "MANTOLAMA": "KOMPOZIT_PANEL"}
     # elektrik
     elec_label_unit_scale: float = 0.001    # etiketlerdeki sayılar mm
     elec_label_radius: float = 0.8          # hat etiketi arama yarıçapı (m); etiket hattın hemen üstünde yazılır

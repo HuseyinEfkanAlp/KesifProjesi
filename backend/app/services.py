@@ -33,6 +33,11 @@ def detect_params(project: Project, session: Session | None = None) -> DetectPar
     """Dedektör parametreleri; oturum verilirse projedeki öteki çizimlerin doğrama poz bilgisi (ölçü, kapı / pencere,
     poz önekleri) eklenir — plandaki 'EMP1' yazıları bununla kapı / pencere sayılır."""
     p = DetectParams(default_slab_thickness=project.slab_thickness)
+    pp = project.params or {}
+    if pp.get("roof_system"):
+        p.system_overrides["CATI_KIREMIT"] = str(pp["roof_system"]).strip().upper()
+    if pp.get("facade_system"):
+        p.system_overrides["MANTOLAMA"] = str(pp["facade_system"]).strip().upper()
     if session is None or project.id is None:
         return p
     sizes, kinds, prefixes = {}, {}, set()
@@ -408,6 +413,16 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
             add("GROBETON", f"{t:g}", found_area * t / 100.0, f"temel alanı × {t:g} cm", "grobeton")
         if "koruma_sapi" not in kinds:
             add("KORUMA_SAPI", "5", found_area, "temel yalıtımı üstü koruma şapı 5 cm", "koruma_sapi")
+        depth = float(params.get("excavation_depth_m") or 0.0)
+        if depth > 0 and "kazi" not in kinds:
+            margin = float(params.get("excavation_margin") or 1.0)
+            exc = found_area * depth * margin
+            add("KAZI", f"{depth*100:.0f}", exc, f"temel alanı {found_area:,.0f} m² × derinlik {depth:g} m × şev / çalışma payı {margin:g}", "kazi")
+            found_conc = sum(it.quantity for it in items if it.kind == "beton" and it.group == "foundation")
+            lean = float(params.get("lean_concrete_cm") or 0.0) / 100.0 * found_area
+            back = exc - found_conc - lean
+            if back > 0:
+                add("GERI_DOLGU", "", back, f"kazı {exc:,.0f} m³ − temel betonu {found_conc:,.0f} m³ − grobeton {lean:,.0f} m³", "geri_dolgu")
         if "drenaj" not in kinds:
             ask("drenaj", f"Temel var ({found_area:,.0f} m²): perimetre drenajı (drenaj borusu + levha) gerekiyorsa ekleyin.", "optional")
     # 4) çatı

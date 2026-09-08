@@ -16,6 +16,7 @@ from .detectors.beams import detect_beams
 from .detectors.columns import detect_columns
 from .detectors.electrical import detect_electrical
 from .detectors.foundations import detect_foundations
+from .detectors.mechanical import detect_mechanical
 from .detectors.openings import detect_openings, detect_poz_openings, poz_catalog
 from .detectors.shear_walls import detect_shear_walls
 from .detectors.slabs import detect_slabs
@@ -42,12 +43,13 @@ class LayerInfo:
     mapped_code: str | None = None
     mapped_measure: str | None = None
     mapped_pattern: str | None = None     # etiket sayımı deseni
+    auto: bool = False                    # eşleme kullanıcı onayı olmadan katman adından yapıldı
 
     def to_dict(self) -> dict:
         return {"name": self.name, "count": self.count, "etype": self.etype,
                 "etype_label": self.etype_label or ALL_TYPES.get(self.etype or "", None),
                 "suggested": self.suggested, "mapped_code": self.mapped_code, "mapped_measure": self.mapped_measure,
-                "mapped_pattern": self.mapped_pattern}
+                "mapped_pattern": self.mapped_pattern, "auto": self.auto}
 
 
 @dataclass
@@ -203,7 +205,17 @@ def _electrical(drawing: Drawing, layers_by_type: dict[str, list[str]], params: 
     return detect_electrical(drawing, layers_by_type, params)
 
 
-DISCIPLINE_RUNNERS = {"structural": _structural, "architectural": _architectural, "electrical": _electrical}
+def _mechanical(drawing: Drawing, layers_by_type: dict[str, list[str]], params: DetectParams,
+                result: AnalysisResult) -> list[DetectedElement]:
+    els = detect_mechanical(drawing, layers_by_type, params, catalog=getattr(result, "_catalog", None))
+    if els:
+        codes = Counter(e.meta.get("ksf_code") for e in els)
+        result.warnings.append("Mekanik: " + ", ".join(f"{c} {n}" for c, n in codes.most_common(8)) + ("…" if len(codes) > 8 else "")
+                               + " (sistem ve çap katman adı / etiketten; yanlışsa Elemanlar sayfasında düzeltin)")
+    return els
+
+
+DISCIPLINE_RUNNERS = {"structural": _structural, "architectural": _architectural, "electrical": _electrical, "mechanical": _mechanical}
 HEURISTIC_DISCIPLINES = tuple(DISCIPLINE_RUNNERS)
 MIN_HINT_OBJECTS = 8    # başka bir disiplinin katmanlarında en az bu kadar geometrik nesne varsa "ek disiplin" önerilir
 
@@ -330,7 +342,7 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
         i = info.get(name, {})
         infos.append(LayerInfo(name, counts.get(name, 0), (i.get("code") or "").lower() or None, etype_label=i.get("label"),
                                suggested=i.get("suggested"), mapped_code=i.get("code"), mapped_measure=i.get("measure"),
-                               mapped_pattern=i.get("pattern")))
+                               mapped_pattern=i.get("pattern"), auto=bool(i.get("auto"))))
     result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
                             discipline=MAPPED_DISCIPLINE, layers=infos, warnings=list(drawing.warnings) + warns)
     result.unit_verdict = suggested or (drawing.unit if text_count(drawing) >= MIN_TEXTS_FOR_UNIT else None)
@@ -344,7 +356,7 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
         result.suggested_unit = suggested
         result.warnings.append(f"Çizim birimi '{drawing.unit}' yazılı ama yazı yükseklikleri '{suggested}' ile uyuşuyor. "
                                f"Birim '{suggested}' olarak alındı; gerekirse çizim ayarlarından değiştirin.")
-    sugg = [f"{l.name} → {l.suggested}" for l in infos if l.suggested and not l.mapped_code and l.count > 0]
+    sugg = [f"{l.name} → {l.suggested}" for l in infos if l.suggested and not l.mapped_code and not l.auto and l.count > 0]
     if sugg:
         result.warnings.append("Öneri (onaylamak için katmanı eşleyin): " + "; ".join(sugg[:12]) + (" …" if len(sugg) > 12 else ""))
     return result
@@ -398,6 +410,7 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
     result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
                             discipline=discipline, layers=layer_infos, warnings=list(drawing.warnings),
                             materials=scan_materials(drawing), disciplines=list(discs))
+    result._catalog = catalog   # mekanik dedektörü kalem kodlarını katalogdan doğrular
 
     if discipline == "structural":
         suggested = check_unit_against_labels(drawing, profile, params)

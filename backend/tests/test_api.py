@@ -278,7 +278,7 @@ def test_mapped_flow_api(client, facade_dxf):
                         data={"label": "Ön cephe", "discipline": "mapped"})
     assert r.status_code == 201, r.text
     d = r.json()
-    assert d["element_count"] == 0
+    assert d["element_count"] > 0 and all(l["auto"] for l in d["layers"] if l["mapped_code"])   # katman adından otomatik eşlendi
     layers = {l["name"]: l for l in d["layers"]}
     assert layers["brn_hatch_gazbeton"]["suggested"] == "DUVAR_YTONG"
     assert client.post(f"/api/projects/{pid}/layer-profile/map", json={"layer": "brn_hatch_gazbeton", "etype": "item:duvar ytong:area"}).status_code == 200
@@ -286,7 +286,7 @@ def test_mapped_flow_api(client, facade_dxf):
     assert client.post(f"/api/projects/{pid}/layer-profile/map", json={"layer": "x", "etype": "item:YOK_BOYLE"}).status_code == 400
     assert client.post(f"/api/projects/{pid}/layer-profile/map", json={"layer": "x", "etype": "item:CAM:kilo"}).status_code == 400
     d = client.get(f"/api/drawings/{d['id']}").json()
-    assert d["element_count"] == 5
+    assert d["element_count"] >= 5           # elle eşlenen 2 katman + otomatik eşlenen öteki katmanlar
     q = client.get(f"/api/projects/{pid}/quantities").json()
     by = {i["key"]: i for i in q["boq"]["items"]}
     assert by["duvar_ytong:*"]["quantity"] == pytest.approx(48.0) and by["cam:*"]["quantity"] == pytest.approx(9.0)

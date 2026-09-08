@@ -61,7 +61,8 @@ def test_api_systems_flow(client, roof_dxf):
     d = r.json()
     assert d["discipline"] == "mapped" and d["plan_type"] == "mim_cati"
     # henüz katman eşlenmedi: sistem yok
-    assert client.get(f"/api/projects/{pid}/systems").json()["systems"] == []
+    auto = client.get(f"/api/projects/{pid}/systems").json()["systems"]          # ÇATI katmanı otomatik eşlendi -> sistem hazır
+    assert [s["code"] for s in auto] == ["KENET_CATI"]
     layers = client.get(f"/api/drawings/{d['id']}/layers").json()["layers"]
     assert next(l for l in layers if l["name"] == "ÇATI")["suggested"] == "KENET_CATI"
     r = client.post(f"/api/projects/{pid}/layer-profile/map", json={"layer": "ÇATI", "etype": "item:KENET_CATI"})

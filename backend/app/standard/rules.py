@@ -16,6 +16,13 @@ miktar o pozun **ölçü kuralına** göre hesaplanır. Kaynak poz tarifleri (bi
   15.540.1509  İç cephe astar + iki kat plastik boya            m²   ölçü: boyanan yüzeyler; tüm boşluklar düşülür
   25.305.xxxx  PPRC temiz su boruları                           m    ölçü: boru boyu
   35.140.3161  3x2,5 mm² NYY kolon / besleme hattı              m    ölçü: hat boyu
+  25.305.6102/6103/6104  Sert PVC pis su borusu Ø75 / Ø100-110 / Ø125   m
+  25.305.2101/2104  PN20 PPRC temiz su borusu 20 / 40 mm            m
+  25.305.7101  PE100 SDR17 PN10 polietilen boru Ø32               m
+  25.470.1101-1104  Galvanizli sacdan dikdörtgen hava kanalı (en geniş kenara göre)   m²/m
+  25.470.1204  Kenetli spiral silindirik hava kanalı Ø ≤ 1000     m
+  25.705.1102  Dik DN20 standart otomatik yangın sprinkleri       adet
+  15.375.1053  40x40 renkli seramik yer karosu döşeme kaplaması   m²
 
 Katalogdaki kalemin `poz` alanı doluysa o kullanılır; boşsa buradaki varsayılan eşleme (DEFAULT_POZ) denenir.
 """
@@ -40,6 +47,7 @@ _DISC_TO_GROUP: dict[str, str] = {
     "structural": "KABA", "rebar": "KABA",
     "architectural": "INCE",
     "electrical": "ELK",
+    "mechanical": "MEK",
     "STA": "KABA",
     "MIM": "INCE", "INC": "INCE", "CEP": "INCE", "CAT": "INCE", "IZO": "INCE",
     "ELK": "ELK", "ZAY": "ELK",
@@ -96,7 +104,21 @@ DEFAULT_POZ: list[tuple[str, str, str, str]] = [
     ("siva", r".*", "15.280.1008", "Makine sıvası ile tek kat alçı sıva"),
     ("boya", r".*", "15.540.1509", "İç cephe astar + iki kat plastik boya"),
     ("kablo", r"^nyy_3x2\.5$", "35.140.3161", "3x2,5 mm² NYY kolon / besleme hattı"),
-    ("boru_pprc_temiz", r".*", "25.305", "PPRC temiz su borusu (çapa göre alt poz)"),
+    # mekanik / sıhhi / havalandırma / yangın (birimfiyat.net ile doğrulandı)
+    ("boru_pvc", r"^(70|75)$", "25.305.6102", "Sert PVC pis su borusu Ø75, geçme muflu"),
+    ("boru_pvc", r"^(100|110)$", "25.305.6103", "Sert PVC pis su borusu Ø100-110, geçme muflu"),
+    ("boru_pvc", r"^125$", "25.305.6104", "Sert PVC pis su borusu Ø125"),
+    ("boru_pprc_temiz", r"^20$", "25.305.2101", "PN 20 polipropilen temiz su borusu 1/2\" (20 mm)"),
+    ("boru_pprc_temiz", r"^40$", "25.305.2104", "PN 20 polipropilen temiz su borusu 1 1/4\" (40 mm)"),
+    ("boru_pprc_temiz", r".*", "25.305.21", "PN 20 polipropilen temiz su borusu (çapa göre alt poz)"),
+    ("boru_pe", r"^32$", "25.305.7101", "PE100 SDR17 PN10 polietilen boru Ø32"),
+    ("hava_kanal", r"^[1-5]\d\dx\d+$|^600x\d+$", "25.470.1101", "Galvanizli sacdan dikdörtgen hava kanalı, en geniş kenar ≤ 600 mm (0,60 mm)"),
+    ("hava_kanal", r"^(6[0-9]\d|[7-9]\d\d|1[01]\d\d|12[0-4]\d)x\d+$", "25.470.1102", "Galvanizli sacdan dikdörtgen hava kanalı, en geniş kenar ≤ 1249 mm (0,80 mm)"),
+    ("hava_kanal", r"^(1[3-9]\d\d|2[0-4]\d\d)x\d+$", "25.470.1103", "Galvanizli sacdan dikdörtgen hava kanalı, en geniş kenar ≤ 2490 mm (1,00 mm)"),
+    ("hava_kanal", r".*", "25.470.11", "Galvanizli sacdan dikdörtgen hava kanalı (kenara göre alt poz)"),
+    ("hava_kanal_yuvarlak", r".*", "25.470.1204", "Kenetli spiral galvanizli sacdan silindirik hava kanalı Ø ≤ 1000 mm"),
+    ("sprinkler", r".*", "25.705.1102", "Dik DN20 standart uygulama otomatik yangın sprinkleri"),
+    ("seramik_zemin", r".*", "15.375.1053", "40x40 cm I. kalite renkli seramik yer karosu ile döşeme kaplaması (karo yapıştırıcısı ile)"),
 ]
 _DEFAULT_POZ_RE = [(k, re.compile(p, re.IGNORECASE), poz, name) for k, p, poz, name in DEFAULT_POZ]
 

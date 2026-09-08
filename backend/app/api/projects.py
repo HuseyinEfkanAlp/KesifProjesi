@@ -102,14 +102,21 @@ def update_project(project_id: int, body: ProjectPatch, session: Session = Depen
     p = get_project(project_id, session)
     data = body.model_dump(exclude_unset=True)
     reanalyze = "slab_thickness" in data and data["slab_thickness"] != p.slab_thickness
+    reanalyze_mapped = False
     if "params" in data:
-        p.params = _clean_params({**(p.params or {}), **(data.pop("params") or {})})
+        old_params = p.params or {}
+        p.params = _clean_params({**old_params, **(data.pop("params") or {})})
+        # çatı / cephe sistemi seçimi eşlemeli paftalardaki otomatik eşlemeyi yönlendirir -> o paftalar yeniden analiz edilir
+        reanalyze_mapped = any((old_params.get(k) or "") != (p.params.get(k) or "") for k in ("roof_system", "facade_system"))
     for k, v in data.items():
         setattr(p, k, v)
     session.add(p)
     session.commit()
     if reanalyze:  # varsayılan döşeme kalınlığı dedektör parametresi
         for d in session.exec(select(Drawing).where(Drawing.project_id == p.id)):
+            analyze_and_store(d, p, session)
+    elif reanalyze_mapped:
+        for d in session.exec(select(Drawing).where(Drawing.project_id == p.id, Drawing.discipline == "mapped")):
             analyze_and_store(d, p, session)
     session.refresh(p)
     return project_out(p, session)

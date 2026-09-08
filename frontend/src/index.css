@@ -381,3 +381,5 @@ details.catalog-group table { border-radius: 0 0 var(--r-md) var(--r-md); }
 .form-grid .field.span2 { grid-column: span 2; }
 .form-grid input { width: 100%; }
 @media (max-width: 760px) { .form-grid { grid-template-columns: 1fr 1fr; } .form-grid .field.span2 { grid-column: span 2; } }
+.badge.disc-mechanical { background: #2a9d8f; }
+.badge.pipe { background: #2a9d8f; } .badge.duct { background: #8ab17d; color: #222; } .badge.mech_fixture { background: #e9c46a; color: #222; }

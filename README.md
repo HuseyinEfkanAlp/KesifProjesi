@@ -412,6 +412,36 @@ Katalogdaki kalemin `poz` alanı doluysa (Standart sayfası) o kullanılır; sez
 denenir. Keşif yanıtı `by_group` (iş grubu bazında), `rules` (uygulanan kurallar) ve her kalemde `poz` / `work_group`
 taşır; Excel'de "İş grubu" ve "Poz" sütunları vardır. Kaynaklar: yfk.csb.gov.tr birim fiyat tarifleri, birimfiyat.net poz sayfaları.
 
+## Mekanik / sıhhi / havalandırma / yangın sezgisel tanıma (`detectors/mechanical.py`, disiplin `mechanical`)
+
+Standart dışı tesisat paftaları da KÇS katmanı ya da elle eşleme olmadan okunur:
+- **Boru**: boru katmanlarındaki hatlar uç uca zincirlenir; çap etiketten (`Ø110 PVC`, `DN65`, `PPRC 32`, `1 1/4"`) ya da
+  katman adından; **sistem** katman adı + etiketten katalog koduna gider: PVC / pis su / atık / drenaj → `BORU_PVC`,
+  PPRC / temiz - soğuk - sıcak su → `BORU_PPRC_TEMIZ`, PE → `BORU_PE`, bakır / gaz → `BORU_BAKIR`, yangın / sprinkler →
+  `YANGIN_BORU`, çelik / DN / ısıtma - soğutma → `BORU_CELIK` (anlaşılmazsa çelik + uyarı).
+- **Kanal**: `600x400` dikdörtgen (`HAVA_KANAL`), `Ø315` yuvarlak / spiral (`HAVA_KANAL_YUVARLAK`), flex (`FLEX_KANAL`); çift
+  çizgi kanalda aralık = genişlik (aynı katman, boyları örtüşen çiftler). Blok içi çizgiler hat sayılmaz.
+- **Cihaz / vitrifiye**: cihaz katmanlarındaki bloklar (menfez, vana, sprinkler, radyatör, fancoil, VRF, klima santrali, fan,
+  damper, lavabo, klozet, pisuar, batarya, süzgeç, pompa, kazan, hidrofor, depo, yangın dolabı, tüp…) blok / katman
+  adından koda gider; boru / kanal katmanındaki bloklar yalnız adı tanınırsa sayılır; tanınmayan blok `MEKANIK_CIHAZ`.
+- Elemanlar `meta.ksf_code` taşır: keşifte katalog kalemi olarak (poz, reçete, iş grubu MEK) yazılır. Plan tipleri
+  `mek_yangin / mek_hav / mek_isitma / mek_sihhi` bu disipline gider; mimari paftadaki tesisat katmanları "+ Mekanik" ek
+  disipliniyle açılır (B2 Blok'ta `-ST-Soğuksu`, `-0-Kolon Pissu`, `-HT-Kanal Egzost`, `brn_vitrifiye` böyle tanınır).
+
+## Otomatik katman eşleme (eşlemeli paftalar) ve kaba yapı türetmeleri
+
+- Tavan, döşeme kaplaması, cephe, çatı, peyzaj, altyapı gibi **eşlemeli** paftalarda katman adından tanınan kalemler
+  (`SUGGEST_RULES`) artık onay beklemeden ölçülür: güven 0,55, `meta.auto_mapped`, katman bilgisinde `auto`; Elemanlar
+  sayfasında "otomatik" rozeti, **Onayla** düğmesi ya da "— ölçülmez —" seçimi (tam ad yok-sayma, `LayerProfile.is_ignored`).
+- **Temel kazısı**: temel alanı × `excavation_depth_m` (varsayılan 1,5 m) × `excavation_margin` (1,15 şev / çalışma payı) →
+  `KAZI` (reçete: ekskavatör + kamyon saati); **geri dolgu** = kazı − temel betonu − grobeton. Kapatma: `derived_off` içine
+  `kazi`, `geri_dolgu`.
+- **Lento** reçetesi (yerinde döküm varsayımı): adet başına 0,03 m³ beton, 3 kg demir (`DEMIR`, 15.160.1003), 0,3 m² kalıp;
+  bunların işçilik ve iskele reçeteleri zincirleme açılır. Prefabrik lento kullanılıyorsa katalogdan sıfırlanır.
+- Doğrulanmış pozlar genişledi: PVC pis su Ø75 / 100-110 / 125 (25.305.6102-6104), PPRC 20 / 40 mm (25.305.2101 / 2104),
+  PE Ø32 (25.305.7101), dikdörtgen kanal kenara göre (25.470.1101-1103), spiral kanal (25.470.1204), sprinkler DN20
+  (25.705.1102), 40x40 seramik (15.375.1053).
+
 ## Reçeteler: her kalemden alt işler (`quantity/recipes.py`, `CatalogItem.recipe`, `rules.RECIPES_BY_KIND`)
 
 Zaman ya da maliyet doğuran her alt iş keşfe girer: ana kalem keşfe yazılınca reçetesi sorulmadan açılır ("reçete" rozeti,

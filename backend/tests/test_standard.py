@@ -90,7 +90,8 @@ def test_mapped_discipline_facade(facade_dxf):
     assert suggest_item("brn_hatch_gazbeton", cat) == "DUVAR_YTONG" and suggest_item("brn_glass", cat) == "CAM"
     assert suggest_item("dc mantolama01", cat) == "MANTOLAMA_SISTEM" and suggest_item("brn_dim", cat) is None   # mantolama katmanı sisteme yükselir
     r0 = analyze_file(str(facade_dxf), discipline="mapped", catalog=cat)
-    assert not r0.elements and any("Öneri" in w and "brn_hatch_gazbeton → DUVAR_YTONG" in w for w in r0.warnings)
+    assert r0.elements and any("otomatik eşlendi" in w and "brn_hatch_gazbeton → Ytong" in w for w in r0.warnings)   # öneri onaysız uygulanır
+    assert all(e.meta.get("auto_mapped") and e.confidence < 0.7 for e in r0.elements)
     prof = (LayerProfile().with_layer("item:DUVAR_YTONG:area", "brn_hatch_gazbeton").with_layer("item:CAM", "brn_glass")
             .with_layer("item:KOREKUYU:length", "Söve").with_layer("item:CEPHE_TASI:count", "Kartonpiyer"))
     r = analyze_file(str(facade_dxf), profile=prof, discipline="mapped", catalog=cat)

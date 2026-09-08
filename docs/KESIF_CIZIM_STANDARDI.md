@@ -90,6 +90,12 @@ KÇS katmanı disiplinini kendi adında taşır (`KSF-ELK-…`, `KSF-HAV-…`); 
 kalemler birlikte çizilebilir, program her katmanı kendi disiplinine ve iş grubuna yazar. Standart dışı (sezgisel) paftalarda
 ise ana disipline ek disiplin açılır (proje sayfası, "+ Elektrik").
 
+### Standart dışı tesisat paftaları
+
+KÇS katmanı olmayan mekanik / sıhhi / havalandırma / yangın paftaları da okunur: boru ve kanal hatları katman adı ve
+etiketten (çap, boyut, sistem) tanınır, cihaz blokları adından koda gider. Yine de en güvenilir yol `KSF-MEK-…`,
+`KSF-SIH-…`, `KSF-HAV-…`, `KSF-YAN-…` katmanlarıdır; sezgisel tanımada sistem anlaşılamayan boru çelik sayılır ve uyarı verir.
+
 ### Poz numarası ve ölçü kuralı
 
 Katalogdaki her kaleme ÇŞB birim fiyat **poz numarası** girilebilir (Standart sayfası); keşifte kalem o pozla listelenir ve

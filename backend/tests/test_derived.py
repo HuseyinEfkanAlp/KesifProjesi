@@ -75,13 +75,15 @@ def test_roof_and_derived_via_api(client, storey_dxf, foundation_dxf, roof_dxf):
     assert "cati_sistemi" not in {c["code"] for c in sy["checklist"]}
     by = {i["key"]: i for i in client.get(f"/api/projects/{pid}/quantities").json()["boq"]["items"]}
     assert by["kenet_cati:*"]["quantity"] == pytest.approx(sy["roof"]["area"], abs=0.01) and by["kenet_cati:*"]["detail"]["system"]
-    assert by["cati_alani:*"]["detail"]["info"] is True and by["osb:11mm"]["quantity"] == pytest.approx(sy["roof"]["area"], abs=0.01)
-    # elle çatı alanı ve sistem
+    # ÇATI katmanı otomatik eşlenip ölçüldüğünden bilgi satırı yerine ölçülen kalem var; bileşenler çatı alanı kadar
+    assert "cati_alani:*" not in by or by["cati_alani:*"]["detail"]["info"] is True
+    assert by["osb:11mm"]["quantity"] == pytest.approx(sy["roof"]["area"], abs=0.01)
+    # elle çatı sistemi: ÇATI katmanı otomatik eşlemede seçilen sisteme gider; alan çizimden ölçüldüğü için parametre değil ölçüm esas
     client.patch(f"/api/projects/{pid}", json={"params": {"roof_area_m2": 250, "roof_system": "TERAS_CATI"}})
     sy = client.get(f"/api/projects/{pid}/systems").json()
-    assert sy["roof"]["area"] == 250 and sy["roof"]["system"] == "TERAS_CATI" and sy["roof"]["system_source"] == "manual"
+    assert sy["roof"]["source"] == "measured" and sy["roof"]["system"] == "TERAS_CATI" and sy["roof"]["system_source"] == "manual"
     by = {i["key"]: i for i in client.get(f"/api/projects/{pid}/quantities").json()["boq"]["items"]}
-    assert by["teras_cati:*"]["quantity"] == 250 and "kenet_cati:*" not in by
+    assert by["teras_cati:*"]["quantity"] == pytest.approx(sy["roof"]["area"], abs=0.01) and "kenet_cati:*" not in by
     cost = client.get(f"/api/projects/{pid}/cost").json()["cost"]
     assert not any(l["key"] in ("cati_alani:*", "teras_cati:*") for l in cost["lines"])
 
