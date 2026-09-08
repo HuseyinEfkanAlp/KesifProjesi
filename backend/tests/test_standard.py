@@ -112,3 +112,4 @@ def test_mapped_discipline_facade(facade_dxf):
     assert by_key["duvar_ytong:*"].discipline == "ksf:MIM"
     assert by_key["cam:*"].quantity == pytest.approx(9.0) and by_key["korekuyu:*"].quantity == pytest.approx(8.0)
     assert by_key["cephe_tasi:*"].quantity == 5
+

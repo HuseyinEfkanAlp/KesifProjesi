@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import Icon from '../components/Icon'
 import Loading from '../components/Loading'
 import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
-import { DISCIPLINES, ETYPE_COLORS, ETYPE_LABELS, ETYPES_BY_DISCIPLINE, SUBTYPE_LABELS, layerTypeLabels, type Catalog, type Discipline, type Drawing, type Element, type EType } from '../types'
+import { DISCIPLINES, ETYPE_COLORS, ETYPE_LABELS, ETYPES_BY_DISCIPLINE, SUBTYPE_LABELS, layerTypeLabels, type Boq, type Catalog, type Discipline, type Drawing, type Element, type EType } from '../types'
 
 /** Tipe göre düzenlenebilir sayısal alanlar */
 const FIELDS: Record<EType, Array<'b' | 'h' | 'thickness' | 'length' | 'area'>> = {
@@ -33,6 +33,7 @@ export default function Elements() {
   const svgRef = useRef<HTMLDivElement>(null)
   const [manual, setManual] = useState({ etype: '' as EType | '', name: '', subtype: '', b: 0.3, h: 0.6, length: 0, thickness: 0, area: 0, count: 1 })
   const [catalog, setCatalog] = useState<Catalog | null>(null)
+  const [boq, setBoq] = useState<Boq | null>(null)
   const [measureSel, setMeasureSel] = useState<Record<string, string>>({})
   const [patternSel, setPatternSel] = useState<Record<string, string>>({})
 
@@ -40,6 +41,7 @@ export default function Elements() {
     try {
       const [d, els, s] = await Promise.all([Api.drawings.get(drawingId), Api.drawings.elements(drawingId), Api.drawings.previewSvg(drawingId)])
       setDrawing(d); setElements(els); setSvg(s)
+      Api.drawings.boq(drawingId).then(setBoq).catch(() => setBoq(null))
       setManual((m) => (m.etype ? m : { ...m, etype: ETYPES_BY_DISCIPLINE[d.discipline][0] ?? '' }))
       if (d.discipline === 'mapped') Api.catalog.get().then(setCatalog).catch(() => {})
     } catch (e) { setError((e as Error).message) }
@@ -141,6 +143,12 @@ export default function Elements() {
   const counts = ETYPES.map((t) => [t, elements.filter((e) => e.etype === t).length] as const)
   const subtypeText = (el: Element) => (el.subtype ? (SUBTYPE_LABELS[el.subtype] ?? el.subtype) : '')
   const mt = manual.etype as EType
+  // pafta metrajı: tür toplamı + kalemler; tür sırası keşif listesindeki gibi
+  const KIND_ETYPE: Record<string, string> = { duvar: 'wall', kapi: 'door', pencere: 'window', cam: 'window', tava: 'tray', kablo: 'cable', boru: 'conduit', armatur: 'fixture' }
+  const etypeOfItem = (kind: string, group: string) => KIND_ETYPE[kind] ?? (['beton', 'kalip', 'demir'].includes(kind) ? group.split(':')[0] : kind)
+  const boqKinds = (boq?.kind_totals ?? []).map((t) => ({ ...t, rows: (boq?.items ?? []).filter((i) => i.kind === t.kind && i.quantity > 0) })).filter((t) => t.rows.length > 0)
+  const qty = (v: number, unit: string) => fmt(v, unit === 'adet' || unit === 'kg' ? 0 : 2)
+  const pickType = (t: string) => { if (ETYPES.includes(t)) { setFilter(t as EType); setShowList(true) } }
 
   return (
     <>
@@ -162,6 +170,42 @@ export default function Elements() {
           <summary>{drawing.warnings.length} uyarı<span className="muted">{drawing.warnings[0].slice(0, 110)}{drawing.warnings[0].length > 110 ? '…' : ''}</span></summary>
           <div className="panel"><ul className="warn-list">{drawing.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></div>
         </details>
+      )}
+
+      {boq && (
+        <div className="panel">
+          <h3 style={{ marginTop: 0 }}>Pafta metrajı <span className="muted" style={{ fontWeight: 400 }}>· bu paftadan ölçülen kalemler, malzeme bazında toplam{drawing.storey_count > 1 ? ` · ${drawing.storey_count} kat çarpanı uygulandı` : ''}</span></h3>
+          {boqKinds.length === 0 ? (
+            <p className="muted" style={{ marginBottom: 0 }}>Bu paftada ölçülen kalem yok{isMapped ? ': katmanları katalog kalemine eşleyin.' : '.'}</p>
+          ) : (
+            <table className="table-compact">
+              <thead><tr><th>Kalem</th><th>Malzeme / ölçü</th><th className="num">Miktar</th><th>Birim</th><th className="num">Adet</th></tr></thead>
+              <tbody>
+                {boqKinds.map((t) => (
+                  <Fragment key={t.kind}>
+                    <tr style={{ cursor: 'pointer' }} onClick={() => pickType(etypeOfItem(t.kind, t.rows[0].group))} title="Bu tipin eleman listesini aç">
+                      <td><b>{t.label}</b></td>
+                      <td className="muted">{t.rows.length > 1 ? `toplam · ${t.rows.length} kalem` : t.rows[0].label}</td>
+                      <td className="num"><b>{qty(t.quantity, t.unit)}</b></td>
+                      <td><b>{t.unit}</b></td>
+                      <td className="num">{t.count ? fmt(t.count, 0) : ''}</td>
+                    </tr>
+                    {t.rows.length > 1 && t.rows.map((i) => (
+                      <tr key={i.key} style={{ cursor: 'pointer' }} onClick={() => pickType(etypeOfItem(i.kind, i.group))}>
+                        <td></td>
+                        <td>{i.label}</td>
+                        <td className="num">{qty(i.quantity, i.unit)}</td>
+                        <td className="muted">{i.unit}</td>
+                        <td className="num muted">{i.count ? fmt(i.count, 0) : ''}</td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <p className="muted hint" style={{ marginBottom: 0 }}>Duvar m² = uzunluk × yükseklik (kapı / pencere boşlukları düşülür); fire, sarf ve reçete kalemleri proje keşfinde. Satıra tıklayınca o tipin eleman listesi açılır.</p>
+        </div>
       )}
 
       <div className="grid2 align-top">
@@ -243,8 +287,9 @@ export default function Elements() {
       </div>
 
       {groups.length > 0 && (
-        <div className="panel">
-          <h3 style={{ marginTop: 0 }}>Özet <span className="muted" style={{ fontWeight: 400 }}>· aynı tip ve kesitteki elemanlar tek satır</span></h3>
+        <details className="section">
+          <summary>Eleman özeti <span className="muted">· aynı tip ve kesitteki elemanlar tek satır: adet, uzunluk, alan</span></summary>
+          <div className="panel">
           <table className="table-compact">
             <thead><tr><th>Tip</th><th>Kesit / malzeme / ölçü</th><th className="num">Adet</th><th className="num">Toplam uzunluk (m)</th><th className="num">Toplam alan (m²)</th><th className="num">Metraj dışı</th></tr></thead>
             <tbody>
@@ -261,7 +306,8 @@ export default function Elements() {
             </tbody>
           </table>
           <p className="muted hint" style={{ marginBottom: 0 }}>Satıra tıklayınca aşağıda o tipin eleman listesi açılır; tek tek düzeltme ve silme orada.</p>
-        </div>
+          </div>
+        </details>
       )}
 
       <div className="panel">

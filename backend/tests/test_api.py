@@ -291,3 +291,20 @@ def test_mapped_flow_api(client, facade_dxf):
     by = {i["key"]: i for i in q["boq"]["items"]}
     assert by["duvar_ytong:*"]["quantity"] == pytest.approx(48.0) and by["cam:*"]["quantity"] == pytest.approx(9.0)
     assert by["duvar_ytong:*"]["discipline_label"] == "Mimari"
+
+
+def test_drawing_boq_endpoint(client, standard_dxf):
+    """Pafta metrajı: o paftadan ölçülen kalemler kendi birimiyle (duvar malzeme bazında m²), tür toplamları; fire / sarf yok."""
+    r = client.post("/api/projects", json={"name": "P", "storey_height": 3.0, "slab_thickness": 0.15})
+    pid = r.json()["id"]
+    with open(standard_dxf, "rb") as f:
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("ksf.dxf", f, "application/dxf")},
+                        data={"label": "Zemin", "storey_count": "2", "discipline": "standard"})
+    assert r.status_code == 201, r.text
+    did = r.json()["id"]
+    b = client.get(f"/api/drawings/{did}/boq").json()
+    by = {i["key"]: i for i in b["items"]}
+    assert by["duvar_ytong:20x300"]["unit"] == "m²" and by["duvar_ytong:20x300"]["quantity"] == pytest.approx(6 * 3.0 * 2)
+    tot = {t["kind"]: t for t in b["kind_totals"]}
+    assert tot["duvar_ytong"]["unit"] == "m²" and tot["duvar_ytong"]["quantity"] == pytest.approx(36.0)
+    assert not any(i["kind"] in ("plywood", "bag_teli") or i["group"] == "fire" or i["notes"] and "Reçete" in i["notes"][0] for i in b["items"])

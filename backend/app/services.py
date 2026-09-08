@@ -282,11 +282,14 @@ def rebar_table_rows(project: Project, session: Session) -> list[dict]:
     return rows
 
 
-def project_quantities(project: Project, session: Session) -> tuple[list[QuantityLine], dict, dict]:
+def project_quantities(project: Project, session: Session, drawings: list[Drawing] | None = None) -> tuple[list[QuantityLine], dict, dict]:
     """Statik metraj: (satırlar, özet, element_info) döndürür. Yalnızca statik eleman tipleri girer;
-    donatı paftalarındaki tablolar demiri çap bazında verir ve ilgili eleman tipinin oran tahminini geçersiz kılar."""
-    drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
-    sh = storey_heights(project, drawings)
+    donatı paftalarındaki tablolar demiri çap bazında verir ve ilgili eleman tipinin oran tahminini geçersiz kılar.
+    drawings: yalnız bu paftalar (tek pafta metrajı); kat yükseklikleri yine projenin tüm paftalarından."""
+    all_drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    sh = storey_heights(project, all_drawings)
+    if drawings is None:
+        drawings = all_drawings
     lines: list[QuantityLine] = []
     info: dict = {}
     for d in drawings:
@@ -309,14 +312,23 @@ def project_quantities(project: Project, session: Session) -> tuple[list[Quantit
     return lines, summarize(lines, rebar_table_rows(project, session), info), info
 
 
-def project_boq(project: Project, session: Session, summary: dict | None = None, expand: bool = True) -> list[BoqItem]:
-    """Tüm disiplinlerin keşif listesi. expand=True: katmanlı sistemler bileşenlerine açılır (project_systems kararıyla)."""
+# Pafta metrajında yazılmayan kalemler: proje toplamından türeyen fire ve sarf (keşif listesinde kalır)
+_NOT_MEASURED_KINDS = {"plywood", "bag_teli", "kalip_yagi", "civi"}
+
+
+def project_boq(project: Project, session: Session, summary: dict | None = None, expand: bool = True,
+                drawings: list[Drawing] | None = None, measured_only: bool = False) -> list[BoqItem]:
+    """Tüm disiplinlerin keşif listesi. expand=True: katmanlı sistemler bileşenlerine açılır (project_systems kararıyla).
+    drawings: yalnız bu paftalar. measured_only: yalnız çizimden ölçülen kalemler (beton / kalıp / demir, duvar, kapı,
+    KSF kalemleri…); fire, sarf, cephe / çatı tahmini, türetilmiş kalemler ve reçeteler yazılmaz (pafta metrajı)."""
+    all_drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    if drawings is None:
+        drawings = all_drawings
     if summary is None:
-        _, summary, _ = project_quantities(project, session)
+        _, summary, _ = project_quantities(project, session, drawings)
     params = project_params(project)
     catalog = load_catalog()
-    drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
-    sh = storey_heights(project, drawings)
+    sh = storey_heights(project, all_drawings)
     els_by_id = {d.id: _included_elements(d, session) for d in drawings}
     # doğrama pozları: adet poz listesinden (proje toplamı), ölçü görünüş / doğrama paftasından, kapı-pencere ayrımı nottan
     poz_sizes, poz_kinds, sched_poz = {}, {}, set()
@@ -348,7 +360,8 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
                  "height_source": sh["per_drawing"].get(d.id, {}).get("source", sh["source"]),
                  "elements": [ksf_entry(e) for e in elements]}
         if d.discipline in (STANDARD_DISCIPLINE, MAPPED_DISCIPLINE):
-            std.append(entry)
+            # KSF statik katmanları (KOLON_ON, DOSEME_ON…) statik motorda beton / kalıp / demir olarak ölçüldü; ikinci kez yazılmaz
+            std.append({**entry, "elements": [e for e in entry["elements"] if _g_etype(e) not in STRUCTURAL_TYPES]})
             continue
         if d.discipline == REBAR_DISCIPLINE:
             continue
@@ -364,6 +377,8 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
              + electrical_items(elec, params))
     if std:
         items += standard_items(std, params, catalog)
+    if measured_only:
+        return sort_items([it for it in items if it.group != "fire" and it.kind not in _NOT_MEASURED_KINDS])
     items += facade_items(project, session, catalog, items, drawings, params)
     items += roof_items(project, session, catalog, items, drawings, params)
     items += derived_items(project, session, catalog, items, drawings, params)[0]
@@ -374,6 +389,16 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
         off = {x.strip() for x in str(params.get("derived_off") or "").split(",") if x.strip()}
         items = expand_recipes(items, catalog, storey_height=sh["effective"], off="recete" in off)
     return sort_items(items)
+
+
+def _g_etype(e) -> str:
+    return e["etype"] if isinstance(e, dict) else e.etype
+
+
+def drawing_boq(project: Project, drawing: Drawing, session: Session) -> list[BoqItem]:
+    """Tek paftanın metrajı: o paftadan ölçülen kalemler (duvar malzeme bazında m², kapı adet, KSF kalemleri kendi
+    birimiyle, beton / kalıp / demir); kat çarpanı uygulanır, proje genelinden türeyen kalemler yazılmaz."""
+    return project_boq(project, session, drawings=[drawing], measured_only=True)
 
 
 ROOF_KINDS = {"kenet_cati", "kiremit_cati", "teras_cati", "cati_kiremit", "cati_membran", "cati_sandvic_panel"}

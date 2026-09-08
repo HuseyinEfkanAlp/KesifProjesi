@@ -90,6 +90,7 @@ export const Api = {
     remove: (id: number) => request<void>(`/api/drawings/${id}`, { method: 'DELETE' }),
     reanalyze: (id: number) => request<Drawing>(`/api/drawings/${id}/reanalyze`, { method: 'POST' }),
     elements: (id: number) => request<Element[]>(`/api/drawings/${id}/elements`),
+    boq: (id: number) => request<Boq>(`/api/drawings/${id}/boq`),
     addElement: (id: number, body: Partial<Element>) => request<Element>(`/api/drawings/${id}/elements`, { method: 'POST', body: json(body) }),
     previewSvg: (id: number) => fetch(`/api/drawings/${id}/preview.svg?width=1400`).then((r) => r.text()),
   },

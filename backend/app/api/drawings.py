@@ -20,7 +20,7 @@ from ..parser.dwg import convert_dwg_to_dxf, dwg_supported
 from ..parser.loader import UNIT_SCALE, load_dxf
 from ..parser.sheets import BIG_FILE_BYTES, Sheet, SheetScan, crop_sheets, scan_sheets
 from ..planset import PLAN_TYPE_BY_CODE, resolve_plan
-from ..services import analyze_and_store, detect_params, load_catalog, recompute_derived
+from ..services import analyze_and_store, boq_payload, detect_params, drawing_boq, load_catalog, recompute_derived
 from .projects import get_project
 
 router = APIRouter(prefix="/api", tags=["drawings"])
@@ -487,6 +487,14 @@ def drawing_layers(drawing_id: int, session: Session = Depends(get_session)):
     d = get_drawing(drawing_id, session)
     return {"layers": d.layers, "element_types": types_for(d.discipline or DEFAULT_DISCIPLINE), "discipline": d.discipline,
             "unit": d.unit, "unit_detected": d.unit_detected, "warnings": d.warnings}
+
+
+@router.get("/drawings/{drawing_id}/boq")
+def drawing_boq_out(drawing_id: int, session: Session = Depends(get_session)):
+    """Paftanın metrajı: ölçülen kalemler (duvar malzeme bazında m², kapı adet, KSF kalemleri…) ve tür toplamları."""
+    d = get_drawing(drawing_id, session)
+    project = get_project(d.project_id, session)
+    return boq_payload(drawing_boq(project, d, session))
 
 
 @router.get("/drawings/{drawing_id}/elements")
