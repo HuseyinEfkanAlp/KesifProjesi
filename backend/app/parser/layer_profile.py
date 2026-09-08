@@ -105,6 +105,7 @@ IGNORE_PATTERNS = [
     r"MARKA",  # sadece yazı içerir; yazılar katmandan bağımsız toplanır
     r"\bLGP",  # LGP-SLAB: döşeme etiketi çerçeve kutuları (döşeme çokgeni değil)
     r"KES[Iİ]K",  # kesik/gizli çizgi kopyaları (KM Temel Kesik: radye sınırının ofsetli kopyası)
+    r"G[Iİ]ZL[Iİ]", r"\bHIDE", r"HIDDEN",  # gizli / görünmez yardımcı katmanlar (HB-GIZLI-DATA gibi yazı katmanları)
 ]
 # Mimari paftada duvarlar çoğu zaman tarama (hatch) ile çizilir; bu desenler mimaride yok sayılmaz
 ARCH_KEEP = {r"TARAMA", r"HATCH"}

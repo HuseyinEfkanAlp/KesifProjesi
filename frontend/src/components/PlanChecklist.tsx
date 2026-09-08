@@ -22,7 +22,7 @@ const LEVEL_LABEL: Record<PlanLevel, string> = { required: 'Gerekli', optional: 
 export default function PlanChecklist({ projectId, refreshKey, onLoaded }: Props) {
   const [check, setCheck] = useState<PlanCheck | null>(null)
   const [error, setError] = useState('')
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
 
   const load = useCallback(() => {
     Api.projects.planCheck(projectId).then((c) => { setCheck(c); onLoaded?.(c) }).catch((e) => setError(e.message))
@@ -51,11 +51,17 @@ export default function PlanChecklist({ projectId, refreshKey, onLoaded }: Props
         </h3>
         <button className="secondary small" onClick={() => setOpen(!open)}>{open ? 'Listeyi gizle' : 'Listeyi göster'}</button>
       </div>
-      {check.warnings.length > 0 && (
+      {check.warnings.length > 0 && open && (
         <div className="warn">
           <b>Eksik planlar var.</b> Yüklemediğiniz planların keşfi çıkmaz. Projede gerçekten yoksa satırında <i>Bu projede yok</i> seçin.
           <ul>{check.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
         </div>
+      )}
+      {check.warnings.length > 0 && !open && (
+        <p className="muted" style={{ margin: '4px 0 0' }}>
+          {check.warnings.slice(0, 3).map((w) => w.replace(/ yüklenmedi$/, '')).join(' · ')}{check.warnings.length > 3 ? ` · +${check.warnings.length - 3}` : ''} — yüklenmedi.
+          Projede gerçekten yoksa listeyi açıp <i>Bu projede yok</i> seçin.
+        </p>
       )}
       {open && (
         <div style={{ overflowX: 'auto' }}>

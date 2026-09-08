@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Api, type DrawingPatch } from '../api/client'
-import { DISCIPLINES, ETYPE_LABELS, STRUCTURAL_ETYPES, type CatalogItem, type Discipline, type Drawing, type Project, type ProjectParams } from '../types'
+import { DISCIPLINES, DRAWING_STATUS, ETYPE_LABELS, STRUCTURAL_ETYPES, type CatalogItem, type Discipline, type Drawing, type Project, type ProjectParams } from '../types'
 import PlanChecklist from '../components/PlanChecklist'
 import PlanIntake from '../components/PlanIntake'
 import SystemsPanel from '../components/SystemsPanel'
@@ -97,25 +97,75 @@ export default function ProjectDetail() {
     </>
   )
 
+  const statusOf = (d: Drawing) => DRAWING_STATUS[d.status ?? (d.plan_type ? (d.element_count > 0 ? 'ok' : 'empty') : 'untyped')]
+  const counts = { ok: 0, empty: 0, problem: 0, untyped: 0 }
+  for (const d of drawings) counts[d.status ?? (d.plan_type ? (d.element_count > 0 ? 'ok' : 'empty') : 'untyped')] += 1
+
   return (
     <>
       <ProjectNav id={id} name={project.name} />
       {error && <div className="error">{error}</div>}
 
+      {project.storey_height <= 0 && (
+        <div className="warn">
+          <b>Kat yüksekliği girilmedi.</b> Duvar, sıva ve boya m² için duvar yüksekliği 3,0 m varsayılıyor; sağdaki <b>Metraj parametreleri</b>'nden
+          kat yüksekliğini (H) ve döşeme kalınlığını (d) girip kaydedin.
+        </div>
+      )}
       <div className="panel">
-        <PlanChecklist projectId={id} refreshKey={refresh} />
-      </div>
-      <div className="panel">
-        <SystemsPanel projectId={id} refreshKey={refresh} />
+        <h3 style={{ marginTop: 0 }}>Çizimlerden ne anlaşıldı</h3>
+        {drawings.length === 0 && <p className="muted">Henüz çizim yüklenmedi; aşağıdan planları bırakın.</p>}
+        {drawings.length > 0 && (
+          <>
+            <div className="summary-line">
+              <span><b>{drawings.length}</b> pafta</span>
+              <span><span className="badge st-present">{counts.ok}</span> okundu, metraja giriyor</span>
+              {counts.problem > 0 && <span><span className="badge st-missing">{counts.problem}</span> sorunlu (plan geometrisi yok / birim)</span>}
+              {counts.empty > 0 && <span><span className="badge st-optional_missing">{counts.empty}</span> boş (eleman bulunamadı)</span>}
+              {counts.untyped > 0 && <span><span className="badge st-skipped">{counts.untyped}</span> tipi seçilmedi</span>}
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead><tr><th>Plan</th><th>Plan tipi</th><th>Durum</th><th>Bulunanlar</th><th>Not</th><th></th></tr></thead>
+                <tbody>
+                  {drawings.map((d) => {
+                    const st = statusOf(d)
+                    return (
+                      <tr key={d.id}>
+                        <td title={d.filename}><b>{d.label}</b></td>
+                        <td>
+                          <select value={d.plan_type} disabled={busy} className={d.plan_type ? '' : 'unset'} title="Plan seti kontrolünde hangi paftayı karşıladığı"
+                            onChange={(e) => patchDrawing(d, { plan_type: e.target.value })}>{planTypeOptions}</select>
+                        </td>
+                        <td><span className={`badge ${st.cls}`}>{st.label}</span></td>
+                        <td className="found">{d.found || (d.element_count > 0 ? `${d.element_count} eleman` : <span className="muted">-</span>)}</td>
+                        <td className="note" title={d.warnings.join('\n')}>
+                          {d.note || (d.warnings.length > 0 ? d.warnings[0].slice(0, 140) : <span className="muted">-</span>)}
+                          {d.warnings.length > 1 && <span className="muted"> (+{d.warnings.length - 1} uyarı)</span>}
+                        </td>
+                        <td className="row">
+                          <Link className="btn" to={`/projects/${id}/drawings/${d.id}`}>Elemanlar</Link>
+                          <button className="danger small" onClick={() => removeDrawing(d)}>Sil</button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="muted" style={{ marginBottom: 0 }}>
+              Disiplin, birim, kat sayısı ve kat yüksekliği aşağıdaki <b>Çizim ayarları</b> bölümünde; her paftanın tüm uyarıları ve katmanları <b>Elemanlar</b> sayfasında.
+            </p>
+          </>
+        )}
       </div>
 
       <div className="grid2">
         <div className="panel">
           <h3>Plan yükle</h3>
           <p className="muted">
-            Plan tipi ve disiplin dosya adı / pafta başlığından tanınır (<b>Donatı planı</b>: demir metraj tablosu okunur; <b>KSF standart çizim</b>:
-            <code className="layer">KSF-…</code> katmanlı plan; <b>Katman eşlemeli</b>: cephe / çatı / peyzaj gibi standart dışı paftalar).
-            Yanlış tanındıysa aşağıdaki çizim listesinden disiplini ve plan tipini değiştirin.
+            Plan tipi ve disiplin dosya adı / pafta başlığından tanınır; ruhsat projesi dosyasında paftalar ayrılır ve siz onaylarsınız.
+            Yanlış tanındıysa yukarıdaki listeden plan tipini, <b>Çizim ayarları</b>'ndan disiplini değiştirin.
           </p>
           <PlanIntake projectId={id} storeyHeight={params.storey_height} onChanged={drawingsChanged} compact />
         </div>
@@ -127,13 +177,6 @@ export default function ProjectDetail() {
             <label className="field">Döşeme kalınlığı d (m)<input type="number" step="0.01" value={params.slab_thickness} onChange={(e) => setParams({ ...params, slab_thickness: +e.target.value })} /></label>
             <label className="field">KDV oranı (0.20 = %20)<input type="number" step="0.01" value={params.vat_rate} onChange={(e) => setParams({ ...params, vat_rate: +e.target.value })} /></label>
           </div>
-          <h3>Demir oranları (kg/m³ beton)</h3>
-          <div className="row">
-            {STRUCTURAL_ETYPES.map((k) => (
-              <label className="field" key={k}>{ETYPE_LABELS[k]}<input type="number" value={ratios[k] ?? 0} onChange={(e) => setRatios({ ...ratios, [k]: +e.target.value })} /></label>
-            ))}
-          </div>
-          <h3>Mimari / elektrik / süre parametreleri</h3>
           <div className="params-grid">
             {PARAM_FIELDS.map((f) => (
               <label className="field" key={f.key} title={f.hint}>{f.label}
@@ -142,105 +185,116 @@ export default function ProjectDetail() {
               </label>
             ))}
           </div>
-          <h3>Cephe</h3>
-          <div className="row">
-            <label className="field" title="Boş: görünüşte CEPHE_BRUT eşlenmişse o alan, yoksa kalıp planındaki kolon/perde dış hattı çevresi × kat yüksekliği">
-              Brüt cephe alanı (m²)
-              <input type="number" step="1" value={dparams.facade_gross_m2 ?? ''} placeholder="otomatik" onChange={(e) => setDparams({ ...dparams, facade_gross_m2: e.target.value })} />
-            </label>
-            <label className="field" title="Seçilirse miktarı net cephe alanı (brüt − cam) olan bir kalem üretilir; katmanlı sistemse bileşenleri sorulur">
-              Cephe sistemi
-              <select value={dparams.facade_system ?? ''} onChange={(e) => setDparams({ ...dparams, facade_system: e.target.value })}>
-                <option value="">— yok / görünüşten ölçülecek —</option>
-                {facadeItems.map((i) => <option key={i.code} value={i.code}>{i.name}{i.is_system ? ' (katmanlı)' : ''}</option>)}
-              </select>
-            </label>
-          </div>
-          <h3>Çatı ve türetilmiş kalemler</h3>
-          <div className="row">
-            <label className="field" title="Boş: çizimde ölçülen çatı kalemi, yoksa en üst kat planı oturumu">
-              Çatı alanı (m²)
-              <input type="number" step="1" value={dparams.roof_area_m2 ?? ''} placeholder="otomatik" onChange={(e) => setDparams({ ...dparams, roof_area_m2: e.target.value })} />
-            </label>
-            <label className="field" title="Boş: kesit / detay notlarındaki kanıttan (kenet / kiremit / teras)">
-              Çatı sistemi
-              <select value={dparams.roof_system ?? ''} onChange={(e) => setDparams({ ...dparams, roof_system: e.target.value })}>
-                <option value="">— notlardan / seçilmedi —</option>
-                {roofItems.map((i) => <option key={i.code} value={i.code}>{i.name}{i.is_system ? ' (katmanlı)' : ''}</option>)}
-              </select>
-            </label>
-            <label className="field" title="Şap ve döşeme kaplaması yalnız bu mahal türlerine uygulanır (plandaki mahal alanı yazılarından). Boş: LOBİ, VİTRİN, GİRİŞ, HOL, KORİDOR, FUAYE">
-              Şap / kaplama mahalleri
-              <input style={{ width: 240 }} value={dparams.finish_rooms ?? ''} placeholder="LOBİ, VİTRİN, GİRİŞ, HOL, KORİDOR" onChange={(e) => setDparams({ ...dparams, finish_rooms: e.target.value })} />
-            </label>
-            <label className="field" title="Doluysa mahal yazıları kullanılmaz">Şap / kaplama alanı (m²)<input type="number" step="1" value={dparams.finish_area_m2 ?? ''} placeholder="mahallerden" onChange={(e) => setDparams({ ...dparams, finish_area_m2: e.target.value })} /></label>
-            <label className="field">Şap kalınlığı (cm)<input type="number" step="0.5" value={dparams.screed_cm ?? ''} placeholder="5" onChange={(e) => setDparams({ ...dparams, screed_cm: e.target.value })} /></label>
-            <label className="field">Grobeton (cm)<input type="number" step="1" value={dparams.lean_concrete_cm ?? ''} placeholder="10" onChange={(e) => setDparams({ ...dparams, lean_concrete_cm: e.target.value })} /></label>
-          </div>
-          <h3>Statik sarf ve fire (bağ teli, plywood, kalıp yağı, çivi)</h3>
-          <div className="params-grid">
-            {SARF_FIELDS.map((f) => (
-              <label className="field" key={f.key} title={f.hint}>{f.label}
-                <input type="number" step={f.step} value={dparams[f.key] ?? ''} placeholder={f.hint}
-                  onChange={(e) => setDparams({ ...dparams, [f.key]: e.target.value })} />
+          <details style={{ marginTop: 8 }}>
+            <summary className="muted" style={{ cursor: 'pointer' }}>Cephe, çatı, şap / kaplama, demir oranları, sarf ve fire…</summary>
+            <h3>Cephe</h3>
+            <div className="row">
+              <label className="field" title="Boş: görünüşte CEPHE_BRUT eşlenmişse o alan, yoksa kalıp planındaki kolon/perde dış hattı çevresi × kat yüksekliği">
+                Brüt cephe alanı (m²)
+                <input type="number" step="1" value={dparams.facade_gross_m2 ?? ''} placeholder="otomatik" onChange={(e) => setDparams({ ...dparams, facade_gross_m2: e.target.value })} />
               </label>
-            ))}
-          </div>
+              <label className="field" title="Seçilirse miktarı net cephe alanı (brüt − cam) olan bir kalem üretilir; katmanlı sistemse bileşenleri sorulur">
+                Cephe sistemi
+                <select value={dparams.facade_system ?? ''} onChange={(e) => setDparams({ ...dparams, facade_system: e.target.value })}>
+                  <option value="">— yok / görünüşten ölçülecek —</option>
+                  {facadeItems.map((i) => <option key={i.code} value={i.code}>{i.name}{i.is_system ? ' (katmanlı)' : ''}</option>)}
+                </select>
+              </label>
+            </div>
+            <h3>Çatı ve türetilmiş kalemler</h3>
+            <div className="row">
+              <label className="field" title="Boş: çizimde ölçülen çatı kalemi, yoksa en üst kat planı oturumu">
+                Çatı alanı (m²)
+                <input type="number" step="1" value={dparams.roof_area_m2 ?? ''} placeholder="otomatik" onChange={(e) => setDparams({ ...dparams, roof_area_m2: e.target.value })} />
+              </label>
+              <label className="field" title="Boş: kesit / detay notlarındaki kanıttan (kenet / kiremit / teras)">
+                Çatı sistemi
+                <select value={dparams.roof_system ?? ''} onChange={(e) => setDparams({ ...dparams, roof_system: e.target.value })}>
+                  <option value="">— notlardan / seçilmedi —</option>
+                  {roofItems.map((i) => <option key={i.code} value={i.code}>{i.name}{i.is_system ? ' (katmanlı)' : ''}</option>)}
+                </select>
+              </label>
+              <label className="field" title="Şap ve döşeme kaplaması yalnız bu mahal türlerine uygulanır (plandaki mahal alanı yazılarından). Boş: LOBİ, VİTRİN, GİRİŞ, HOL, KORİDOR, FUAYE">
+                Şap / kaplama mahalleri
+                <input style={{ width: 240 }} value={dparams.finish_rooms ?? ''} placeholder="LOBİ, VİTRİN, GİRİŞ, HOL, KORİDOR" onChange={(e) => setDparams({ ...dparams, finish_rooms: e.target.value })} />
+              </label>
+              <label className="field" title="Doluysa mahal yazıları kullanılmaz">Şap / kaplama alanı (m²)<input type="number" step="1" value={dparams.finish_area_m2 ?? ''} placeholder="mahallerden" onChange={(e) => setDparams({ ...dparams, finish_area_m2: e.target.value })} /></label>
+              <label className="field">Şap kalınlığı (cm)<input type="number" step="0.5" value={dparams.screed_cm ?? ''} placeholder="5" onChange={(e) => setDparams({ ...dparams, screed_cm: e.target.value })} /></label>
+              <label className="field">Grobeton (cm)<input type="number" step="1" value={dparams.lean_concrete_cm ?? ''} placeholder="10" onChange={(e) => setDparams({ ...dparams, lean_concrete_cm: e.target.value })} /></label>
+            </div>
+            <h3>Demir oranları (kg/m³ beton)</h3>
+            <div className="row">
+              {STRUCTURAL_ETYPES.map((k) => (
+                <label className="field" key={k}>{ETYPE_LABELS[k]}<input type="number" value={ratios[k] ?? 0} onChange={(e) => setRatios({ ...ratios, [k]: +e.target.value })} /></label>
+              ))}
+            </div>
+            <h3>Statik sarf ve fire (bağ teli, plywood, kalıp yağı, çivi)</h3>
+            <div className="params-grid">
+              {SARF_FIELDS.map((f) => (
+                <label className="field" key={f.key} title={f.hint}>{f.label}
+                  <input type="number" step={f.step} value={dparams[f.key] ?? ''} placeholder={f.hint}
+                    onChange={(e) => setDparams({ ...dparams, [f.key]: e.target.value })} />
+                </label>
+              ))}
+            </div>
+          </details>
           <div className="row" style={{ marginTop: 10 }}>
             <button onClick={saveParams} disabled={busy}>Kaydet</button>
-            <span className="muted">
-              Statik: döşemeler kiriş ağından (net alan) çıkarıldığında kolon/perde betonu tam kat yüksekliğiyle, kalıbı kiriş altına kadar hesaplanır.
-              Mimari: duvar m² = uzunluk × duvar yüksekliği − kapı/pencere boşlukları. Elektrik: kablo m = hat + iniş payı, fire eklenir.
-            </span>
+            <span className="muted">Duvar m² = uzunluk × duvar yüksekliği − kapı / pencere boşlukları; kablo m = hat + iniş payı + fire.</span>
           </div>
         </div>
       </div>
 
-      <div className="panel">
-        <h3>Çizimler</h3>
-        {drawings.length === 0 && <p className="muted">Henüz çizim yüklenmedi.</p>}
-        {drawings.length > 0 && (
-          <table>
-            <thead>
-              <tr><th>Plan</th><th>Plan tipi</th><th>Disiplin</th><th>Dosya</th><th>Birim</th><th className="num">Kat sayısı</th><th className="num">Kat yüksekliği H (m)</th><th className="num">Eleman</th><th>Uyarı</th><th></th></tr>
-            </thead>
-            <tbody>
-              {drawings.map((d) => (
-                <tr key={d.id}>
-                  <td><input className="wide" defaultValue={d.label} onBlur={(e) => e.target.value !== d.label && patchDrawing(d, { label: e.target.value })} /></td>
-                  <td>
-                    <select value={d.plan_type} disabled={busy} className={d.plan_type ? '' : 'unset'} title="Plan seti kontrolünde hangi paftayı karşıladığı"
-                      onChange={(e) => patchDrawing(d, { plan_type: e.target.value })}>{planTypeOptions}</select>
-                  </td>
-                  <td>
-                    <select value={d.discipline} disabled={busy} title="Değiştirilirse çizim yeniden analiz edilir"
-                      onChange={(e) => patchDrawing(d, { discipline: e.target.value as Discipline })}>{disciplineOptions}</select>
-                  </td>
-                  <td className="mono">{d.filename}</td>
-                  <td>
-                    <select value={d.unit_override ?? ''} onChange={(e) => patchDrawing(d, { unit_override: e.target.value })}>
-                      <option value="">Otomatik ({d.unit}{d.unit_detected ? '' : ', tahmin'})</option>
-                      <option value="cm">cm</option><option value="mm">mm</option><option value="m">m</option>
-                    </select>
-                  </td>
-                  <td className="num"><input type="number" min={1} defaultValue={d.storey_count} onBlur={(e) => +e.target.value !== d.storey_count && patchDrawing(d, { storey_count: +e.target.value })} /></td>
-                  <td className="num">
-                    <input type="number" step="0.01" placeholder={`proje: ${params.storey_height}`} defaultValue={d.storey_height ?? ''}
-                      title="Boş bırakılırsa projenin kat yüksekliği kullanılır"
-                      onBlur={(e) => { const v = e.target.value ? +e.target.value : null; if (v !== d.storey_height) patchDrawing(d, { storey_height: v }) }} />
-                  </td>
-                  <td className="num">{d.element_count}</td>
-                  <td>{d.warnings.length > 0 ? <span title={d.warnings.join('\n')}>⚠ {d.warnings.length}</span> : <span className="muted">-</span>}</td>
-                  <td className="row">
-                    <Link className="btn" to={`/projects/${id}/drawings/${d.id}`}>Elemanlar</Link>
-                    <button className="danger small" onClick={() => removeDrawing(d)}>Sil</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <details className="section">
+        <summary>Çizim ayarları<span className="muted">plan adı, disiplin, birim, kat sayısı, kat yüksekliği</span></summary>
+        <div className="panel">
+          {drawings.length === 0 && <p className="muted">Henüz çizim yüklenmedi.</p>}
+          {drawings.length > 0 && (
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead>
+                  <tr><th>Plan</th><th>Disiplin</th><th>Dosya</th><th>Birim</th><th className="num">Kat sayısı</th><th className="num">Kat yüksekliği H (m)</th><th className="num">Eleman</th></tr>
+                </thead>
+                <tbody>
+                  {drawings.map((d) => (
+                    <tr key={d.id}>
+                      <td><input className="wide" defaultValue={d.label} onBlur={(e) => e.target.value !== d.label && patchDrawing(d, { label: e.target.value })} /></td>
+                      <td>
+                        <select value={d.discipline} disabled={busy} title="Değiştirilirse çizim yeniden analiz edilir"
+                          onChange={(e) => patchDrawing(d, { discipline: e.target.value as Discipline })}>{disciplineOptions}</select>
+                      </td>
+                      <td className="mono">{d.filename}</td>
+                      <td>
+                        <select value={d.unit_override ?? ''} onChange={(e) => patchDrawing(d, { unit_override: e.target.value })}>
+                          <option value="">Otomatik ({d.unit}{d.unit_detected ? '' : ', tahmin'})</option>
+                          <option value="cm">cm</option><option value="mm">mm</option><option value="m">m</option>
+                        </select>
+                      </td>
+                      <td className="num"><input type="number" min={1} defaultValue={d.storey_count} onBlur={(e) => +e.target.value !== d.storey_count && patchDrawing(d, { storey_count: +e.target.value })} /></td>
+                      <td className="num">
+                        <input type="number" step="0.01" placeholder={`proje: ${params.storey_height}`} defaultValue={d.storey_height ?? ''}
+                          title="Boş bırakılırsa projenin kat yüksekliği kullanılır"
+                          onBlur={(e) => { const v = e.target.value ? +e.target.value : null; if (v !== d.storey_height) patchDrawing(d, { storey_height: v }) }} />
+                      </td>
+                      <td className="num">{d.element_count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </details>
+
+      <details className="section">
+        <summary>Plan seti kontrolü<span className="muted">hangi plan tipleri yüklendi, hangileri eksik</span></summary>
+        <div className="panel"><PlanChecklist projectId={id} refreshKey={refresh} /></div>
+      </details>
+
+      <details className="section">
+        <summary>Katmanlı sistemler ve türetilmiş kalemler<span className="muted">çatı / cephe bileşenleri, tamlık kontrolü</span></summary>
+        <div className="panel"><SystemsPanel projectId={id} refreshKey={refresh} /></div>
+      </details>
     </>
   )
 }

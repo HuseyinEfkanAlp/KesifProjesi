@@ -197,7 +197,7 @@ export default function PlanIntake({ projectId, storeyHeight, onChanged, compact
                     <tr key={s.index} className={p?.checked ? 'selected' : ''}>
                       <td><input type="checkbox" checked={!!p?.checked} onChange={(e) => setPick(s.index, { checked: e.target.checked })} /></td>
                       <td>
-                        {s.title}{!s.titled && <span className="muted"> (başlık bulunamadı)</span>}
+                        {s.title}{!s.titled && <span className="muted"> {s.fragment ? '(başlıksız küçük parça: detay / tablo; plan değil)' : '(başlık bulunamadı)'}</span>}
                         {alt && <div className="muted" style={{ fontSize: 12 }}>paftada: {alt}</div>}
                       </td>
                       <td>

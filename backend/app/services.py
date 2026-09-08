@@ -1,6 +1,7 @@
 """Router'ların paylaştığı iş mantığı: analiz + kaydetme, proje metrajı / keşfi, fiyat tohumlama, maliyet."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from sqlmodel import Session, select
@@ -27,8 +28,33 @@ def project_profile(project: Project) -> LayerProfile:
     return LayerProfile(project.layer_profile or None)
 
 
-def detect_params(project: Project) -> DetectParams:
-    return DetectParams(default_slab_thickness=project.slab_thickness)
+def detect_params(project: Project, session: Session | None = None) -> DetectParams:
+    """Dedektör parametreleri; oturum verilirse projedeki öteki çizimlerin doğrama poz bilgisi (ölçü, kapı / pencere,
+    poz önekleri) eklenir — plandaki 'EMP1' yazıları bununla kapı / pencere sayılır."""
+    p = DetectParams(default_slab_thickness=project.slab_thickness)
+    if session is None or project.id is None:
+        return p
+    sizes, kinds, prefixes = {}, {}, set()
+    drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    for d in drawings:
+        poz = d.poz or {}
+        sizes.update(poz.get("sizes") or {})
+        kinds.update(poz.get("kinds") or {})
+        prefixes.update(poz.get("prefixes") or [])
+    ids = [d.id for d in drawings if d.id is not None]
+    if ids:
+        for e in session.exec(select(Element).where(Element.drawing_id.in_(ids), Element.etype == "dograma")):  # type: ignore[attr-defined]
+            if not e.subtype:
+                continue
+            prefixes.add(re.sub(r"\d.*$", "", e.subtype))
+            note = str((e.meta or {}).get("note") or "").replace("i", "İ").upper()
+            if e.subtype not in kinds:
+                if "KAPI" in note or "DOOR" in note:
+                    kinds[e.subtype] = "door"
+                elif "PENCERE" in note or "WINDOW" in note:
+                    kinds[e.subtype] = "window"
+    p.poz_sizes, p.poz_kinds, p.poz_prefixes = sizes, kinds, tuple(sorted(prefixes))
+    return p
 
 
 def project_params(project: Project) -> dict:
@@ -49,7 +75,7 @@ def save_catalog(cat: Catalog) -> None:
 
 def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> Drawing:
     """Çizimi (yeniden) analiz eder; otomatik elemanları yeniler, elle eklenenleri korur."""
-    result = analyze_file(drawing.stored_path, project_profile(project), detect_params(project),
+    result = analyze_file(drawing.stored_path, project_profile(project), detect_params(project, session),
                           unit_override=drawing.unit_override, discipline=drawing.discipline or DEFAULT_DISCIPLINE,
                           catalog=load_catalog(), label=drawing.label or drawing.filename)
 
@@ -70,6 +96,8 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.warnings = result.warnings
     drawing.materials = result.materials or {}
     drawing.rooms = result.rooms or []
+    drawing.poz = result.poz or {}
+    drawing.unit_verdict = result.unit_verdict
     drawing.analyzed_at = datetime.utcnow()
     session.add(drawing)
     session.commit()
@@ -165,25 +193,49 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
         _, summary, _ = project_quantities(project, session)
     params = project_params(project)
     drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    els_by_id = {d.id: _included_elements(d, session) for d in drawings}
+    # doğrama pozları: adet poz listesinden (proje toplamı), ölçü görünüş / doğrama paftasından, kapı-pencere ayrımı nottan
+    poz_sizes, poz_kinds, sched_poz = {}, {}, set()
+    for d in drawings:
+        poz_sizes.update((d.poz or {}).get("sizes") or {})
+        poz_kinds.update((d.poz or {}).get("kinds") or {})
+        for e in els_by_id[d.id]:
+            if e.etype == "dograma" and e.subtype:
+                sched_poz.add(e.subtype)
+                note = str((e.meta or {}).get("note") or "").replace("i", "İ").upper()
+                if e.subtype not in poz_kinds and ("KAPI" in note or "DOOR" in note):
+                    poz_kinds[e.subtype] = "door"
+
+    def ksf_entry(e):
+        if e.etype != "dograma":
+            return e
+        size = poz_sizes.get(e.subtype or "")
+        kind = poz_kinds.get(e.subtype or "", "window")
+        return {"etype": e.etype, "subtype": e.subtype, "name": e.name, "layer": e.layer, "count": e.count,
+                "length": e.length, "area": e.area, "thickness": e.thickness,
+                "b": size[0] if size else None, "h": size[1] if size else None,
+                "meta": {**(e.meta or {}), "opening_kind": kind}}
+
     arch, elec, std = [], [], []
     for d in drawings:
-        elements = _included_elements(d, session)
+        elements = els_by_id[d.id]
         entry = {"label": d.label or d.filename, "storey_count": d.storey_count,
                  "storey_height": d.storey_height or project.storey_height, "slab_thickness": project.slab_thickness,
-                 "elements": elements}
+                 "elements": [ksf_entry(e) for e in elements]}
         if d.discipline in (STANDARD_DISCIPLINE, MAPPED_DISCIPLINE):
             std.append(entry)
             continue
         if d.discipline == REBAR_DISCIPLINE:
             continue
-        ksf = [e for e in elements if (e.meta or {}).get("ksf_code")]   # poz listesi gibi katalog kodlu elemanlar
+        ksf = [ksf_entry(e) for e in elements if (e.meta or {}).get("ksf_code")]   # poz listesi gibi katalog kodlu elemanlar
         if ksf:
             std.append({**entry, "elements": ksf})
         if any(TYPE_DISCIPLINE.get(e.etype) == "architectural" for e in elements):
             arch.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "architectural"]})
         if any(TYPE_DISCIPLINE.get(e.etype) == "electrical" for e in elements):
             elec.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "electrical"]})
-    items = structural_items(summary, params) + architectural_items(arch, params) + electrical_items(elec, params)
+    items = (structural_items(summary, params) + architectural_items(arch, params, schedule_poz=sched_poz)
+             + electrical_items(elec, params))
     catalog = load_catalog()
     if std:
         items += standard_items(std, params, catalog)

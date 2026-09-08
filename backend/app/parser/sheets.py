@@ -41,6 +41,28 @@ CLUSTER_TYPES = {"LINE", "LWPOLYLINE", "VERTEX", "TEXT", "MTEXT", "ATTRIB", "CIR
 
 Bbox = tuple[float, float, float, float]   # x0, y0, x1, y1 (çizim birimi)
 
+INSUNITS_NAME = {4: "mm", 5: "cm", 6: "m"}
+UNIT_SCALE = {"mm": 0.001, "cm": 0.01, "m": 1.0}
+TEXT_TYPES = {"TEXT", "MTEXT", "ATTRIB"}
+# Plan yazıları gerçek ölçekte 10–60 cm yüksekliktedir (1/100 paftada 1–6 mm). Medyan bunun 10 / 100 katı
+# altında ya da üstündeyse başlıktaki birim yanlış yazılmıştır (mm yazılmış, cm çizilmiş gibi).
+TEXT_HEIGHT_RANGE = (0.10, 0.60)
+
+
+def unit_from_text_height(median_height: float, header_unit: str | None) -> str | None:
+    """Medyan yazı yüksekliğine (çizim birimi) göre dosyanın gerçek birimi; başlıkla uyuşuyorsa None.
+
+    Başlık birimi bilinmiyorsa (INSUNITS 0) yükseklik hangi birimde 10–60 cm'ye düşüyorsa o önerilir."""
+    if median_height <= 0:
+        return None
+    lo, hi = TEXT_HEIGHT_RANGE
+    if header_unit in UNIT_SCALE and lo <= median_height * UNIT_SCALE[header_unit] <= hi:
+        return None
+    for name, sc in UNIT_SCALE.items():
+        if name != header_unit and lo <= median_height * sc <= hi:
+            return name
+    return None
+
 
 @dataclass
 class Sheet:
@@ -74,22 +96,42 @@ class SheetScan:
     extent: Bbox | None
     sheets: list[Sheet] = field(default_factory=list)
     titles: list[str] = field(default_factory=list)   # dosyadaki en büyük başlık yazıları (tek paftalı dosyada plan tipi için)
-    layers: dict[str, int] = field(default_factory=dict)   # dosyadaki katmanlar -> nesne sayısı (en kalabalık 40)
+    layers: dict[str, int] = field(default_factory=dict)   # dosyadaki katmanlar -> geometrik nesne sayısı (en kalabalık 40; yazılar hariç)
+    suggested_unit: str | None = None   # yazı yükseklikleri başlıktaki birimi yalanlıyorsa dosyanın gerçek birimi (mm / cm / m)
+    text_height: float = 0.0            # medyan yazı yüksekliği (çizim birimi)
 
     @property
     def multi_sheet(self) -> bool:
         return len(self.sheets) >= 2
 
+    @property
+    def unit(self) -> str | None:
+        """Başlıktaki ($INSUNITS) birim adı; bilinmiyorsa None."""
+        return INSUNITS_NAME.get(self.insunits)
+
+    @property
+    def effective_unit(self) -> str | None:
+        """Paftaların gerçek birimi: yazı yüksekliği önerisi > başlık."""
+        return self.suggested_unit or self.unit
+
+    @property
+    def scale(self) -> float | None:
+        """Çizim birimi -> metre (bilinmiyorsa None)."""
+        u = self.effective_unit
+        return UNIT_SCALE.get(u) if u else None
+
     def to_dict(self) -> dict:
         return {"path": self.path, "insunits": self.insunits, "entity_count": self.entity_count,
                 "extent": list(self.extent) if self.extent else None, "sheets": [s.to_dict() for s in self.sheets],
-                "titles": list(self.titles), "layers": dict(self.layers)}
+                "titles": list(self.titles), "layers": dict(self.layers),
+                "suggested_unit": self.suggested_unit, "text_height": self.text_height}
 
     @classmethod
     def from_dict(cls, d: dict) -> "SheetScan":
         return cls(d["path"], int(d.get("insunits", 0)), int(d.get("entity_count", 0)),
                    tuple(d["extent"]) if d.get("extent") else None, [Sheet.from_dict(s) for s in d.get("sheets", [])],
-                   list(d.get("titles", [])), dict(d.get("layers", {})))
+                   list(d.get("titles", [])), dict(d.get("layers", {})),
+                   d.get("suggested_unit") or None, float(d.get("text_height", 0.0) or 0.0))
 
     def cache_path(self) -> Path:
         return _cache_path(self.path)
@@ -479,7 +521,9 @@ def boxes_from_titles(titles: list[tuple[float, float, float, str]], xs: np.ndar
 
 def _build_sheets(boxes: list[tuple[Bbox, str]], xs: np.ndarray, ys: np.ndarray,
                   titles: list[tuple[float, float, float, str]], extent: float,
-                  layer_ids: np.ndarray | None = None, layer_names: list[str] | None = None) -> list[Sheet]:
+                  layer_ids: np.ndarray | None = None, layer_names: list[str] | None = None,
+                  geom: np.ndarray | None = None) -> list[Sheet]:
+    """geom: nesne yazı değilse True (katman sayımı yalnız geometrik nesneleri sayar; yazı katmanları disiplin seçmez)."""
     sheets: list[Sheet] = []
     # Başlık kutunun içinde değilse (kümeleme yedeğinde antet yazısı plandan ayrı kalabilir) en yakın kutuya bağlanır
     def _dist(t, b) -> float:
@@ -500,7 +544,8 @@ def _build_sheets(boxes: list[tuple[Bbox, str]], xs: np.ndarray, ys: np.ndarray,
         x0, y0, x1, y1 = bbox
         m = (xs >= x0) & (xs <= x1) & (ys >= y0) & (ys <= y1)
         count = int(np.count_nonzero(m))
-        layers = _top_layers(layer_ids[m], layer_names) if layer_ids is not None and layer_names else {}
+        gm = (m & geom) if geom is not None and len(geom) == len(m) else m
+        layers = _top_layers(layer_ids[gm], layer_names) if layer_ids is not None and layer_names else {}
         inside = [t for ti, t in enumerate(titles) if owner.get(ti) == bi]
         title, titled = "", False
         alts: list[str] = []
@@ -541,6 +586,7 @@ def scan_sheets(path: str | Path) -> SheetScan:
     texts: list[tuple[float, float, float, str]] = []
     other_texts: list[tuple[float, float, float, str]] = []   # başlık deseni geçmeyen yazılar (başlık satırı tamamlama)
     layer_ids = array("i")
+    is_text = array("b")                  # kümelenen nesne yazı mı (katman sayımı yalnız geometriyi sayar)
     layer_names: list[str] = []
     layer_index: dict[str, int] = {}
     insunits = 0
@@ -567,6 +613,7 @@ def scan_sheets(path: str | Path) -> SheetScan:
                 li = layer_index[lname] = len(layer_names)
                 layer_names.append(lname)
             layer_ids.append(li)
+            is_text.append(1 if t in TEXT_TYPES else 0)
             if t == "LINE" and len(ent["xs"]) >= 2 and len(ent["ys"]) >= 2:
                 lines.extend((ent["xs"][0], ent["ys"][0], ent["xs"][1], ent["ys"][1]))
             elif t == "LWPOLYLINE" and (ent.get("70", 0) & 1 or len(ent["xs"]) == 5):
@@ -591,10 +638,12 @@ def scan_sheets(path: str | Path) -> SheetScan:
     extent = max(extent_box[2] - extent_box[0], extent_box[3] - extent_box[1])
     titles: list[tuple[float, float, float, str]] = []
     big_other: list[tuple[float, float, float, str]] = []
+    med = 0.0
     if len(heights):
         med = median(heights)
         titles = [t for t in texts if t[2] >= 1.8 * med]
         big_other = [t for t in other_texts if t[2] >= 1.8 * med]
+    suggested_unit = unit_from_text_height(med, INSUNITS_NAME.get(insunits)) if len(heights) >= 20 else None
 
     # 1) çerçeveler
     cands: list[Bbox] = list(rects)
@@ -639,7 +688,8 @@ def scan_sheets(path: str | Path) -> SheetScan:
         boxes = [(b, "title") for b in tb]
         title_bands = True
     npl = np.frombuffer(layer_ids, dtype="i").copy() if len(layer_ids) else np.zeros(0, dtype="i")
-    sheets = _build_sheets(boxes, npx, npy, titles, extent, npl, layer_names) if len(boxes) >= 2 else []
+    geom = ~(np.frombuffer(is_text, dtype="b").astype(bool)) if len(is_text) else np.ones(0, dtype=bool)
+    sheets = _build_sheets(boxes, npx, npy, titles, extent, npl, layer_names, geom) if len(boxes) >= 2 else []
     if title_bands and len(band_names) == len(tb):
         # pafta adı = başlık satırındaki yazı; paftadaki daha büyük alt başlıklar (ÖN GÖRÜNÜŞ…) aday listesine
         by_box = {tuple(round(v, 3) for v in b): n for b, n in zip(tb, band_names)}
@@ -655,7 +705,8 @@ def scan_sheets(path: str | Path) -> SheetScan:
             top.append(t[3])
         if len(top) >= 8:
             break
-    return SheetScan(str(path), insunits, count, extent_box, sheets, top, _top_layers(npl, layer_names))
+    return SheetScan(str(path), insunits, count, extent_box, sheets, top, _top_layers(npl[geom], layer_names),
+                     suggested_unit, float(med))
 
 
 # ---------- Kırpma ----------

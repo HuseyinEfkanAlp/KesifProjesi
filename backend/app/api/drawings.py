@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shutil
 import uuid
+from collections import Counter
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -13,12 +14,12 @@ from sqlmodel import Session, select
 from ..db import UPLOAD_DIR, get_session
 from ..export.svg import render_svg
 from ..models import Drawing, Element, Project
-from ..parser.layer_profile import ALL_ELEMENT_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, types_for
+from ..parser.layer_profile import ALL_ELEMENT_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, types_for  # noqa: F401
 from ..parser.dwg import convert_dwg_to_dxf, dwg_supported
 from ..parser.loader import UNIT_SCALE, load_dxf
 from ..parser.sheets import BIG_FILE_BYTES, Sheet, SheetScan, crop_sheets, scan_sheets
 from ..planset import PLAN_TYPE_BY_CODE, resolve_plan
-from ..services import analyze_and_store, recompute_derived
+from ..services import analyze_and_store, detect_params, recompute_derived
 from .projects import get_project
 
 router = APIRouter(prefix="/api", tags=["drawings"])
@@ -31,9 +32,54 @@ def get_drawing(drawing_id: int, session: Session) -> Drawing:
     return d
 
 
+FOUND_LABELS = {**{k: v.lower() for k, v in ALL_ELEMENT_TYPES.items()}, "dograma": "doğrama pozu", "rebar": "donatı çapı"}
+# Özet notu: paftayı en iyi anlatan uyarı (öncelik sırasıyla başlangıç deseni, kısa karşılığı)
+NOTE_PRIORITY: list[tuple[str, str | None]] = [
+    ("Bu paftada plan geometrisi yok", None),
+    ("Birim '", None),
+    ("Poz yazılarından", None),
+    ("Doğrama poz listesi okundu", None),
+    ("Kapı / pencere bulunamadı", None),
+    ("Duvar katmanı var ama", None),
+    ("Pencere katmanı var ama", None),
+    ("Kablo katmanı var ama", None),
+    ("Armatür / priz / anahtar katmanı var ama", None),
+    ("Donatı metraj tablosu bulunamadı", None),
+    ("Mahal alanı yazıları okundu", None),
+    ("Doğrama ölçüleri okundu", None),
+    ("Henüz katman eşlenmedi", "Katman eşlenmedi: Elemanlar sayfasında katmanları katalog kalemine atayın (öneriler hazır)."),
+    ("Çizim birimi", None),
+]
+
+
+def drawing_summary(d: Drawing, elements: list[Element]) -> dict:
+    """Proje sayfası özeti: durum (ok / empty / problem / untyped), bulunanlar ('99 duvar · 37 pencere'), tek cümlelik not."""
+    counts = Counter(e.etype for e in elements if e.included)
+    parts = [f"{n} {FOUND_LABELS.get(et, et.replace('_', ' '))}" for et, n in counts.most_common()]
+    if d.rooms:
+        parts.append(f"{len(d.rooms)} mahal alanı")
+    warnings = list(d.warnings or [])
+    problem = any(w.startswith("Bu paftada plan geometrisi yok") for w in warnings)
+    if not d.plan_type:
+        status = "untyped"
+    elif problem:
+        status = "problem"
+    else:
+        status = "ok" if parts else "empty"
+    note = ""
+    for prefix, short in NOTE_PRIORITY:
+        hit = next((w for w in warnings if w.startswith(prefix)), None)
+        if hit:
+            note = short or hit
+            break
+    if not note and warnings:
+        note = warnings[0]
+    return {"status": status, "found": " · ".join(parts), "note": note[:200]}
+
+
 def drawing_out(d: Drawing, session: Session) -> dict:
-    n = len(session.exec(select(Element.id).where(Element.drawing_id == d.id)).all())
-    return {**d.model_dump(exclude={"stored_path"}), "element_count": n}
+    elements = session.exec(select(Element).where(Element.drawing_id == d.id)).all()
+    return {**d.model_dump(exclude={"stored_path"}), "element_count": len(elements), **drawing_summary(d, elements)}
 
 
 def _safe_name(filename: str) -> str:
@@ -68,12 +114,67 @@ def _resolve(discipline: str, plan_type: str | None, titles: list[str], layers: 
     return discipline, code
 
 
+FRAGMENT_MAX_ENTITIES = 200   # başlıksız ve bu kadar az nesneli küme: detay / tablo / lejant parçası, plan değil
+
+
 def _sheet_out(sh: Sheet) -> dict:
-    """Pafta bilgisi + başlığından / katmanlarından tanınan plan tipi ve disiplin önerisi."""
+    """Pafta bilgisi + başlığından / katmanlarından tanınan plan tipi ve disiplin önerisi.
+
+    Başlıksız küçük kümeler (merdiven detayı, pano tablosu, lejant…) plan sayılmaz: tip boş, seçili gelmez (fragment)."""
     code, disc = resolve_plan([sh.title, *sh.titles], sh.layers)
+    fragment = not sh.titled and (sh.entity_count < FRAGMENT_MAX_ENTITIES or not disc)
+    if fragment:
+        code, disc = "", ""
     pt = PLAN_TYPE_BY_CODE.get(code)
     return {**sh.to_dict(), "plan_type": code, "plan_type_label": pt.label if pt else "",
-            "discipline": disc if (pt or disc) else "", "analyze": pt.analyze if pt else bool(disc)}
+            "discipline": disc if (pt or disc) else "", "analyze": (pt.analyze if pt else bool(disc)) and not fragment,
+            "fragment": fragment}
+
+
+def majority_unit(verdicts: list[str | None]) -> tuple[str, int] | None:
+    """Paftaların yazı yüksekliği kanıtından dosyanın birimi: en az 2 pafta ve oyların %60'ı aynı birimi demeli."""
+    votes = Counter(v for v in verdicts if v)
+    if not votes:
+        return None
+    unit, n = votes.most_common(1)[0]
+    if n < 2 or n < 0.6 * sum(votes.values()):
+        return None
+    return unit, n
+
+
+def _harmonize_units(project: Project, created: list[Drawing], session: Session) -> None:
+    """Aynı dosyadan kırpılan paftalar tek birimdedir. Yazı yüksekliği kanıtı olan paftaların çoğunluğu bir birimi
+    destekliyorsa, başlıktaki (yanlış) birimle kalan paftalar o birimle yeniden analiz edilir."""
+    vote = majority_unit([d.unit_verdict for d in created])
+    if not vote:
+        return
+    unit, n = vote
+    for d in created:
+        if d.unit == unit or d.unit_override:
+            continue
+        old = d.unit
+        d.unit_override = unit
+        analyze_and_store(d, project, session)
+        d.warnings = [f"Birim '{unit}' aynı dosyadaki öteki paftalardan alındı ({n} pafta; bu paftada yazı az, başlıkta '{old}' yazıyordu)."] \
+            + [w for w in d.warnings if "yazı yükseklikleri" not in w]
+        session.add(d)
+        session.commit()
+
+
+def _refresh_openings(project: Project, session: Session) -> None:
+    """Doğrama poz bilgisi (poz listesi, görünüş ölçüleri) sonradan geldiyse, kapı / pencere bulunamayan ya da ölçüsüz
+    poz sayan mimari planlar bu bilgiyle yeniden analiz edilir."""
+    params = detect_params(project, session)
+    if not (params.poz_prefixes or params.poz_sizes):
+        return
+    for d in session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.discipline == "architectural")):
+        els = session.exec(select(Element).where(Element.drawing_id == d.id)).all()
+        has_wall = any(e.etype == "wall" for e in els)
+        openings = [e for e in els if e.etype in ("door", "window")]
+        unsized = any("ölçüsü bulunamadı" in w for e in openings for w in (e.warnings or []))
+        known = {p for p in {e.subtype for e in openings if e.source == "POZ_LABEL"} if p in params.poz_sizes}
+        if has_wall and (not openings or (unsized and known)):
+            analyze_and_store(d, project, session)
 
 
 def _create_drawing(project: Project, dest: Path, filename: str, label: str, storey_count: int,
@@ -119,7 +220,7 @@ def _source_out(src: Path, scan: SheetScan) -> dict:
     orig = src.name[len(f"src_{token}_"):]
     size = src.stat().st_size
     return {"token": token, "filename": orig, "size_mb": round(size / 1e6, 1), "entity_count": scan.entity_count,
-            "can_use_whole": size <= BIG_FILE_BYTES}
+            "can_use_whole": size <= BIG_FILE_BYTES, "unit": scan.unit or "", "suggested_unit": scan.suggested_unit or ""}
 
 
 @router.post("/projects/{project_id}/drawings", status_code=201)
@@ -185,6 +286,8 @@ async def upload_drawing(project_id: int, file: UploadFile = File(...), label: s
     discipline, plan_type = _resolve(discipline, plan_type, [label, Path(fname).stem, *scan.titles], scan.layers)
     d = _create_drawing(project, dest, file_label, label or Path(fname).stem, storey_count,
                         unit_override or None, session, discipline=discipline, plan_type=plan_type)
+    _refresh_openings(project, session)
+    session.refresh(d)
     return drawing_out(d, session)
 
 
@@ -256,6 +359,11 @@ def drawings_from_source(project_id: int, body: FromSourceIn, session: Session =
                                            storey_height=pick.storey_height, discipline=disc, plan_type=ptype))
     if not created:
         raise HTTPException(400, "Eklenecek pafta seçilmedi")
+    if not body.unit_override:
+        _harmonize_units(project, created, session)
+    _refresh_openings(project, session)
+    for d in created:
+        session.refresh(d)
     return [drawing_out(d, session) for d in created]
 
 

@@ -197,12 +197,16 @@ def _fmt_cm(v: float | None) -> str:
     return f"{round(v * 100):.0f}" if v else "?"
 
 
-def architectural_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqItem]:
-    """drawings: [{"label", "storey_count", "storey_height", "slab_thickness", "elements": [Element-benzeri]}]"""
+def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_poz: set[str] | None = None) -> list[BoqItem]:
+    """drawings: [{"label", "storey_count", "storey_height", "slab_thickness", "elements": [Element-benzeri]}]
+    schedule_poz: doğrama poz listesinde geçen pozlar; plandan sayılan bu pozlu boşluklar duvardan düşülür ama adet ve
+    cam poz listesinden (proje toplamı) gelir, burada tekrar yazılmaz."""
     acc = _Acc()
+    schedule_poz = schedule_poz or set()
     for d in drawings:
         mult = int(d.get("storey_count") or 1)
         wall_h = params.get("wall_height") or max((d.get("storey_height") or 3.0) - (d.get("slab_thickness") or 0.0), 0.0)
+        h_note = None if (params.get("wall_height") or d.get("storey_height")) else "Kat yüksekliği girilmedi; duvar yüksekliği 3.0 m varsayıldı"
         elements = [e for e in d["elements"] if _g(e, "etype") in ("wall", "door", "window")]
         wall_groups: dict[str, float] = {}      # anahtar -> brüt alan (tek kat)
         wall_labels: dict[str, str] = {}
@@ -226,6 +230,8 @@ def architectural_items(drawings: list[dict], params: dict[str, Any]) -> list[Bo
             n = _g(e, "count") or 1
             area = b * h * n
             opening_area += area
+            if (_g(e, "meta") or {}).get("poz") in schedule_poz:
+                continue
             name = _g(e, "name") or f"{_fmt_cm(b)}x{_fmt_cm(h)}"
             group = slug(f"{name}_{_fmt_cm(b)}x{_fmt_cm(h)}")
             kind = "kapi" if et == "door" else "pencere"
@@ -242,7 +248,9 @@ def architectural_items(drawings: list[dict], params: dict[str, Any]) -> list[Bo
             net = max(area - share, 0.0) * mult
             net_total += net
             note = f"{d.get('label', '')}: brüt {area*mult:.1f} m², boşluk −{share*mult:.1f} m²" if share > 0 else None
-            acc.add("duvar", key, wall_labels[key], net, note=note, gross_m2=area * mult, openings_m2=share * mult)
+            it = acc.add("duvar", key, wall_labels[key], net, note=note, gross_m2=area * mult, openings_m2=share * mult)
+            if h_note and h_note not in it.notes:
+                it.notes.append(h_note)
         if net_total > 0:
             ps, bs = float(params.get("plaster_sides") or 0), float(params.get("paint_sides") or 0)
             if ps > 0:
@@ -349,8 +357,15 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
             disc_key = f"ksf:{p.discipline}"
             group = slug(spec) if spec else "*"
             label = f"{kname}" + (f" {spec}" if spec else "")
+            b, h = _g(e, "b"), _g(e, "h")
+            if kind == "dograma" and b and h:
+                okind = meta.get("opening_kind", "window")
+                note = f"{_fmt_cm(b)}×{_fmt_cm(h)} cm ({'kapı' if okind == 'door' else 'pencere / vitrin'}); ölçü görünüş / doğrama paftasından"
             acc.add(kind, group, label, qty * mult, count=n * mult, note=note,
                     meta=(kname, unit, disc_key, catalog.discipline_name(p.discipline)))
+            if kind == "dograma" and b and h and meta.get("opening_kind", "window") == "window":
+                acc.add("cam", "*", "Cam (doğrama poz listesi)", b * h * n * mult, count=n * mult,
+                        note="Poz adedi × doğrama ölçüsü (genişlik × yükseklik); kapı pozları hariç, doğrama payı düşülmedi")
     return list(acc.items.values())
 
 

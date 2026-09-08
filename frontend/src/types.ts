@@ -174,6 +174,22 @@ export interface Drawing {
   layers: LayerInfo[]
   warnings: string[]
   element_count: number
+  /** Yazı yükseklikleri / etiketlerin desteklediği birim (aynı dosyanın paftaları arasında oylama için) */
+  unit_verdict?: string | null
+  /** Doğrama pozları: ölçü ve kapı / pencere bilgisi (plandaki "EMP1" yazıları bununla sayılır) */
+  poz?: { sizes?: Record<string, number[]>; kinds?: Record<string, string>; prefixes?: string[] }
+  /** Kısa özet: durum, bulunanlar ("99 duvar · 37 pencere"), tek cümlelik not */
+  status?: DrawingStatus
+  found?: string
+  note?: string
+}
+
+export type DrawingStatus = 'ok' | 'empty' | 'problem' | 'untyped'
+export const DRAWING_STATUS: Record<DrawingStatus, { label: string; cls: string }> = {
+  ok: { label: 'Okundu', cls: 'st-present' },
+  empty: { label: 'Boş', cls: 'st-optional_missing' },
+  problem: { label: 'Sorun', cls: 'st-missing' },
+  untyped: { label: 'Tip seçilmedi', cls: 'st-skipped' },
 }
 
 /** Çok paftalı dosyada tespit edilen bir pafta (çerçeve ya da nesne kümesi) */
@@ -193,6 +209,8 @@ export interface SheetInfo {
   discipline: Discipline | ''
   /** false: kesit / detay gibi metraja girmeyen pafta (önceden işaretlenmez) */
   analyze: boolean
+  /** Başlıksız küçük küme (merdiven detayı, pano tablosu, lejant): plan değil, seçili gelmez */
+  fragment?: boolean
 }
 
 export interface SourceInfo {
@@ -201,6 +219,9 @@ export interface SourceInfo {
   size_mb: number
   entity_count: number
   can_use_whole: boolean
+  /** Başlıktaki ($INSUNITS) birim ve yazı yüksekliğinden önerilen birim (bilgi) */
+  unit?: string
+  suggested_unit?: string
 }
 
 /** Yükleme yanıtı: dosya çok paftalıysa önce pafta seçilir */

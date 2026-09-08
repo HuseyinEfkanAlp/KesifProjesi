@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import statistics
+from collections import Counter
 from dataclasses import dataclass, field
 
 from .detectors.base import DetectParams, DetectedElement, LabelIndex, polygons_on_layers, segments_on_layers
@@ -15,7 +16,7 @@ from .detectors.beams import detect_beams
 from .detectors.columns import detect_columns
 from .detectors.electrical import detect_electrical
 from .detectors.foundations import detect_foundations
-from .detectors.openings import detect_openings
+from .detectors.openings import detect_openings, detect_poz_openings, poz_catalog
 from .detectors.shear_walls import detect_shear_walls
 from .detectors.slabs import detect_slabs
 from .detectors.standard import detect_mapped, detect_standard, standard_layers
@@ -61,6 +62,8 @@ class AnalysisResult:
     suggested_unit: str | None = None     # etiketler başka bir birime işaret ediyorsa
     materials: dict = field(default_factory=dict)   # yazılardan tanınan malzeme / sistem kanıtı (parser/materials.py)
     rooms: list[dict] = field(default_factory=list)  # mahal alanı yazıları (parser/schedules.py: parse_rooms)
+    poz: dict = field(default_factory=dict)          # doğrama pozları: sizes / kinds / prefixes (detectors/openings.py: poz_catalog)
+    unit_verdict: str | None = None       # yazı yükseklikleri / etiketlerin desteklediği birim (yeterli kanıt yoksa None)
 
     def by_type(self, etype: str) -> list[DetectedElement]:
         return [e for e in self.elements if e.etype == etype]
@@ -71,6 +74,7 @@ class AnalysisResult:
             "elements": [e.to_dict() for e in self.elements],
             "layers": [l.to_dict() for l in self.layers],
             "warnings": self.warnings, "suggested_unit": self.suggested_unit, "materials": self.materials,
+            "poz": self.poz, "unit_verdict": self.unit_verdict,
         }
 
 
@@ -108,11 +112,18 @@ def check_unit_against_labels(drawing: Drawing, profile: LayerProfile, params: D
     return None
 
 
+MIN_TEXTS_FOR_UNIT = 20
+
+
+def text_count(drawing: Drawing) -> int:
+    return sum(1 for e in drawing.entities if e.kind == "text" and e.height and e.height > 0)
+
+
 def check_unit_by_text_height(drawing: Drawing) -> str | None:
     """Yazı yüksekliği ile birim sağlaması (mimari / eşlemeli çizimler): plan yazıları gerçek ölçekte 10–60 cm'dir.
     Medyan yazı yüksekliği bunun 10 katı altında ya da üstündeyse birim yanlış yazılmıştır (mm yazılmış, cm çizilmiş)."""
     hs = sorted(e.height for e in drawing.entities if e.kind == "text" and e.height and e.height > 0)
-    if len(hs) < 20:
+    if len(hs) < MIN_TEXTS_FOR_UNIT:
         return None
     med = hs[len(hs) // 2]
     for factor in (10.0, 100.0, 0.1, 0.01):
@@ -151,11 +162,35 @@ def _structural(drawing: Drawing, layers_by_type: dict[str, list[str]], params: 
     return columns + walls + beams + slabs + founds
 
 
+MIN_PLAN_GEOMETRY = 60   # bu kadar az çizgi / çokgen olan mimari paftada plan çizilmemiştir (yalnız yazı / xref izi)
+
+
 def _architectural(drawing: Drawing, layers_by_type: dict[str, list[str]], params: DetectParams,
                    result: AnalysisResult) -> list[DetectedElement]:
     walls = detect_walls(drawing, layers_by_type.get("wall", []), params)
     openings = detect_openings(drawing, {k: layers_by_type.get(k, []) for k in ("door", "window")}, params)
-    if walls and not openings:
+    # poz yazısıyla işaretlenen kapı / pencereler ("EMP1"): ölçü görünüşlerden ya da doğrama paftasından
+    cat = poz_catalog(drawing, layers_by_type, params)
+    result.poz = cat
+    poz_openings = detect_poz_openings(drawing, walls, openings, params, cat)
+    if poz_openings:
+        counts = Counter(e.name for e in poz_openings)
+        result.warnings.append(f"Poz yazılarından {len(poz_openings)} kapı / pencere sayıldı: "
+                               + ", ".join(f"{k} {v}" for k, v in counts.most_common(8)) + ("…" if len(counts) > 8 else ""))
+        unsized = sorted({e.name for e in poz_openings if any("ölçüsü bulunamadı" in w for w in e.warnings)})
+        if unsized:
+            result.warnings.append("Ölçüsü bilinmeyen pozlar (varsayılan ölçü alındı): " + ", ".join(unsized[:10])
+                                   + " — görünüş ya da doğrama paftası yüklenince ölçüler oradan gelir.")
+        openings = openings + poz_openings
+    if cat.get("sizes"):
+        result.warnings.append("Doğrama ölçüleri okundu: " + ", ".join(f"{p} {w*100:.0f}×{h*100:.0f}" for p, (w, h) in list(cat["sizes"].items())[:8])
+                               + ("…" if len(cat["sizes"]) > 8 else ""))
+    geometry = sum(1 for e in drawing.entities if e.kind in ("line", "polyline", "polygon"))
+    if not walls and geometry < MIN_PLAN_GEOMETRY:
+        result.warnings.insert(0, f"Bu paftada plan geometrisi yok ({len(drawing.texts())} yazı, {geometry} çizgi / çokgen): duvar, kapı ve "
+                                  "pencere çizgileri dış referans (xref) dosyasında kalmış olabilir. DWG'yi xref'leri bağlayarak "
+                                  "(Bind) kaydedip yeniden yükleyin.")
+    elif walls and not openings:
         result.warnings.append("Kapı / pencere bulunamadı: kapı ve pencere katmanlarını eşleyin (bloklar sayılır).")
     return walls + openings
 
@@ -253,6 +288,7 @@ def _unit_only_result(drawing: Drawing, discipline: str, suggested: str) -> Anal
     """Birim yanlış: dedektörler çalıştırılmadan yalnız birim önerisi döner (analyze_file doğru birimle yeniden okur)."""
     r = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected, discipline=discipline)
     r.suggested_unit = suggested
+    r.unit_verdict = suggested
     r.warnings.append(f"Çizim birimi '{drawing.unit}' yazılı ama yazı yükseklikleri '{suggested}' ile uyuşuyor. "
                       f"Birim '{suggested}' olarak alındı; gerekirse çizim ayarlarından değiştirin.")
     return r
@@ -275,6 +311,8 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
                                mapped_pattern=i.get("pattern")))
     result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
                             discipline=MAPPED_DISCIPLINE, layers=infos, warnings=list(drawing.warnings) + warns)
+    result.unit_verdict = suggested or (drawing.unit if text_count(drawing) >= MIN_TEXTS_FOR_UNIT else None)
+    result.poz = poz_catalog(drawing, {}, params)
     sched, sw = schedule_elements(drawing, catalog)
     result.elements = elements + sched
     result.warnings.extend(sw)
@@ -329,6 +367,7 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
             )
     else:
         suggested = check_unit_by_text_height(drawing)
+        result.unit_verdict = suggested or (drawing.unit if text_count(drawing) >= MIN_TEXTS_FOR_UNIT else None)
         if suggested and suggested != drawing.unit:
             if defer_on_unit:
                 return _unit_only_result(drawing, discipline, suggested)
@@ -369,11 +408,17 @@ def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectP
     drawing = load_dxf(path, unit_override=unit_override)
     defer = bool(auto_unit and not unit_override)
     result = analyze_drawing(drawing, profile, params, discipline, catalog, label, defer_on_unit=defer)
+    if unit_override and result.suggested_unit and result.suggested_unit != drawing.unit:
+        # kullanıcı (ya da pafta oylaması) birimi seçti: yazı kanıtı aksini söylese de yeniden okunmaz, yalnız not düşülür
+        result.warnings = [w for w in result.warnings if "yazı yükseklikleri" not in w and "kolon etiketleri" not in w]
+        result.warnings.append(f"Birim elle '{unit_override}' seçildi; bu paftanın yazı yükseklikleri '{result.suggested_unit}' ile uyuşuyor "
+                               "(görünüş / detay yazıları farklı ölçekte olabilir).")
     if auto_unit and not unit_override and result.suggested_unit and result.suggested_unit != drawing.unit:
         drawing2 = load_dxf(path, unit_override=result.suggested_unit)
         warn = [w for w in result.warnings if "kolon etiketleri" in w or "yazı yükseklikleri" in w]
         result = analyze_drawing(drawing2, profile, params, discipline, catalog, label)
         result.unit_detected = False
+        result.unit_verdict = drawing2.unit
         result.warnings = warn + [w for w in result.warnings if "kolon etiketleri" not in w and "yazı yükseklikleri" not in w]
         result.suggested_unit = drawing2.unit
     return result

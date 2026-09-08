@@ -38,12 +38,15 @@ class Drawing(SQLModel, table=True):
     unit: str = "m"
     unit_override: str | None = None
     unit_detected: bool = True
+    unit_verdict: str | None = None      # yazı yükseklikleri / etiketlerin desteklediği birim (aynı dosyanın paftaları arasında oylama için)
     layers: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))
     warnings: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     # Çizim yazılarından tanınan malzeme / sistem kanıtı: {"OSB": {"evidence": [...], "spec": "11MM"}} (parser/materials.py)
     materials: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     # Mahal alanı yazıları: [{"name": "LOBİ", "area_m2": 45.2}] (parser/schedules.py: parse_rooms)
     rooms: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
+    # Doğrama pozları: {"sizes": {"EMP1": [1.9, 1.4]}, "kinds": {"EMP3": "door"}} (detectors/openings.py: poz_catalog)
+    poz: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     analyzed_at: datetime | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

@@ -74,6 +74,15 @@ Tarayıcı: http://127.0.0.1:5173  (API dokümantasyonu: http://127.0.0.1:8000/d
      onaylanan paftalar ayrı plan olarak kırpılıp kendi disipliniyle analiz edilir. 40 MB üstü dosyalar hiçbir zaman bütün olarak açılmaz.
    - "Kaç kat temsil ediyor" alanı tip kat çarpanıdır; temel elemanları hiçbir zaman çarpılmaz.
    - Her planın kendi **kat yüksekliği** girilebilir (boşsa projenin H değeri).
+   - Başlıksız **küçük kümeler** (merdiven detayı, pano tablosu, lejant: 200 nesneden az ya da katmanlarından disiplin
+     çıkmayan) plan sayılmaz, seçili gelmez (`fragment`). Katman sayımı yalnız geometriyi sayar; yazı katmanları
+     (HB-GIZLI-DATA gibi) disiplin seçmez.
+   - **Birim oylaması**: aynı dosyadan kırpılan paftalar tek birimdedir. Yazı yüksekliği kanıtı olan paftaların çoğunluğu
+     (≥ 2 pafta, ≥ %60) bir birimi destekliyorsa başlıktaki (yanlış) birimle kalan paftalar o birimle yeniden analiz edilir
+     (`unit_verdict`, `drawings._harmonize_units`).
+   - Proje sayfasının başındaki **"Çizimlerden ne anlaşıldı"** tablosu her pafta için durum (okundu / boş / sorun / tip seçilmedi),
+     bulunanlar ("99 duvar · 35 pencere · 11 kapı · 5 mahal alanı") ve tek cümlelik not verir (`drawings.drawing_summary`);
+     plan seti kontrolü, katmanlı sistemler ve çizim ayarları katlanır bölümlerdedir.
    - **Plan seti kontrolü**: proje sayfası ve sihirbaz, hangi plan tiplerinin yüklendiğini gösterir; yüklenmemiş zorunlu planlar
      için uyarı verir ("Altyapı: Altyapı planı yüklenmedi", "Elektrik: Elektrik kablo tava planı yüklenmedi",
      "Mimari: Mimari tavan planı yüklenmedi" …). Projede gerçekten olmayan bir plan satırında **Bu projede yok** seçilir;
@@ -356,6 +365,32 @@ Plan tipleri: `mim_dograma` (poz listesi) ve `mim_prekast` eklendi; "… KAT PLA
   su yalıtımı, XPS, koruma betonu) yazıyor ama teras alanı ölçülmedi.
 - Çatı alanı ve cephe brüt alanı için çizimde kapalı çokgen yok: zemin kat duvar / kolon çokgenlerinin dış hattı (1.434 m², çevre 171 m)
   elle girildi. Cephe prekast; panel kodları bu dosyada yok (prekast kalıp paftası yalnız MN-x monoblok pencere tipleri).
+
+## Gerçek çizimde öğrenilenler (B2 BLOK + "B Bloklar uygulama" DXF'leri, 8 Eyl 2026)
+
+- **Kapı / pencere blok değil poz yazısı**: bu ofis planda her doğramayı yalnız "EMP1", "EMP3 - KANATLI" yazısıyla
+  işaretliyor; adet ve açıklama doğrama paftasındaki poz listesinde ("Poz: EMP3 / 9 Adet AÇILIR KAPI"), ölçü ise plan
+  paftalarının altındaki görünüşlerde (brn_windows dikdörtgenleri: genişlik yatay, yükseklik düşey) ya da yazının yanındaki
+  "130 x 250" ölçü yazılarında (üç ayrı TEXT; döndürülmüş yazıda alt alta). `detectors/openings.py`:
+  - `poz_catalog`: çizimden poz → ölçü (görünüş dikdörtgeni > ölçü yazısı; kapıda yükseklik büyük olan) ve poz → kapı /
+    pencere (poz listesi notu; ölçüsü ≥ 195 cm yüksekse kapı; EMP3A, EMP3'ün türü). Çizime `drawing.poz` olarak yazılır.
+  - `detect_poz_openings`: bilinen önekli (proje poz listesi / K, P…) poz yazısı bir **duvara 2 m içinde** ise plandaki
+    boşluktur; görünüşteki poz yazılarının yanında duvar olmadığından sayılmaz. Zemin kat: 46 (EMP1 35, EMP3 8…), çatı katı 44.
+  - Proje bilgisi `services.detect_params(project, session)` ile her analize girer (öteki paftaların `poz` sözlüğü ve
+    doğrama elemanları). Poz listesi sonradan yüklenirse `drawings._refresh_openings` kapı / pencere bulamamış mimari
+    planları yeniden analiz eder.
+  - Keşif: plandan sayılan pozlu boşluk **duvardan düşülür**, adet ve **cam m²** poz listesinden gelir (proje toplamı;
+    `architectural_items(schedule_poz=…)`, `standard_items` DOGRAMA satırına ölçü notu + `cam` kalemi). B2: 131 pencere pozu,
+    298 m² cam; duvarlar 130 m² boşluk düşülmüş.
+- **Birim**: B2 dosyası başlıkta mm, gerçekte cm. Paftaların çoğu yazı yüksekliğinden cm'yi buluyor ama 1. kat / görünüş /
+  doğrama paftaları (az ya da büyük yazı) mm'de kalıyordu → pafta oylaması. Kaynak dosya taramasındaki üst düzey yazı
+  medyanı (`SheetScan.suggested_unit`) bu dosyada yanıltıcı (285 birimlik kot yazıları): bilgi olarak saklanır, karar vermez.
+- **Plan geometrisi olmayan pafta**: "B_Bloklar_Uygulama_04.dxf" 3.048 nesnelik bir açıklama katmanı (mahal yazıları,
+  merdiven, aydınlatma sembolleri); duvarlar dış referansta kalmış. Mimari paftada duvar yok ve 60'tan az çizgi / çokgen
+  varsa `analyze._architectural` ilk uyarı olarak "plan geometrisi yok, xref'leri bağlayıp (Bind) yeniden yükleyin" der;
+  özet tabloda **Sorun**. Aynı dosyanın 9 başlıksız kümesi (30–500 nesne, gizli DATA yazı katmanları yüzünden "elektrik"
+  sayılmıştı) artık parça olarak elenir.
+- Kat yüksekliği 0 girilmiş projede duvar yüksekliği sessizce 3 m alınıyordu: keşif satırına not, proje sayfasına uyarı.
 
 ## Büyük dosyada blok içeriği (akış) ve doğrama poz listesi
 

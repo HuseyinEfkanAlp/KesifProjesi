@@ -37,6 +37,8 @@ _ADDED_COLUMNS = [
     ("project", "systems", "JSON"),
     ("drawing", "materials", "JSON"),
     ("drawing", "rooms", "JSON"),
+    ("drawing", "poz", "JSON"),
+    ("drawing", "unit_verdict", "VARCHAR"),
 ]
 
 

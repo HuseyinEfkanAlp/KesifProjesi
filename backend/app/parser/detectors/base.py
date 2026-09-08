@@ -36,6 +36,11 @@ class DetectParams:
     min_wall_length: float = 0.30
     min_wall_area: float = 0.05             # m² (plan alanı)
     wall_merge_gap: float = 1.30            # kapı boşluğu: aynı hizadaki duvar parçaları birleştirilir
+    # doğrama pozları (proje genelinden: poz listesi ve görünüşler) — planlardaki "EMP1" yazıları kapı / pencere sayılır
+    poz_prefixes: tuple[str, ...] = ()      # poz listesinde geçen kod önekleri (EMP, P, K…)
+    poz_sizes: dict = field(default_factory=dict)   # poz -> (genişlik, yükseklik) m
+    poz_kinds: dict = field(default_factory=dict)   # poz -> "door" | "window"
+    poz_wall_radius: float = 2.0            # poz yazısı bu mesafede bir duvara yakınsa plandaki boşluktur (görünüşteki değil)
     # elektrik
     elec_label_unit_scale: float = 0.001    # etiketlerdeki sayılar mm
     elec_label_radius: float = 0.8          # hat etiketi arama yarıçapı (m); etiket hattın hemen üstünde yazılır

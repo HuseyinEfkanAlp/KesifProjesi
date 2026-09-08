@@ -146,3 +146,17 @@ tr.system-row td { background: #f3f5f8; font-weight: 600; }
 .derived-list { margin: 4px 0 0 18px; padding: 0; }
 .derived-list li { margin: 2px 0; }
 .derived-list button { margin-left: 6px; }
+
+/* Katlanır bölümler (proje sayfası) */
+details.section { margin-bottom: 16px; }
+details.section > summary { cursor: pointer; font-weight: 600; font-size: 15px; padding: 10px 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; list-style: none; }
+details.section > summary::-webkit-details-marker { display: none; }
+details.section > summary::before { content: '▸ '; color: var(--muted); }
+details.section[open] > summary { border-radius: 8px 8px 0 0; }
+details.section[open] > summary::before { content: '▾ '; }
+details.section > .panel { border-top: 0; border-radius: 0 0 8px 8px; }
+details.section > summary .muted { font-weight: 400; margin-left: 8px; }
+.summary-line { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 4px 0 10px; }
+.summary-line b { font-size: 18px; }
+td.note { max-width: 420px; font-size: 12.5px; color: #444; }
+td.found { white-space: nowrap; }
