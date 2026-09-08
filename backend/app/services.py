@@ -94,6 +94,11 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
         result.warnings.insert(0, f"{pt.label}: metraja girmez; katman adından otomatik eşleme kapalı (kesitteki duvar / sıva taraması plan miktarı değildir). "
                                   "Kesit notları çatı / cephe sistemi kanıtı ve kotlar için okunur.")
 
+    if result.ksf_height and not drawing.storey_height:
+        drawing.storey_height = result.ksf_height      # KSF katman adındaki kat yüksekliği (KOLON-40x40x300 -> 3,00 m)
+        result.warnings.append(f"Kat yüksekliği KSF katman adından alındı: {result.ksf_height:g} m")
+    fill_wall_areas(result.elements, project, drawing, session, load_catalog())
+
     for old in session.exec(select(Element).where(Element.drawing_id == drawing.id, Element.manual == False)):  # noqa: E712
         session.delete(old)
     for det in result.elements:
@@ -116,9 +121,6 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.discipline_hints = result.discipline_hints or {}
     drawing.levels = [float(v) for v in (result.levels or [])]
     drawing.kot = result.kot
-    if result.ksf_height and not drawing.storey_height:
-        drawing.storey_height = result.ksf_height      # KSF katman adındaki kat yüksekliği (KOLON-40x40x300 -> 3,00 m)
-        result.warnings.append(f"Kat yüksekliği KSF katman adından alındı: {result.ksf_height:g} m")
     drawing.analyzed_at = datetime.utcnow()
     session.add(drawing)
     session.commit()
@@ -187,6 +189,41 @@ def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
 def storey_height_of(project: Project, d: Drawing, sh: dict | None = None) -> float:
     sh = sh or storey_heights(project, [d])
     return float(sh["per_drawing"].get(d.id, {}).get("height") or sh["effective"])
+
+
+def wall_height_default(project: Project, drawing: Drawing, session: Session | None = None) -> float:
+    """Katman adında yüksekliği olmayan duvarın alanı için yükseklik: proje 'wall_height' parametresi, yoksa
+    paftanın kat yüksekliği − döşeme kalınlığı (keşif listesindeki standard_items ile aynı kural)."""
+    p = project_params(project)
+    if p.get("wall_height"):
+        return float(p["wall_height"])
+    drawings = list(session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()) if session else []
+    if drawing not in drawings:
+        drawings.append(drawing)
+    h = storey_height_of(project, drawing, storey_heights(project, drawings))
+    return max(h - (project.slab_thickness or 0.0), 0.0)
+
+
+def fill_wall_areas(elements, project: Project, drawing: Drawing, session: Session | None, catalog: Catalog) -> int:
+    """Duvar (wall_area ölçü kuralı) elemanlarında alan = uzunluk × yükseklik. Dedektör yüksekliği katman adından
+    (DUVAR_YTONG-20x300 -> 3 m) alır; yazılmamışsa burada proje duvar yüksekliğiyle tamamlanır ki Elemanlar
+    sayfası ve pafta özeti duvarı adet değil m² göstersin. Döndürür: tamamlanan eleman sayısı."""
+    h_default: float | None = None
+    n = 0
+    for det in elements:
+        if det.area or not det.length:
+            continue
+        measure = (det.meta or {}).get("measure")
+        if not measure:
+            p = parse_layer(det.layer or "", catalog)
+            measure = p.item.measure if p and p.item else None
+        if measure != "wall_area":
+            continue
+        if h_default is None:
+            h_default = wall_height_default(project, drawing, session)
+        det.area = det.length * h_default
+        n += 1
+    return n
 
 
 def recompute_derived(el: Element) -> None:

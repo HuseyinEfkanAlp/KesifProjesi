@@ -50,6 +50,8 @@ def test_standard_detection_and_boq(standard_dxf):
     assert len(r.by_type("sprinkler")) == 6 and len(r.by_type("agac")) == 3
     assert sum(e.length for e in r.by_type("hava_kanal")) == pytest.approx(15.0)
     assert r.by_type("xps")[0].area == pytest.approx(20.0)
+    wall = r.by_type("duvar_ytong")[0]        # duvar: alan = uzunluk × katman adındaki yükseklik (20x300 -> 3 m), kalınlık 20 cm
+    assert wall.h == pytest.approx(3.0) and wall.thickness == pytest.approx(0.20) and wall.area == pytest.approx(wall.length * 3.0)
     assert any("YENI_KALEM" in w for w in r.warnings)
     assert any("Standart dışı" in w and "AKS" in w for w in r.warnings)
     layer = next(l for l in r.layers if l.name == "KSF-HAV-HAVA_KANAL-600x400")

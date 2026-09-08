@@ -169,3 +169,19 @@ def test_drawing_summary_status_and_note():
     assert drawing_summary(d2, [])["status"] == "problem"
     d3 = Drawing(project_id=1, filename="c.dxf", stored_path="x", plan_type="", warnings=[])
     assert drawing_summary(d3, [])["status"] == "untyped" and drawing_summary(d3, [])["note"] == ""
+
+
+def test_drawing_summary_ksf_quantities():
+    """KSF kalemleri özet satırında ölçü birimiyle yazılır: duvar m² (adet değil), kiriş m, kapı adet."""
+    from app.api.drawings import drawing_summary
+    from app.models import Drawing, Element
+    from app.standard.catalog import Catalog
+    d = Drawing(project_id=1, filename="a.dxf", stored_path="x", plan_type="mim_kat_plani", warnings=[])
+    els = ([Element(drawing_id=1, etype="duvar_tugla", layer="KSF-MIM-DUVAR_TUGLA-13.5x300", points=[], length=4.0, area=12.0) for _ in range(3)]
+           + [Element(drawing_id=1, etype="hava_kanal", layer="KSF-HAV-HAVA_KANAL-600x400", points=[], length=5.5)]
+           + [Element(drawing_id=1, etype="kapi", layer="KSF-MIM-KAPI-K1_90x210", points=[], count=1) for _ in range(2)]
+           + [Element(drawing_id=1, etype="wall", points=[], length=10.0)])
+    s = drawing_summary(d, els, Catalog())
+    assert s["found"] == "36,0 m² tuğla duvar · 2 kapı · 5,5 m havalandırma kanalı (dikdörtgen) · 1 duvar (10,0 m)"
+    assert "adet" not in s["found"]
+    assert drawing_summary(d, els)["found"].startswith("3 duvar tugla")     # katalogsuz: eski davranış (adet)

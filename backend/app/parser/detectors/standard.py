@@ -4,7 +4,7 @@ Her KSF-… katmanı için:
   count      üst düzey bloklar (INSERT) -> her blok 1 adet (blok yoksa küçük kapalı semboller sayılır)
   length     çizgi / polyline -> uzunluk (m); kapalı polyline ise çevre
   area       kapalı çokgen / tarama -> alan (m²); üst üste binen kopyalar elenir
-  wall_area  çizgi uzunluğu; alan = uzunluk × yükseklik (keşif aşamasında)
+  wall_area  çizgi uzunluğu; alan = uzunluk × yükseklik (yükseklik ÖZELLİK'ten, 20x300 -> 3 m; yoksa proje duvar yüksekliği)
   volume     kapalı çokgen alanı; hacim = alan × kalınlık (keşif aşamasında)
 Katalogda olmayan kod: geometriye göre ölçülür (blok->adet, çizgi->m, alan->m²), uyarı verilir.
 Eleman: etype = kalem kodu (küçük harf), subtype = ÖZELLİK, layer = tam katman adı, name = blok adı / kalem adı.
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-from ...standard.catalog import Catalog, ParsedLayer, parse_layer
+from ...standard.catalog import Catalog, ParsedLayer, parse_layer, spec_numbers
 from ..geometry import perimeter, polygon_area, polyline_length
 from ..loader import Drawing
 from .base import DetectParams, DetectedElement, dedupe_elements
@@ -94,8 +94,20 @@ def measure_layer(drawing: Drawing, layer: str, code: str, item, measure: str | 
             L = perimeter(e.points) if e.kind == "polygon" else polyline_length(e.points)
             if L < params.min_line_length:
                 continue
+            h = t = None
+            area = 0.0
+            if m == "wall_area":
+                # ÖZELLİK "13.5x300": kalınlık 13,5 cm, yükseklik 300 cm -> duvar alanı = uzunluk × yükseklik (m²);
+                # yükseklik yazılmamışsa alan kaydederken proje duvar yüksekliğiyle tamamlanır (services.fill_wall_areas)
+                nums = spec_numbers(spec)
+                if nums and 0 < nums[0] <= 60:
+                    t = nums[0] / 100.0
+                if len(nums) >= 2 and nums[1] > 50:
+                    h = nums[1] / 100.0
+                    area = L * h
             elements.append(DetectedElement(etype=etype, layer=layer, points=list(e.points), name=base_name, subtype=spec,
-                                            length=L, source=e.source, handle=e.handle, confidence=base_conf, meta=meta))
+                                            length=L, h=h, thickness=t, area=area, source=e.source, handle=e.handle,
+                                            confidence=base_conf, meta=meta))
         elif m in ("area", "volume"):
             if e.kind != "polygon" or len(e.points) < 3:
                 continue

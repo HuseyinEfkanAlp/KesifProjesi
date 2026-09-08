@@ -20,7 +20,7 @@ from ..parser.dwg import convert_dwg_to_dxf, dwg_supported
 from ..parser.loader import UNIT_SCALE, load_dxf
 from ..parser.sheets import BIG_FILE_BYTES, Sheet, SheetScan, crop_sheets, scan_sheets
 from ..planset import PLAN_TYPE_BY_CODE, resolve_plan
-from ..services import analyze_and_store, detect_params, recompute_derived
+from ..services import analyze_and_store, detect_params, load_catalog, recompute_derived
 from .projects import get_project
 
 router = APIRouter(prefix="/api", tags=["drawings"])
@@ -53,10 +53,42 @@ NOTE_PRIORITY: list[tuple[str, str | None]] = [
 ]
 
 
-def drawing_summary(d: Drawing, elements: list[Element]) -> dict:
-    """Proje sayfası özeti: durum (ok / empty / problem / untyped), bulunanlar ('99 duvar · 37 pencere'), tek cümlelik not."""
-    counts = Counter(e.etype for e in elements if e.included)
-    parts = [f"{n} {FOUND_LABELS.get(et, et.replace('_', ' '))}" for et, n in counts.most_common()]
+def _qty(v: float) -> str:
+    """4099.2 -> '4.099', 12.4 -> '12,4' (Türkçe sayı yazımı)."""
+    return f"{v:,.0f}".replace(",", ".") if v >= 100 else f"{v:.1f}".replace(".", ",")
+
+
+def found_parts(elements: list[Element], catalog=None) -> list[str]:
+    """'Bulunanlar' parçaları: kalem katalogda alan / uzunluk ile ölçülüyorsa miktar (4.099 m² tuğla duvar, 2.790 m kiriş),
+    yoksa adet (256 kapı). Klasik duvarda (wall) uzunluk parantezde yazılır."""
+    acc: dict[str, dict] = {}
+    for e in elements:
+        if not e.included:
+            continue
+        a = acc.setdefault(e.etype, {"n": 0, "length": 0.0, "area": 0.0})
+        a["n"] += e.count or 1
+        a["length"] += (e.length or 0.0) * (e.count or 1)
+        a["area"] += (e.area or 0.0) * (e.count or 1)
+    parts = []
+    for et, a in sorted(acc.items(), key=lambda kv: -kv[1]["n"]):
+        item = catalog.get(et.upper()) if catalog is not None and et not in ALL_ELEMENT_TYPES else None
+        label = item.name.lower() if item else FOUND_LABELS.get(et, et.replace("_", " "))
+        measure = item.measure if item else ""
+        if measure in ("area", "wall_area", "volume") and a["area"] > 0:
+            parts.append(f"{_qty(a['area'])} m² {label}")
+        elif measure == "length" and a["length"] > 0:
+            parts.append(f"{_qty(a['length'])} m {label}")
+        elif et == "wall" and a["length"] > 0:
+            parts.append(f"{a['n']} {label} ({_qty(a['length'])} m)")
+        else:
+            parts.append(f"{a['n']} {label}")
+    return parts
+
+
+def drawing_summary(d: Drawing, elements: list[Element], catalog=None) -> dict:
+    """Proje sayfası özeti: durum (ok / empty / problem / untyped), bulunanlar ('4.099 m² tuğla duvar · 37 pencere'),
+    tek cümlelik not. catalog: KSF kalemlerinin adı ve ölçü birimi için (yoksa tip kodu ve adet)."""
+    parts = found_parts(elements, catalog)
     if d.rooms:
         parts.append(f"{len(d.rooms)} mahal alanı")
     warnings = list(d.warnings or [])
@@ -78,9 +110,10 @@ def drawing_summary(d: Drawing, elements: list[Element]) -> dict:
     return {"status": status, "found": " · ".join(parts), "note": note[:200]}
 
 
-def drawing_out(d: Drawing, session: Session) -> dict:
+def drawing_out(d: Drawing, session: Session, catalog=None) -> dict:
     elements = session.exec(select(Element).where(Element.drawing_id == d.id)).all()
-    return {**d.model_dump(exclude={"stored_path"}), "element_count": len(elements), **drawing_summary(d, elements)}
+    return {**d.model_dump(exclude={"stored_path"}), "element_count": len(elements),
+            **drawing_summary(d, elements, catalog if catalog is not None else load_catalog())}
 
 
 def _safe_name(filename: str) -> str:
@@ -371,7 +404,8 @@ def drawings_from_source(project_id: int, body: FromSourceIn, session: Session =
 @router.get("/projects/{project_id}/drawings")
 def list_drawings(project_id: int, session: Session = Depends(get_session)):
     get_project(project_id, session)
-    return [drawing_out(d, session) for d in session.exec(select(Drawing).where(Drawing.project_id == project_id))]
+    cat = load_catalog()
+    return [drawing_out(d, session, cat) for d in session.exec(select(Drawing).where(Drawing.project_id == project_id))]
 
 
 @router.get("/drawings/{drawing_id}")
