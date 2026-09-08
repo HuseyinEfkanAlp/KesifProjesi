@@ -79,3 +79,21 @@ def test_end_to_end_storey(storey_dxf):
     assert wb["Eleman Metrajı"].max_row == 1 + len(lines)
     assert wb["Keşif"].max_row >= 4 + len(items) + 3      # kalemler + tür toplamları bloğu
     assert any(c.value == "TÜR TOPLAMLARI" for row in wb["Keşif"].iter_rows(min_col=1, max_col=1) for c in row)
+
+
+def test_summary_sections_group_same_section():
+    """Aynı kesitteki elemanlar kesit bazında tek satırda toplanır."""
+    from app.quantity.engine import ElementData, QuantityParams, compute_all
+    from app.quantity.summary import summarize
+    els = [ElementData(id=i, etype="beam", name=f"K{i}", subtype=None, b=0.3, h=0.6, thickness=None, area=0.3 * 4.0, length=4.0,
+                       perimeter=0, count=1) for i in range(5)]
+    els += [ElementData(id=10 + i, etype="column", name=f"S{i}", subtype=None, b=0.4, h=0.4, thickness=None, area=0.16, length=0,
+                        perimeter=1.6, count=1) for i in range(3)]
+    lines = compute_all(els, QuantityParams(storey_height=3.0, slab_thickness=0.15, storey_count=2))
+    info = {e.id: {"b": e.b, "h": e.h, "thickness": e.thickness, "area": e.area, "length": e.length} for e in els}
+    s = summarize(lines, [], info)
+    secs = {x["key"]: x for x in s["sections"]}
+    assert secs["beam|30x60"]["element_count"] == 10 and secs["beam|30x60"]["length_m"] == pytest.approx(40.0)
+    col_group = next(g for g in s["groups"] if g["etype"] == "column")
+    assert secs["column|40x40"]["element_count"] == 6 and secs["column|40x40"]["concrete_m3"] == pytest.approx(col_group["concrete_m3"], abs=0.01)
+    assert len(s["sections"]) == 2

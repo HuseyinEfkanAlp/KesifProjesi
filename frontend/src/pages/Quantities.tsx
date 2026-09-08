@@ -197,6 +197,32 @@ export default function Quantities() {
             </div>
           )}
 
+          {summary.sections && summary.sections.length > 0 && (
+            <div className="panel">
+              <h3 style={{ marginTop: 0 }}>Statik: kesit bazında <span className="muted" style={{ fontWeight: 400 }}>· aynı kesitteki elemanlar tek satır</span></h3>
+              <table className="table-compact">
+                <thead><tr><th>Eleman</th><th>Kesit / kalınlık</th><th className="num">Adet (kat dahil)</th><th className="num">Uzunluk (m)</th><th className="num">Alan (m²)</th><th className="num">Beton (m³)</th><th className="num">Kalıp (m²)</th><th className="num">Demir (kg)</th></tr></thead>
+                <tbody>
+                  {summary.sections.map((sg) => (
+                    <tr key={sg.key}>
+                      <td><span className={`badge ${sg.etype}`}>{sg.label}</span></td>
+                      <td><b>{sg.section}</b></td>
+                      <td className="num">{sg.element_count}</td>
+                      <td className="num">{sg.length_m ? fmt(sg.length_m, 1) : '-'}</td>
+                      <td className="num">{sg.area_m2 ? fmt(sg.area_m2, 1) : '-'}</td>
+                      <td className="num"><b>{fmt(sg.concrete_m3, 1)}</b></td>
+                      <td className="num">{fmt(sg.formwork_m2, 0)}</td>
+                      <td className="num">{fmt(sg.rebar_kg, 0)}</td>
+                    </tr>
+                  ))}
+                  <tr className="total"><td>TOPLAM</td><td></td><td className="num">{summary.sections.reduce((s, x) => s + x.element_count, 0)}</td><td></td><td></td><td className="num">{fmt(summary.totals.concrete_m3, 1)}</td><td className="num">{fmt(summary.totals.formwork_m2, 0)}</td><td className="num">{fmt(summary.totals.rebar_kg, 0)}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <details className="section">
+            <summary>Statik: eleman grubuna göre özet<span className="muted">kolon / perde / kiriş / döşeme / temel toplamları</span></summary>
           <div className="panel">
             <h3>Statik: eleman grubuna göre özet</h3>
             <table>
@@ -208,8 +234,9 @@ export default function Quantities() {
                 <tr className="total"><td>TOPLAM</td><td></td><td className="num">{fmt(summary.totals.concrete_m3, 3)}</td><td className="num">{fmt(summary.totals.formwork_m2)}</td><td className="num">{fmt(summary.totals.rebar_kg, 0)}</td></tr>
               </tbody>
             </table>
-            <p className="muted">H = {project.storey_height} m, d = {Math.round(project.slab_thickness * 100)} cm. Temel kat sayısıyla çarpılmaz. Demir: "tablo" = donatı paftasından okundu, "oran" = beton × kg/m³ tahmini. Fire, bağ teli, plywood, kalıp yağı ve çivi keşif listesinde ayrı kalemlerdir.</p>
+            <p className="muted">H = {project.levels?.effective ?? project.storey_height} m ({project.levels?.source ?? 'parametre'}), d = {Math.round(project.slab_thickness * 100)} cm. Temel kat sayısıyla çarpılmaz. Demir: "tablo" = donatı paftasından okundu, "oran" = beton × kg/m³ tahmini. Fire, bağ teli, plywood, kalıp yağı ve çivi keşif listesinde ayrı kalemlerdir.</p>
           </div>
+          </details>
 
           <div className="panel">
             <div className="row between">

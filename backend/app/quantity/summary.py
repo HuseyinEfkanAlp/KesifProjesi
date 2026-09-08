@@ -55,6 +55,35 @@ def summarize(lines: list[QuantityLine], rebar_tables: list[dict] | None = None,
             groups[k] = {"key": k, "label": group_label(k), "etype": etype, "element_count": 0,
                          "concrete_m3": 0.0, "formwork_m2": 0.0, "rebar_kg": kg, "rebar_source": "tablo"}
 
+    # kesit bazında: aynı tip ve aynı kesit / kalınlıktaki elemanlar tek satır (98 kiriş 30x60 -> "Kiriş 30x60: 98 adet, 392 m, 70,6 m³")
+    sections: dict[str, dict] = {}
+    for ln in lines:
+        i = info.get(ln.element_id, {})
+        b, h, t = i.get("b"), i.get("h"), i.get("thickness")
+        if ln.etype in ("column", "beam"):
+            sec = f"{round((b or 0) * 100):.0f}x{round((h or 0) * 100):.0f}" if b and h else "kesit ?"
+        elif ln.etype == "shear_wall":
+            sec = f"{round((b or 0) * 100):.0f} cm" if b else "kalınlık ?"
+        elif ln.etype in ("slab", "foundation"):
+            sec = f"{round((t or 0) * 100):.0f} cm" if t else "kalınlık ?"
+        else:
+            sec = ln.subtype or ""
+        key = f"{group_key(ln)}|{sec}"
+        sg = sections.setdefault(key, {"key": key, "group": group_key(ln), "etype": ln.etype, "label": group_label(group_key(ln)),
+                                       "section": sec, "element_count": 0, "length_m": 0.0, "area_m2": 0.0,
+                                       "concrete_m3": 0.0, "formwork_m2": 0.0, "rebar_kg": 0.0})
+        mult = ln.count * ln.multiplier
+        sg["element_count"] += mult
+        sg["length_m"] += float(i.get("length") or 0.0) * mult
+        sg["area_m2"] += float(i.get("area") or 0.0) * mult
+        sg["concrete_m3"] += ln.total_concrete
+        sg["formwork_m2"] += ln.total_formwork
+        sg["rebar_kg"] += ln.total_rebar
+    section_rows = sorted(sections.values(), key=lambda g: (GROUP_ORDER.index(g["group"]) if g["group"] in GROUP_ORDER else 99, -g["concrete_m3"]))
+    for sg in section_rows:
+        for k in ("length_m", "area_m2", "concrete_m3", "formwork_m2", "rebar_kg"):
+            sg[k] = round(sg[k], 2)
+
     ordered = sorted(groups.values(), key=lambda g: GROUP_ORDER.index(g["key"]) if g["key"] in GROUP_ORDER else 99)
     for g in ordered:
         for k in ("concrete_m3", "formwork_m2", "rebar_kg"):
@@ -110,7 +139,7 @@ def summarize(lines: list[QuantityLine], rebar_tables: list[dict] | None = None,
         by_drawing.append(row)
     by_drawing.sort(key=lambda r: (r.get("kot") is None, _kot_val(r.get("kot")), r["drawing"]))
 
-    return {"groups": ordered, "totals": totals, "rebar_by_dia": rebar_by_dia,
+    return {"groups": ordered, "sections": section_rows, "totals": totals, "rebar_by_dia": rebar_by_dia,
             "rebar_table_total_kg": table_total, "rebar_ratio_total_kg": ratio_total, "by_drawing": by_drawing}
 
 

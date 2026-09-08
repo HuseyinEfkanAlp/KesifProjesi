@@ -311,6 +311,8 @@ export interface DrawingSummary {
 }
 
 export interface QuantitySummary {
+  /** Kesit bazında: aynı tip ve kesitteki elemanlar tek satır (Kiriş 30x60: 98 adet, 392 m, 70,6 m³) */
+  sections?: { key: string; group: string; etype: EType | string; label: string; section: string; element_count: number; length_m: number; area_m2: number; concrete_m3: number; formwork_m2: number; rebar_kg: number }[]
   groups: QuantityGroup[]
   totals: { concrete_m3: number; formwork_m2: number; rebar_kg: number }
   rebar_by_dia: RebarDia[]

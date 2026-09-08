@@ -29,6 +29,7 @@ export default function Elements() {
   const [busy, setBusy] = useState(false)
   const [filter, setFilter] = useState<EType | ''>('')
   const [limit, setLimit] = useState(60)
+  const [showList, setShowList] = useState(false)
   const svgRef = useRef<HTMLDivElement>(null)
   const [manual, setManual] = useState({ etype: '' as EType | '', name: '', subtype: '', b: 0.3, h: 0.6, length: 0, thickness: 0, area: 0, count: 1 })
   const [catalog, setCatalog] = useState<Catalog | null>(null)
@@ -120,6 +121,23 @@ export default function Elements() {
   const isElec = discipline === 'electrical'
   const filtered = elements.filter((e) => !filter || e.etype === filter)
   const shown = filtered.slice(0, limit)
+  // aynı tip + aynı kesit / malzeme: tek satır özet (98 kiriş 30x60 -> 1 satır, toplam uzunluk)
+  const sectionOf = (e: Element) => {
+    const cm = (v: number | null | undefined) => (v ? Math.round(v * 100) : null)
+    if (e.etype === 'column' || e.etype === 'beam' || e.etype === 'door' || e.etype === 'window') return cm(e.b) && cm(e.h) ? `${cm(e.b)}x${cm(e.h)}` : (e.subtype ?? '')
+    if (e.etype === 'shear_wall' || e.etype === 'wall' || e.etype === 'tray') return [cm(e.b) ? `${cm(e.b)} cm` : '', e.subtype ?? ''].filter(Boolean).join(' ')
+    if (e.etype === 'slab' || e.etype === 'foundation') return cm(e.thickness) ? `${cm(e.thickness)} cm` : (e.subtype ?? '')
+    return e.subtype ?? e.name ?? ''
+  }
+  const groupsMap = new Map<string, { etype: string; section: string; count: number; length: number; area: number; excluded: number }>()
+  for (const e of elements) {
+    const sec = sectionOf(e)
+    const key = `${e.etype}|${sec}`
+    const g = groupsMap.get(key) ?? { etype: e.etype, section: sec, count: 0, length: 0, area: 0, excluded: 0 }
+    if (e.included) { g.count += e.count; g.length += (e.length || 0) * e.count; g.area += (e.area || 0) * e.count } else g.excluded += e.count
+    groupsMap.set(key, g)
+  }
+  const groups = Array.from(groupsMap.values()).sort((a, b) => ETYPES.indexOf(a.etype) - ETYPES.indexOf(b.etype) || b.count - a.count)
   const counts = ETYPES.map((t) => [t, elements.filter((e) => e.etype === t).length] as const)
   const subtypeText = (el: Element) => (el.subtype ? (SUBTYPE_LABELS[el.subtype] ?? el.subtype) : '')
   const mt = manual.etype as EType
@@ -224,9 +242,33 @@ export default function Elements() {
         </div>
       </div>
 
+      {groups.length > 0 && (
+        <div className="panel">
+          <h3 style={{ marginTop: 0 }}>Özet <span className="muted" style={{ fontWeight: 400 }}>· aynı tip ve kesitteki elemanlar tek satır</span></h3>
+          <table className="table-compact">
+            <thead><tr><th>Tip</th><th>Kesit / malzeme / ölçü</th><th className="num">Adet</th><th className="num">Toplam uzunluk (m)</th><th className="num">Toplam alan (m²)</th><th className="num">Metraj dışı</th></tr></thead>
+            <tbody>
+              {groups.map((g) => (
+                <tr key={`${g.etype}|${g.section}`} style={{ cursor: 'pointer' }} onClick={() => { setFilter(g.etype as EType); setShowList(true) }} title="Bu tipin listesini aç">
+                  <td><span className="badge" style={{ background: colorOf(g.etype) }}>{labelOf(g.etype)}</span></td>
+                  <td><b>{g.section || '-'}</b></td>
+                  <td className="num"><b>{g.count}</b></td>
+                  <td className="num">{g.length ? fmt(g.length, 1) : '-'}</td>
+                  <td className="num">{g.area ? fmt(g.area, 1) : '-'}</td>
+                  <td className="num muted">{g.excluded || ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="muted hint" style={{ marginBottom: 0 }}>Satıra tıklayınca aşağıda o tipin eleman listesi açılır; tek tek düzeltme ve silme orada.</p>
+        </div>
+      )}
+
       <div className="panel">
         <div className="row between sticky-bar">
-          <h3 style={{ margin: 0 }}>Tespit edilen elemanlar <span className="count-pill">{filtered.length}</span></h3>
+          <h3 style={{ margin: 0 }}>Eleman listesi <span className="count-pill">{filtered.length}</span>
+            <button className="secondary small" style={{ marginLeft: 10 }} onClick={() => setShowList(!showList)}>{showList ? 'Listeyi gizle' : 'Listeyi göster'}</button>
+          </h3>
           <div className="chips">
             <button className={`chip-btn${filter === '' ? ' on' : ''}`} onClick={() => { setFilter(''); setLimit(60) }}>Tümü ({elements.length})</button>
             {counts.map(([t, n]) => <button key={t} className={`chip-btn${filter === t ? ' on' : ''}`} onClick={() => { setFilter(t as EType); setLimit(60) }}><i className="dot" style={{ background: colorOf(t) }} />{labelOf(t)} ({n})</button>)}
@@ -236,7 +278,7 @@ export default function Elements() {
           {isElec ? 'Tava genişlik/yükseklik mm; uzunluk m.' : 'Boyutlar cm; uzunluk m.'} Hücreyi düzenleyip dışına tıklayın; alan otomatik güncellenir.
           Elle düzenlenen elemanlar yeniden analizde korunur. {discipline === 'architectural' && 'Duvarda h boşsa proje duvar yüksekliği kullanılır; kapı/pencerede b×h boşluk alanıdır.'}
         </p>
-        <div style={{ overflow: 'auto' }}>
+        {showList && <div style={{ overflow: 'auto' }}>
           <table className="table-compact">
             <thead>
               <tr>
@@ -289,8 +331,8 @@ export default function Elements() {
               ))}
             </tbody>
           </table>
-        </div>
-        {filtered.length > shown.length && (
+        </div>}
+        {showList && filtered.length > shown.length && (
           <div className="row" style={{ justifyContent: 'center', marginTop: 12 }}>
             <button className="secondary" onClick={() => setLimit(limit + 100)}>{filtered.length - shown.length} eleman daha göster</button>
             <button className="secondary" onClick={() => setLimit(filtered.length)}>Tümünü göster</button>
