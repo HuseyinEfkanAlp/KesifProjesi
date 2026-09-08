@@ -43,14 +43,20 @@ export const ETYPES_BY_DISCIPLINE: Record<Discipline, EType[]> = {
 /** Statik tipler (beton/kalıp/demir metrajı) */
 export const STRUCTURAL_ETYPES = ETYPES_BY_DISCIPLINE.structural
 
-/** Katman eşlemede seçilebilen tipler: disiplinin elemanları (+ statikte döşeme boşluğu) */
-export function layerTypeLabels(discipline: Discipline): Record<string, string> {
+/** Katman eşlemede seçilebilen tipler: disiplinin elemanları (+ statikte döşeme boşluğu); ek disiplinlerin tipleri de eklenir */
+export function layerTypeLabels(discipline: Discipline, extras: Discipline[] = []): Record<string, string> {
   const out: Record<string, string> = {}
-  if (discipline === 'standard' || discipline === 'rebar' || discipline === 'mapped') return out
-  for (const t of ETYPES_BY_DISCIPLINE[discipline]) out[t] = ETYPE_LABELS[t]
-  if (discipline === 'structural') out.hole = 'Döşeme boşluğu (şaft)'
+  for (const d of [discipline, ...extras]) {
+    if (d === 'standard' || d === 'rebar' || d === 'mapped') continue
+    const prefix = extras.length ? `${DISCIPLINES[d].split(' (')[0]}: ` : ''
+    for (const t of ETYPES_BY_DISCIPLINE[d]) out[t] = prefix + ETYPE_LABELS[t]
+    if (d === 'structural') out.hole = prefix + 'Döşeme boşluğu (şaft)'
+  }
   return out
 }
+
+/** Aynı paftaya eklenebilen (sezgisel) disiplinler */
+export const HEURISTIC_DISCIPLINES: Discipline[] = ['structural', 'architectural', 'electrical']
 
 export const ETYPE_COLORS: Record<EType, string> = {
   column: '#d62728', shear_wall: '#9467bd', beam: '#1f77b4', slab: '#2ca02c', foundation: '#ff7f0e',
@@ -174,6 +180,10 @@ export interface Drawing {
   layers: LayerInfo[]
   warnings: string[]
   element_count: number
+  /** Aynı paftada çizilen ek sezgisel disiplinler (mimari paftada elektrik gibi) */
+  disciplines?: Discipline[]
+  /** Açılmamış ama katmanlarında kanıt olan disiplinler -> geometrik nesne sayısı */
+  discipline_hints?: Partial<Record<Discipline, number>>
   /** Yazı yükseklikleri / etiketlerin desteklediği birim (aynı dosyanın paftaları arasında oylama için) */
   unit_verdict?: string | null
   /** Doğrama pozları: ölçü ve kapı / pencere bilgisi (plandaki "EMP1" yazıları bununla sayılır) */
@@ -337,6 +347,12 @@ export interface BoqItem {
   count: number
   discipline: string
   discipline_label: string
+  /** İş grubu: KABA / INCE / MEK / ELK / ALT */
+  work_group: string
+  work_group_label: string
+  /** ÇŞB birim fiyat poz numarası (katalogdan ya da varsayılan eşlemeden; boş olabilir) */
+  poz: string
+  poz_name: string
   notes: string[]
   detail: Record<string, unknown>
 }
@@ -344,6 +360,11 @@ export interface BoqItem {
 export interface Boq {
   items: BoqItem[]
   by_discipline: { discipline: string; label: string; items: BoqItem[] }[]
+  /** İş grubuna göre (kaba yapı, ince işler, mekanik, elektrik, altyapı) */
+  by_group: { group: string; label: string; items: BoqItem[] }[]
+  work_groups: Record<string, string>
+  /** Uygulanan ölçü kuralları (ÇŞB tarifleri) */
+  rules: Record<string, { text: string; source: string }>
   kinds: Record<string, { label: string; unit: string; discipline: string }>
 }
 
@@ -382,6 +403,8 @@ export interface CatalogItem {
   spec_label: string
   example: string
   custom: boolean
+  /** ÇŞB birim fiyat poz numarası (isteğe bağlı) */
+  poz?: string
   /** Katmanlı sistem: ölçülünce ayrı kalem olarak yazılacak bileşenler (miktar × factor) */
   components: { code: string; factor: number; spec: string }[]
   is_system: boolean

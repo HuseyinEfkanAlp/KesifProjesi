@@ -12,7 +12,7 @@ export default function Standard() {
   const [error, setError] = useState('')
   const [filter, setFilter] = useState('')
   const [disc, setDisc] = useState('')
-  const [form, setForm] = useState({ code: '', discipline: 'HAV', name: '', measure: 'length', spec_label: '', components: '' })
+  const [form, setForm] = useState({ code: '', discipline: 'HAV', name: '', measure: 'length', spec_label: '', components: '', poz: '' })
   const [dform, setDform] = useState({ code: '', name: '' })
   const [test, setTest] = useState('KSF-HAV-HAVA_KANAL-600x400')
   const [check, setCheck] = useState<LayerCheck | null>(null)
@@ -26,7 +26,7 @@ export default function Standard() {
   }
   const addItem = (e: React.FormEvent) => {
     e.preventDefault()
-    run(() => Api.catalog.upsertItem(form as Partial<CatalogItem> & { components: string })).then(() => setForm({ ...form, code: '', name: '', spec_label: '', components: '' }))
+    run(() => Api.catalog.upsertItem(form as Partial<CatalogItem> & { components: string })).then(() => setForm({ ...form, code: '', name: '', spec_label: '', components: '', poz: '' }))
   }
   const addDisc = (e: React.FormEvent) => {
     e.preventDefault()
@@ -102,6 +102,7 @@ export default function Standard() {
               </select>
             </label>
             <label className="field">Özellik anlamı<input style={{ width: 160 }} value={form.spec_label} placeholder="çap (mm)" onChange={(e) => setForm({ ...form, spec_label: e.target.value })} /></label>
+            <label className="field" title="Çevre, Şehircilik ve İklim Değişikliği Bakanlığı birim fiyat poz numarası; keşif listesinde ve Excel'de görünür">ÇŞB poz no<input style={{ width: 120 }} value={form.poz} placeholder="15.225.1010" onChange={(e) => setForm({ ...form, poz: e.target.value })} /></label>
             <label className="field" title="Katmanlı sistem: bu kalem ölçülünce ayrı iş kalemi olarak yazılacak bileşenler. Biçim: KOD×çarpan:özellik; …">
               Bileşenler (katmanlı sistem)
               <input style={{ width: 300 }} value={form.components} placeholder="OSB×1:11; TASYUNU×1:10; MERTEK×1.7:5x10" onChange={(e) => setForm({ ...form, components: e.target.value })} />
@@ -137,12 +138,13 @@ export default function Standard() {
           <div key={g.code}>
             <h2>{g.code} · {g.name}</h2>
             <table>
-              <thead><tr><th>Katman adı (örnek)</th><th>Kalem</th><th>Ölçüm</th><th>Birim</th><th>Özellik</th><th>Bileşenler</th><th>Nasıl çizilir</th><th></th></tr></thead>
+              <thead><tr><th>Katman adı (örnek)</th><th>Kalem</th><th>Poz</th><th>Ölçüm</th><th>Birim</th><th>Özellik</th><th>Bileşenler</th><th>Nasıl çizilir</th><th></th></tr></thead>
               <tbody>
                 {g.items.map((it) => (
                   <tr key={it.code}>
                     <td><code className="layer">{it.example}</code></td>
                     <td>{it.name}{it.custom && <span className="muted"> (eklendi)</span>}</td>
+                    <td className="mono">{it.poz || <span className="muted">-</span>}</td>
                     <td>{it.measure_label}</td>
                     <td>{it.unit}</td>
                     <td className="muted">{it.spec_label || '-'}</td>

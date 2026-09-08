@@ -46,10 +46,10 @@ def build_workbook(project: dict, lines: list[QuantityLine], summary: dict, cost
     ws["A1"].font = Font(bold=True, size=13)
     ws["A2"] = (f"Kat yüksekliği: {project.get('storey_height', '')} m   Döşeme kalınlığı: {project.get('slab_thickness', '')} m"
                 f"   Duvar yüksekliği: {project.get('wall_height') or 'H − d'}   Günlük çalışma: {project.get('work_hours_per_day', 8)} saat")
-    _header(ws, 4, ["Disiplin", "Tür", "Kalem", "Birim", "Miktar", "Adet / hat", "Not"])
+    _header(ws, 4, ["İş grubu", "Poz", "Disiplin", "Tür", "Kalem", "Birim", "Miktar", "Adet / hat", "Not"])
     for it in boq:
-        ws.append([it["discipline_label"], it["kind_label"], it["label"], it["unit"], it["quantity"], it.get("count") or "",
-                   "; ".join(it.get("notes") or [])])
+        ws.append([it.get("work_group_label") or "", it.get("poz") or "", it["discipline_label"], it["kind_label"], it["label"],
+                   it["unit"], it["quantity"], it.get("count") or "", "; ".join(it.get("notes") or [])])
     _autosize(ws)
 
     # ---- Statik Metraj Özeti ----

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Api, type DrawingPatch } from '../api/client'
-import { DISCIPLINES, DRAWING_STATUS, ETYPE_LABELS, STRUCTURAL_ETYPES, type CatalogItem, type Discipline, type Drawing, type Project, type ProjectParams } from '../types'
+import { DISCIPLINES, DRAWING_STATUS, ETYPE_LABELS, HEURISTIC_DISCIPLINES, STRUCTURAL_ETYPES, type CatalogItem, type Discipline, type Drawing, type Project, type ProjectParams } from '../types'
 import PlanChecklist from '../components/PlanChecklist'
 import PlanIntake from '../components/PlanIntake'
 import SystemsPanel from '../components/SystemsPanel'
@@ -248,6 +248,23 @@ export default function ProjectDetail() {
                     <td>
                       <select value={d.discipline} disabled={busy} className="narrow" title="Değiştirilirse çizim yeniden analiz edilir"
                         onChange={(e) => patchDrawing(d, { discipline: e.target.value as Discipline })}>{disciplineOptions}</select>
+                      {HEURISTIC_DISCIPLINES.filter((x) => x !== d.discipline && ((d.disciplines ?? []).includes(x) || (d.discipline_hints?.[x] ?? 0) > 0)).length > 0 && (
+                        <div className="extra-disc">
+                          {HEURISTIC_DISCIPLINES.filter((x) => x !== d.discipline).map((x) => {
+                            const on = (d.disciplines ?? []).includes(x)
+                            const hint = d.discipline_hints?.[x] ?? 0
+                            if (!on && !hint) return null
+                            const name = DISCIPLINES[x].split(' (')[0]
+                            return (
+                              <button key={x} type="button" disabled={busy} className={`chip-btn${on ? ' on' : ''}`}
+                                title={on ? `${name} bu paftada da analiz ediliyor; kapatmak için tıklayın` : `Bu paftada ${name.toLowerCase()} katmanları da var (${hint} nesne); aynı paftada çizilmişse açın`}
+                                onClick={() => patchDrawing(d, { disciplines: on ? (d.disciplines ?? []).filter((y) => y !== x) : [...(d.disciplines ?? []), x] })}>
+                                {on ? '✓ ' : '+ '}{name}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
                     </td>
                     <td className="mono" title={d.filename}>{d.filename.split(' › ')[0]}</td>
                     <td>

@@ -17,7 +17,7 @@ from .parser.rebar_tables import kot_from_label
 from .parser.materials import merge_materials
 from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary, effective_params, electrical_items,
                            expand_systems, slug, sort_items, standard_items, structural_items)
-from .standard.catalog import Catalog
+from .standard.catalog import Catalog, parse_layer
 from .quantity.engine import ElementData, QuantityLine, QuantityParams, compute_all
 from .quantity.summary import summarize
 
@@ -77,7 +77,8 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     """Çizimi (yeniden) analiz eder; otomatik elemanları yeniler, elle eklenenleri korur."""
     result = analyze_file(drawing.stored_path, project_profile(project), detect_params(project, session),
                           unit_override=drawing.unit_override, discipline=drawing.discipline or DEFAULT_DISCIPLINE,
-                          catalog=load_catalog(), label=drawing.label or drawing.filename)
+                          catalog=load_catalog(), label=drawing.label or drawing.filename,
+                          extra_disciplines=tuple(drawing.disciplines or []))
 
     for old in session.exec(select(Element).where(Element.drawing_id == drawing.id, Element.manual == False)):  # noqa: E712
         session.delete(old)
@@ -98,6 +99,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.rooms = result.rooms or []
     drawing.poz = result.poz or {}
     drawing.unit_verdict = result.unit_verdict
+    drawing.discipline_hints = result.discipline_hints or {}
     drawing.analyzed_at = datetime.utcnow()
     session.add(drawing)
     session.commit()
@@ -168,7 +170,7 @@ def project_quantities(project: Project, session: Session) -> tuple[list[Quantit
     lines: list[QuantityLine] = []
     info: dict = {}
     for d in drawings:
-        if d.discipline in (REBAR_DISCIPLINE, MAPPED_DISCIPLINE, STANDARD_DISCIPLINE):
+        if d.discipline == REBAR_DISCIPLINE:
             continue
         elements = [e for e in _included_elements(d, session) if e.etype in STRUCTURAL_TYPES]
         if not elements:
@@ -192,6 +194,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     if summary is None:
         _, summary, _ = project_quantities(project, session)
     params = project_params(project)
+    catalog = load_catalog()
     drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
     els_by_id = {d.id: _included_elements(d, session) for d in drawings}
     # doğrama pozları: adet poz listesinden (proje toplamı), ölçü görünüş / doğrama paftasından, kapı-pencere ayrımı nottan
@@ -227,7 +230,8 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
             continue
         if d.discipline == REBAR_DISCIPLINE:
             continue
-        ksf = [ksf_entry(e) for e in elements if (e.meta or {}).get("ksf_code")]   # poz listesi gibi katalog kodlu elemanlar
+        # katalog kodlu elemanlar: poz listesi (meta.ksf_code) ve sezgisel paftadaki KSF-… katmanları (her disiplinde standart kuralla ölçülür)
+        ksf = [ksf_entry(e) for e in elements if (e.meta or {}).get("ksf_code") or parse_layer(e.layer or "", catalog)]
         if ksf:
             std.append({**entry, "elements": ksf})
         if any(TYPE_DISCIPLINE.get(e.etype) == "architectural" for e in elements):
@@ -236,7 +240,6 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
             elec.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "electrical"]})
     items = (structural_items(summary, params) + architectural_items(arch, params, schedule_poz=sched_poz)
              + electrical_items(elec, params))
-    catalog = load_catalog()
     if std:
         items += standard_items(std, params, catalog)
     items += facade_items(project, session, catalog, items, drawings, params)

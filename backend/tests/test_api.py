@@ -167,7 +167,9 @@ def test_multi_discipline_flow(client, storey_dxf, arch_dxf, elec_dxf):
     p9 = next(i for i in q["boq"]["items"] if i["key"] == "pencere:p9_100x100")
     assert p9["quantity"] == 6                          # 3 adet × 2 kat
     discs = [d["discipline"] for d in q["boq"]["by_discipline"]]
-    assert discs[:3] == ["structural", "architectural", "electrical"] and set(discs[3:]) <= {"ksf:INC", "ksf:IZO", "ksf:STA"}   # türetilmiş kalemler
+    assert {"structural", "architectural", "electrical"} <= set(discs) and set(discs) <= {"structural", "architectural", "electrical", "ksf:INC", "ksf:IZO", "ksf:STA"}   # türetilmiş kalemler
+    groups = [g["group"] for g in q["boq"]["by_group"]]
+    assert groups == [g for g in ("KABA", "INCE", "MEK", "ELK", "ALT") if g in groups] and "KABA" in groups and "ELK" in groups
 
     prices = client.get(f"/api/projects/{pid}/prices").json()
     assert {"beton:*", "duvar:*", "duvar:ytong:20", "kablo:*", "tava:200x60"} <= {x["key"] for x in prices}

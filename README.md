@@ -392,6 +392,38 @@ Plan tipleri: `mim_dograma` (poz listesi) ve `mim_prekast` eklendi; "… KAT PLA
   sayılmıştı) artık parça olarak elenir.
 - Kat yüksekliği 0 girilmiş projede duvar yüksekliği sessizce 3 m alınıyordu: keşif satırına not, proje sayfasına uyarı.
 
+## Keşif standardı: iş grupları, ÇŞB pozları ve ölçü kuralları (`standard/rules.py`)
+
+Keşif listesi Türkiye'deki yaygın düzende dört iş grubuna ayrılır: **kaba yapı (inşaat)**, **ince işler (mimari)**,
+**mekanik tesisat**, **elektrik tesisatı** (+ altyapı / peyzaj). Her kalem mümkünse bir Çevre, Şehircilik ve İklim
+Değişikliği Bakanlığı (ÇŞB) **poz numarası** taşır ve miktarı o pozun **ölçü kuralına** göre hesaplanır:
+
+| Kalem | Poz | Ölçü kuralı |
+|---|---|---|
+| Beton | 15.150.1006 (C30/37) | projedeki hacim, m³ |
+| Kalıp | 15.180.1003 (plywood) | kalıp gören yüzler; inşaat boşluğu çevre kalıbı sayılmaz |
+| Demir | 15.160.1003 (Ø8–12) / 15.160.1004 (Ø14–28) | donatı boyu × birim ağırlık, ton |
+| Gazbeton duvar | 15.225.1004 / 1007 / 1010 (10 / 15 / 20 cm) | projesi üzerinden; **0,10 m² altı boşluk düşülmez** |
+| Sıva | 15.280.1008 | sıvanan yüzeyler, **tüm boşluklar düşülür** |
+| Boya | 15.540.1509 | boyanan yüzeyler, tüm boşluklar düşülür |
+| Kablo / boru | 35.140.xxxx / 25.305.xxxx | hat boyu, m |
+
+Katalogdaki kalemin `poz` alanı doluysa (Standart sayfası) o kullanılır; sezgisel kalemlerde `rules.default_poz` eşlemesi
+denenir. Keşif yanıtı `by_group` (iş grubu bazında), `rules` (uygulanan kurallar) ve her kalemde `poz` / `work_group`
+taşır; Excel'de "İş grubu" ve "Poz" sütunları vardır. Kaynaklar: yfk.csb.gov.tr birim fiyat tarifleri, birimfiyat.net poz sayfaları.
+
+## Aynı paftada birden çok disiplin (`analyzer.analyze_drawing(extra_disciplines=…)`)
+
+Bir paftada mimari + elektrik ya da elektrik + mekanik birlikte çizilmiş olabilir. Her çizimin bir **ana disiplini** ve
+istenirse **ek disiplinleri** vardır (`Drawing.disciplines`; proje sayfasında disiplin hücresindeki "+ Elektrik" düğmesi):
+- Katmanlar sırayla ana, sonra ek disiplinlerin profiliyle sınıflanır; ilk tanıyan disiplin kazanır. Her disiplinin
+  dedektörü kendi katmanlarıyla çalışır; elemanlar tipine göre keşifte doğru iş grubuna düşer.
+- **KSF-… katmanları her disiplinde** standart kuralla ölçülür (standarda uygun çizilmiş bir kalem hangi paftada olursa
+  olsun sayılır).
+- Analiz, açılmamış disiplinlerin katman kanıtını sayar (`discipline_hints`: geometrik nesne ≥ 8) ve uyarı verir;
+  mimari paftadaki KOLON / KİRİŞ katmanları için statik açılmaz (statik planda sayılır, çift sayım olmasın).
+- Statik metraj eleman tipine göre alınır; disiplini ne olursa olsun kolon / kiriş elemanı olan her pafta girer (donatı paftası hariç).
+
 ## Büyük dosyada blok içeriği (akış) ve doğrama poz listesi
 
 - **Blok içinde plan** (bağlanmış xref, doğrama blokları, kolon detay blokları): 100 MB üstü DXF'te pafta kırpma, blok içeriğini

@@ -36,14 +36,16 @@ export default function Quantities() {
         <SystemsPanel projectId={pid} refreshKey={0} onChanged={() => setRefresh((r) => r + 1)} />
       </div>
 
-      {boq.by_discipline.map((d) => (
-        <div className="panel" key={d.discipline}>
-          <h3><span className={`badge disc-${d.discipline}`}>{d.label}</span> keşif listesi</h3>
+      {boq.by_group.map((g) => (
+        <div className="panel" key={g.group}>
+          <h3>{g.label} <span className="muted" style={{ fontWeight: 400 }}>· {g.items.length} kalem</span></h3>
           <table>
-            <thead><tr><th>Tür</th><th>Kalem</th><th className="num">Miktar</th><th>Birim</th><th className="num">Adet / hat</th><th>Not</th></tr></thead>
+            <thead><tr><th>Poz</th><th>Disiplin</th><th>Tür</th><th>Kalem</th><th className="num">Miktar</th><th>Birim</th><th className="num">Adet / hat</th><th>Not</th></tr></thead>
             <tbody>
-              {d.items.map((it) => (
+              {g.items.map((it) => (
                 <tr key={it.key} className={it.detail?.system ? 'system-row' : ''}>
+                  <td className="mono" title={it.poz_name}>{it.poz || <span className="muted">-</span>}</td>
+                  <td><span className={`badge disc-${it.discipline.split(':')[0]}`}>{it.discipline_label.split(' (')[0]}</span></td>
                   <td>{it.kind_label}{it.detail?.system ? <span className="badge none" style={{ marginLeft: 6 }}>sistem</span> : null}{it.detail?.info ? <span className="badge none" style={{ marginLeft: 6 }}>bilgi</span> : null}</td>
                   <td>{it.label}{it.detail?.system_code && !it.detail?.system ? <span className="muted hint"> ← {String(it.detail.system_code)}</span> : null}</td>
                   <td className="num"><b>{fmt(it.quantity, it.unit === 'adet' || it.unit === 'kg' ? 0 : 2)}</b></td>
@@ -54,13 +56,13 @@ export default function Quantities() {
               ))}
             </tbody>
           </table>
-          {d.discipline === 'architectural' && (
+          {g.group === 'INCE' && (
             <p className="muted">
-              Duvar m² = uzunluk × duvar yüksekliği ({wallH ? `${wallH} m` : `H − d = ${(project.storey_height - project.slab_thickness).toFixed(2)} m`}) × kat sayısı − kapı/pencere boşlukları.
-              Sıva ve boya net duvar alanı × yüz sayısı ({project.params?.plaster_sides ?? 2} / {project.params?.paint_sides ?? 2}). Parametreler proje sayfasında.
+              Duvar m² = uzunluk × duvar yüksekliği ({wallH ? `${wallH} m` : `H − d = ${(project.storey_height - project.slab_thickness).toFixed(2)} m`}) × kat sayısı − 0,10 m² ve üstü boşluklar.
+              Sıva ve boya: tüm boşluklar düşülür, × yüz sayısı ({project.params?.plaster_sides ?? 2} / {project.params?.paint_sides ?? 2}). Parametreler proje sayfasında.
             </p>
           )}
-          {d.discipline === 'electrical' && (
+          {g.group === 'ELK' && (
             <p className="muted">
               Kablo m = (hat uzunluğu + iniş payı {project.params?.cable_drop ?? 0} m) × kat sayısı × (1 + fire %{project.params?.cable_waste_pct ?? 0}).
               Tava fire %{project.params?.tray_waste_pct ?? 0}. Kesit / boyut etiketten ya da katman adından okunur; bilinmeyenler "belirsiz" grubunda toplanır.
@@ -68,6 +70,17 @@ export default function Quantities() {
           )}
         </div>
       ))}
+      {boq.items.length > 0 && (
+        <details className="section">
+          <summary>Ölçü kuralları<span className="muted">ÇŞB birim fiyat tariflerine göre; poz numarası katalogdan ya da varsayılan eşlemeden</span></summary>
+          <div className="panel">
+            <ul className="muted" style={{ margin: 0 }}>
+              {Object.values(boq.rules).map((r) => <li key={r.text}>{r.text} <span className="hint">({r.source})</span></li>)}
+            </ul>
+            <p className="muted hint" style={{ marginBottom: 0 }}>Poz numarası boş olan kalemler için Standart sayfasındaki katalogda kaleme poz girin; sezgisel kalemlerde (beton, kalıp, gazbeton duvar, sıva, boya, demir) varsayılan ÇŞB pozları kullanılır.</p>
+          </div>
+        </details>
+      )}
 
       {hasStructural && (
         <>

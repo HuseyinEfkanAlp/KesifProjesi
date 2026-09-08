@@ -32,6 +32,10 @@ class Drawing(SQLModel, table=True):
     stored_path: str
     label: str = ""                 # "Zemin Kat", "Temel" vb.
     discipline: str = "structural"  # structural | architectural | electrical | rebar | standard | mapped
+    # Aynı paftada çizilen ek sezgisel disiplinler (mimari paftada elektrik gibi); analizde ana disipline eklenir
+    disciplines: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    # Analizin bulduğu ama açılmamış disiplin kanıtı: {"electrical": 42} (katmanlardaki geometrik nesne sayısı)
+    discipline_hints: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     plan_type: str = ""             # plan seti tipi (sta_kat_kalip, elk_tava, mim_tavan ...; bkz. planset.py)
     storey_count: int = 1           # bu planın temsil ettiği kat sayısı
     storey_height: float | None = None   # bu katın yüksekliği (m); None -> projenin H değeri

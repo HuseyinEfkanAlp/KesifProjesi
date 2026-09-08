@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
-import { DISCIPLINES, ETYPE_COLORS, ETYPE_LABELS, ETYPES_BY_DISCIPLINE, SUBTYPE_LABELS, layerTypeLabels, type Catalog, type Drawing, type Element, type EType } from '../types'
+import { DISCIPLINES, ETYPE_COLORS, ETYPE_LABELS, ETYPES_BY_DISCIPLINE, SUBTYPE_LABELS, layerTypeLabels, type Catalog, type Discipline, type Drawing, type Element, type EType } from '../types'
 
 /** Tipe göre düzenlenebilir sayısal alanlar */
 const FIELDS: Record<EType, Array<'b' | 'h' | 'thickness' | 'length' | 'area'>> = {
@@ -110,7 +110,8 @@ export default function Elements() {
   const ETYPES: string[] = isStd ? Array.from(new Set(elements.map((e) => e.etype))) : ETYPES_BY_DISCIPLINE[discipline]
   const labelOf = (t: string) => (ETYPE_LABELS as Record<string, string>)[t] ?? stdLabels[t] ?? t
   const colorOf = (t: string) => (ETYPE_COLORS as Record<string, string>)[t] ?? '#555'
-  const layerTypes = layerTypeLabels(discipline)
+  const extras = (drawing.disciplines ?? []) as Discipline[]
+  const layerTypes = layerTypeLabels(discipline, extras)
   const isElec = discipline === 'electrical'
   const shown = elements.filter((e) => !filter || e.etype === filter)
   const counts = ETYPES.map((t) => [t, elements.filter((e) => e.etype === t).length] as const)
@@ -122,6 +123,7 @@ export default function Elements() {
       <div className="row between">
         <h1>
           {drawing.label} <span className={`badge disc-${discipline}`}>{DISCIPLINES[discipline]}</span>
+          {extras.map((d) => <span key={d} className={`badge disc-${d}`} style={{ marginLeft: 4 }}>+ {DISCIPLINES[d].split(' (')[0]}</span>)}
           <span className="muted" style={{ fontSize: 14 }}> ({drawing.filename}, birim: {drawing.unit})</span>
         </h1>
         <div className="row">
@@ -150,8 +152,9 @@ export default function Elements() {
               Tanınmayan kalem kodları <Link to="/standard">Standart</Link> sayfasından kataloğa eklenir.</p>
           ) : (
             <p className="muted">
-              Hangi katman hangi elemanı çiziyor? Eşlenmemiş katmanlar metraja girmez. Bu çizim <b>{DISCIPLINES[discipline]}</b> disiplininde;
-              yalnızca bu disiplinin tipleri seçilebilir (disiplin proje sayfasından değiştirilir). Değişiklik projedeki tüm çizimlere uygulanır.
+              Hangi katman hangi elemanı çiziyor? Eşlenmemiş katmanlar metraja girmez. Bu çizim <b>{DISCIPLINES[discipline]}</b> disiplininde
+              {extras.length > 0 ? <> (+ {extras.map((d) => DISCIPLINES[d].split(' (')[0]).join(', ')})</> : null}; bu disiplinlerin tipleri seçilebilir
+              (disiplin ve ek disiplinler proje sayfasından değiştirilir). <code className="layer">KSF-…</code> katmanları her zaman standart kuralla ölçülür. Değişiklik projedeki tüm çizimlere uygulanır.
             </p>
           )}
           <div style={{ maxHeight: '60vh', overflow: 'auto' }}>

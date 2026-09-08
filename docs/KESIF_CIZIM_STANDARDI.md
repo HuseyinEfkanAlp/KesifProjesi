@@ -84,6 +84,18 @@ Diğer kurallar:
 
 Yeni disiplin ve kalemler programın **Standart** sayfasından eklenir; katalog `data/catalog.json` içinde saklanır.
 
+### Aynı paftada birden çok disiplin
+
+KÇS katmanı disiplinini kendi adında taşır (`KSF-ELK-…`, `KSF-HAV-…`); bu yüzden bir paftada mimari, elektrik ve mekanik
+kalemler birlikte çizilebilir, program her katmanı kendi disiplinine ve iş grubuna yazar. Standart dışı (sezgisel) paftalarda
+ise ana disipline ek disiplin açılır (proje sayfası, "+ Elektrik").
+
+### Poz numarası ve ölçü kuralı
+
+Katalogdaki her kaleme ÇŞB birim fiyat **poz numarası** girilebilir (Standart sayfası); keşifte kalem o pozla listelenir ve
+Excel'e yazılır. Miktarlar pozların ölçü kurallarına göre hesaplanır (duvarda 0,10 m² altı boşluk düşülmez; sıva ve boyada
+tüm boşluklar düşülür; kalıpta kalıp gören yüzler; demir ton). Kurallar keşif sayfasındaki "Ölçü kuralları" bölümünde listelenir.
+
 ## 4. Kalem kataloğu
 
 Tam liste programın **Standart** sayfasında ve şablon DXF içinde (`KSF-NOT` katmanı) yer alır. Katalogda olmayan bir kalem çizilirse

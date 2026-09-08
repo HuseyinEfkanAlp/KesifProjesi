@@ -22,8 +22,8 @@ from .detectors.slabs import detect_slabs
 from .detectors.standard import detect_mapped, detect_standard, standard_layers
 from .detectors.walls import detect_walls
 from .geometry import polygon_area
-from .layer_profile import (ALL_TYPES, DEFAULT_DISCIPLINE, MAPPED_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE, LayerProfile,
-                            types_for)
+from .layer_profile import (ALL_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, MAPPED_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE,
+                            LayerProfile, types_for)
 from .rebar_tables import kot_from_label, parse_rebar_labels, parse_rebar_tables, target_from_label
 from .loader import UNIT_SCALE, Drawing, load_dxf
 from .materials import scan_materials
@@ -64,6 +64,8 @@ class AnalysisResult:
     rooms: list[dict] = field(default_factory=list)  # mahal alanı yazıları (parser/schedules.py: parse_rooms)
     poz: dict = field(default_factory=dict)          # doğrama pozları: sizes / kinds / prefixes (detectors/openings.py: poz_catalog)
     unit_verdict: str | None = None       # yazı yükseklikleri / etiketlerin desteklediği birim (yeterli kanıt yoksa None)
+    disciplines: list[str] = field(default_factory=list)      # bu paftada çalıştırılan sezgisel disiplinler (ana + ek)
+    discipline_hints: dict = field(default_factory=dict)      # çalıştırılmayan ama katmanlarında kanıt olan disiplinler -> nesne sayısı
 
     def by_type(self, etype: str) -> list[DetectedElement]:
         return [e for e in self.elements if e.etype == etype]
@@ -75,6 +77,7 @@ class AnalysisResult:
             "layers": [l.to_dict() for l in self.layers],
             "warnings": self.warnings, "suggested_unit": self.suggested_unit, "materials": self.materials,
             "poz": self.poz, "unit_verdict": self.unit_verdict,
+            "disciplines": self.disciplines, "discipline_hints": self.discipline_hints,
         }
 
 
@@ -201,6 +204,25 @@ def _electrical(drawing: Drawing, layers_by_type: dict[str, list[str]], params: 
 
 
 DISCIPLINE_RUNNERS = {"structural": _structural, "architectural": _architectural, "electrical": _electrical}
+HEURISTIC_DISCIPLINES = tuple(DISCIPLINE_RUNNERS)
+MIN_HINT_OBJECTS = 8    # başka bir disiplinin katmanlarında en az bu kadar geometrik nesne varsa "ek disiplin" önerilir
+
+
+def discipline_hints(drawing: Drawing, profile: LayerProfile, active: list[str]) -> dict[str, int]:
+    """Çalıştırılmayan sezgisel disiplinlerin katman kanıtı: disiplin -> o disiplinin tanıdığı katmanlardaki geometrik nesne sayısı.
+    Aynı paftada mimari + elektrik (ya da elektrik + mekanik) çizilmiş olabilir; kullanıcı ek disiplini açar."""
+    counts: dict[str, int] = {}
+    for e in drawing.entities:
+        if e.kind != "text":
+            counts[e.layer] = counts.get(e.layer, 0) + 1
+    out: dict[str, int] = {}
+    for d in HEURISTIC_DISCIPLINES:
+        if d in active:
+            continue
+        n = sum(c for layer, c in counts.items() if profile.classify(layer, d))
+        if n >= MIN_HINT_OBJECTS:
+            out[d] = n
+    return out
 
 
 def analyze_standard(drawing: Drawing, catalog: Catalog, params: DetectParams) -> AnalysisResult:
@@ -330,32 +352,52 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
 
 def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
                     params: DetectParams | None = None, discipline: str = DEFAULT_DISCIPLINE,
-                    catalog: Catalog | None = None, label: str = "", defer_on_unit: bool = False) -> AnalysisResult:
-    """defer_on_unit: birim yanlış görünüyorsa dedektörleri çalıştırmadan yalnız öneriyi döndür (analyze_file ilk geçişi)."""
+                    catalog: Catalog | None = None, label: str = "", defer_on_unit: bool = False,
+                    extra_disciplines: tuple[str, ...] | list[str] = ()) -> AnalysisResult:
+    """defer_on_unit: birim yanlış görünüyorsa dedektörleri çalıştırmadan yalnız öneriyi döndür (analyze_file ilk geçişi).
+    extra_disciplines: ana disipline ek olarak aynı paftada çalıştırılacak sezgisel disiplinler (mimari + elektrik gibi).
+    Her katman ilk tanıyan disipline gider (sıra: ana, sonra ekler). KSF-… katmanları her zaman standart kuralla ölçülür."""
     profile = profile or LayerProfile()
     params = params or DetectParams()
+    catalog = catalog or Catalog()
     if discipline == STANDARD_DISCIPLINE:
-        result = analyze_standard(drawing, catalog or Catalog(), params)
+        result = analyze_standard(drawing, catalog, params)
         result.materials = scan_materials(drawing)
+        result.disciplines = [STANDARD_DISCIPLINE]
         return result
     if discipline == MAPPED_DISCIPLINE:
-        return analyze_mapped(drawing, profile, catalog or Catalog(), params, defer_on_unit=defer_on_unit)
+        return analyze_mapped(drawing, profile, catalog, params, defer_on_unit=defer_on_unit)
     if discipline == REBAR_DISCIPLINE:
         result = analyze_rebar(drawing, label)
         result.materials = scan_materials(drawing)
+        result.disciplines = [REBAR_DISCIPLINE]
         return result
     discipline = discipline if discipline in DISCIPLINE_RUNNERS else DEFAULT_DISCIPLINE
+    discs = [discipline] + [d for d in extra_disciplines if d in DISCIPLINE_RUNNERS and d != discipline and d not in ()]
+    discs = list(dict.fromkeys(discs))
 
     counts = drawing.layer_counts()
-    layer_infos = [LayerInfo(name, counts.get(name, 0), profile.classify(name, discipline)) for name in drawing.layers]
-    layers_by_type: dict[str, list[str]] = {}
-    for li in layer_infos:
-        if li.etype:
-            layers_by_type.setdefault(li.etype, []).append(li.name)
+    ksf = standard_layers(drawing, catalog)
+    layer_infos: list[LayerInfo] = []
+    layers_by_disc: dict[str, dict[str, list[str]]] = {d: {} for d in discs}
+    for name in drawing.layers:
+        if name in ksf:
+            p = ksf[name]
+            lbl = (p.item.name if p.item else p.code) + (f" [{p.spec}]" if p.spec else "") + f" · {catalog.discipline_name(p.discipline)}"
+            layer_infos.append(LayerInfo(name, counts.get(name, 0), p.code.lower(), etype_label=lbl))
+            continue
+        etype = None
+        for d in discs:
+            etype = profile.classify(name, d)
+            if etype:
+                layers_by_disc[d].setdefault(etype, []).append(name)
+                break
+        layer_infos.append(LayerInfo(name, counts.get(name, 0), etype))
+    layers_by_type = layers_by_disc[discipline]
 
     result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
                             discipline=discipline, layers=layer_infos, warnings=list(drawing.warnings),
-                            materials=scan_materials(drawing))
+                            materials=scan_materials(drawing), disciplines=list(discs))
 
     if discipline == "structural":
         suggested = check_unit_against_labels(drawing, profile, params)
@@ -377,9 +419,17 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
                 f"Birim '{suggested}' olarak alındı; gerekirse çizim ayarlarından değiştirin."
             )
 
-    result.elements = DISCIPLINE_RUNNERS[discipline](drawing, layers_by_type, params, result)
-    if discipline == "architectural":
-        sched, sw = schedule_elements(drawing, catalog or Catalog())
+    result.elements = []
+    for d in discs:
+        result.elements += DISCIPLINE_RUNNERS[d](drawing, layers_by_disc[d], params, result)
+    if ksf:
+        # standarda uygun katmanlar (KSF-…) hangi disiplinde olursa olsun katalog kuralıyla ölçülür
+        std_elements, std_warns = detect_standard(drawing, catalog, params)
+        result.elements += std_elements
+        result.warnings.extend(std_warns)
+        result.warnings.append(f"KÇS katmanları okundu: {len(ksf)} katman, {len(std_elements)} kalem (katalog ölçüm kuralıyla)")
+    if "architectural" in discs:
+        sched, sw = schedule_elements(drawing, catalog)
         result.elements += sched
         result.warnings.extend(sw)
         result.rooms = room_rows(drawing)
@@ -387,27 +437,36 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
             result.warnings.append(f"Mahal alanı yazıları okundu: {len(result.rooms)} mahal, "
                                    f"{sum(r['area_m2'] for r in result.rooms):,.0f} m² (şap / kaplama mahal bazında türetilir)")
 
+    result.discipline_hints = discipline_hints(drawing, profile, discs)
+    for d, n in result.discipline_hints.items():
+        note = " (mimari paftadaki kolon / kiriş izleri statik planda sayılır; ayrıca açmayın)" if d == "structural" else ""
+        result.warnings.append(f"Bu paftada {DISCIPLINES.get(d, d)} katmanları da var ({n} nesne): aynı paftada birden çok disiplin "
+                               f"çizilmişse çizim ayarlarından ek disiplin olarak açın{note}.")
+
     unmapped = [li.name for li in layer_infos if li.etype is None and li.count > 0]
     if unmapped:
         result.warnings.append(
             "Eşlenmemiş katmanlar (eleman sayılmadı): " + ", ".join(unmapped[:15])
             + (" ..." if len(unmapped) > 15 else "")
         )
-    for etype, label in types_for(discipline).items():
-        if etype == "hole":
-            continue
-        if etype in layers_by_type and not result.by_type(etype):
-            result.warnings.append(f"{label} katmanı var ama eleman tespit edilemedi: {', '.join(layers_by_type[etype])}")
+    for d in discs:
+        for etype, lbl in types_for(d).items():
+            if etype == "hole":
+                continue
+            if etype in layers_by_disc[d] and not result.by_type(etype):
+                result.warnings.append(f"{lbl} katmanı var ama eleman tespit edilemedi: {', '.join(layers_by_disc[d][etype])}")
     return result
 
 
 def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectParams | None = None,
                  unit_override: str | None = None, auto_unit: bool = True,
-                 discipline: str = DEFAULT_DISCIPLINE, catalog: Catalog | None = None, label: str = "") -> AnalysisResult:
+                 discipline: str = DEFAULT_DISCIPLINE, catalog: Catalog | None = None, label: str = "",
+                 extra_disciplines: tuple[str, ...] | list[str] = ()) -> AnalysisResult:
     """Dosyayı analiz eder; etiketler birimi yalanlıyorsa (ve kullanıcı birim seçmediyse) doğru birimle yeniden okur."""
     drawing = load_dxf(path, unit_override=unit_override)
     defer = bool(auto_unit and not unit_override)
-    result = analyze_drawing(drawing, profile, params, discipline, catalog, label, defer_on_unit=defer)
+    result = analyze_drawing(drawing, profile, params, discipline, catalog, label, defer_on_unit=defer,
+                             extra_disciplines=extra_disciplines)
     if unit_override and result.suggested_unit and result.suggested_unit != drawing.unit:
         # kullanıcı (ya da pafta oylaması) birimi seçti: yazı kanıtı aksini söylese de yeniden okunmaz, yalnız not düşülür
         result.warnings = [w for w in result.warnings if "yazı yükseklikleri" not in w and "kolon etiketleri" not in w]
@@ -416,7 +475,7 @@ def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectP
     if auto_unit and not unit_override and result.suggested_unit and result.suggested_unit != drawing.unit:
         drawing2 = load_dxf(path, unit_override=result.suggested_unit)
         warn = [w for w in result.warnings if "kolon etiketleri" in w or "yazı yükseklikleri" in w]
-        result = analyze_drawing(drawing2, profile, params, discipline, catalog, label)
+        result = analyze_drawing(drawing2, profile, params, discipline, catalog, label, extra_disciplines=extra_disciplines)
         result.unit_detected = False
         result.unit_verdict = drawing2.unit
         result.warnings = warn + [w for w in result.warnings if "kolon etiketleri" not in w and "yazı yükseklikleri" not in w]

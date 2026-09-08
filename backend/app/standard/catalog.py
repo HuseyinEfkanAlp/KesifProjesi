@@ -65,6 +65,7 @@ class CatalogItem:
     spec_label: str = ""      # ÖZELLİK alanının anlamı ("en x yükseklik (mm)")
     example: str = ""         # örnek katman adı
     custom: bool = False      # kullanıcı ekledi
+    poz: str = ""             # ÇŞB birim fiyat poz numarası (ör. 15.225.1010); boşsa rules.default_poz denenir
     # Katmanlı sistem: bu kalem ölçüldüğünde (ör. çatı alanı) ayrı iş kalemi olarak yazılacak bileşenler.
     # [{"code": "OSB", "factor": 1.0, "spec": "11"}]: miktar = sistem miktarı × factor; spec varsayılan özellik.
     components: list[dict] = field(default_factory=list)
@@ -345,7 +346,7 @@ class Catalog:
     def upsert_item(self, data: dict) -> CatalogItem:
         it = CatalogItem(code=data["code"], discipline=data["discipline"], name=data["name"], measure=data["measure"],
                          unit=data.get("unit") or "", spec_label=data.get("spec_label") or "", example=data.get("example") or "",
-                         custom=True, components=data.get("components") or [])
+                         custom=True, components=data.get("components") or [], poz=(data.get("poz") or "").strip())
         if it.discipline not in self.disciplines:
             raise ValueError(f"Bilinmeyen disiplin kodu: {it.discipline}")
         for c in it.components:
@@ -385,7 +386,7 @@ class Catalog:
         for c in data.get("removed") or []:
             cat.items.pop(c, None)
         for d in data.get("items") or []:
-            d = {k: v for k, v in d.items() if k in {"code", "discipline", "name", "measure", "unit", "spec_label", "example", "custom", "components"}}
+            d = {k: v for k, v in d.items() if k in {"code", "discipline", "name", "measure", "unit", "spec_label", "example", "custom", "components", "poz"}}
             it = CatalogItem(**d)
             cat.items[it.code] = it
         return cat

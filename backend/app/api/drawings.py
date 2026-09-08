@@ -15,6 +15,7 @@ from ..db import UPLOAD_DIR, get_session
 from ..export.svg import render_svg
 from ..models import Drawing, Element, Project
 from ..parser.layer_profile import ALL_ELEMENT_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, types_for  # noqa: F401
+from ..parser.analyzer import HEURISTIC_DISCIPLINES
 from ..parser.dwg import convert_dwg_to_dxf, dwg_supported
 from ..parser.loader import UNIT_SCALE, load_dxf
 from ..parser.sheets import BIG_FILE_BYTES, Sheet, SheetScan, crop_sheets, scan_sheets
@@ -384,6 +385,7 @@ class DrawingPatch(BaseModel):
     storey_height: float | None = None   # 0 / None -> proje değeri kullanılır
     unit_override: str | None = None   # "" -> otomatik
     discipline: str | None = None      # değişirse yeniden analiz
+    disciplines: list[str] | None = None   # ek sezgisel disiplinler (aynı paftada mimari + elektrik); değişirse yeniden analiz
     plan_type: str | None = None       # plan seti tipi ("" -> tanımsız)
 
 
@@ -406,6 +408,17 @@ def update_drawing(drawing_id: int, body: DrawingPatch, session: Session = Depen
         if disc != d.discipline:
             reanalyze = True
             d.discipline = disc
+    if "disciplines" in data:
+        extra = []
+        for x in data.pop("disciplines") or []:
+            x = _check_discipline(x)
+            if x not in HEURISTIC_DISCIPLINES:
+                raise HTTPException(400, f"Ek disiplin yalnız sezgisel disiplinlerden olabilir: {', '.join(HEURISTIC_DISCIPLINES)}")
+            if x != d.discipline and x not in extra:
+                extra.append(x)
+        if extra != list(d.disciplines or []):
+            reanalyze = True
+            d.disciplines = extra
     if "plan_type" in data:
         d.plan_type = _check_plan_type(data.pop("plan_type"))
     for k, v in data.items():

@@ -29,6 +29,8 @@ export interface SheetPick {
 }
 
 export interface DrawingPatch {
+  /** Ek sezgisel disiplinler (aynı paftada mimari + elektrik) */
+  disciplines?: Discipline[]
   label?: string
   storey_count?: number
   storey_height?: number | null

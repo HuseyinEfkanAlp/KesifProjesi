@@ -19,6 +19,7 @@ from typing import Any
 from ..parser.labels_ext import FIXTURE_CATEGORIES, WALL_MATERIALS
 from ..parser.layer_profile import DISCIPLINES, ELEMENT_TYPES
 from ..standard.catalog import Catalog, parse_layer, spec_numbers
+from ..standard.rules import RULES, WORK_GROUPS, WORK_GROUP_ORDER, deductible_opening, default_poz, work_group_of
 
 # tür -> (görünen ad, birim, disiplin)
 KIND_META: dict[str, tuple[str, str, str]] = {
@@ -102,17 +103,28 @@ class BoqItem:
     count: float = 0.0                     # adet (eleman/hat sayısı) bilgi amaçlı
     notes: list[str] = field(default_factory=list)
     detail: dict[str, Any] = field(default_factory=dict)
+    poz: str = ""                          # ÇŞB poz numarası (katalogdan ya da varsayılan eşlemeden)
+    poz_name: str = ""
+    work_group: str = ""                   # KABA / INCE / MEK / ELK / ALT
 
     def __post_init__(self):
         if not self.kind_label:
             self.kind_label = KIND_META.get(self.kind, (self.kind,))[0]
         if not self.discipline_label:
             self.discipline_label = DISCIPLINES.get(self.discipline, self.discipline)
+        if not self.work_group:
+            self.work_group = work_group_of(self.discipline)
+        if not self.poz:
+            dp = default_poz(self.kind, self.group)
+            if dp:
+                self.poz, self.poz_name = dp
 
     def to_dict(self) -> dict:
         return {"key": self.key, "kind": self.kind, "kind_label": self.kind_label, "group": self.group,
                 "label": self.label, "unit": self.unit, "quantity": round(self.quantity, 3), "count": self.count,
                 "discipline": self.discipline, "discipline_label": self.discipline_label,
+                "work_group": self.work_group, "work_group_label": WORK_GROUPS.get(self.work_group, self.work_group),
+                "poz": self.poz, "poz_name": self.poz_name,
                 "notes": self.notes, "detail": self.detail}
 
 
@@ -121,8 +133,9 @@ class _Acc:
         self.items: dict[str, BoqItem] = {}
 
     def add(self, kind: str, group: str, label: str, qty: float, count: float = 0.0, note: str | None = None,
-            meta: tuple[str, str, str, str] | None = None, **detail) -> BoqItem:
-        """meta: (tür adı, birim, disiplin kodu, disiplin adı) — KIND_META dışındaki (katalog) kalemler için."""
+            meta: tuple[str, str, str, str] | None = None, poz: str = "", **detail) -> BoqItem:
+        """meta: (tür adı, birim, disiplin kodu, disiplin adı) — KIND_META dışındaki (katalog) kalemler için.
+        poz: katalogdan gelen ÇŞB poz numarası (boşsa varsayılan eşleme)."""
         key = f"{kind}:{group}"
         it = self.items.get(key)
         if it is None:
@@ -132,7 +145,7 @@ class _Acc:
                 kname, unit, disc = KIND_META[kind]
                 dlabel = DISCIPLINES.get(disc, disc)
             it = BoqItem(key=key, kind=kind, group=group, label=label, unit=unit, quantity=0.0, discipline=disc,
-                         kind_label=kname, discipline_label=dlabel)
+                         kind_label=kname, discipline_label=dlabel, poz=poz)
             self.items[key] = it
         it.quantity += qty
         it.count += count
@@ -153,9 +166,11 @@ def structural_items(summary: dict, params: dict[str, Any] | None = None) -> lis
     acc = _Acc()
     for g in summary.get("groups", []):
         if g.get("concrete_m3", 0) > 0:
-            acc.add("beton", g["key"], f"Beton - {g['label']}", g["concrete_m3"], count=g.get("element_count", 0))
+            acc.add("beton", g["key"], f"Beton - {g['label']}", g["concrete_m3"], count=g.get("element_count", 0),
+                    note=RULES["concrete"].text)
         if g.get("formwork_m2", 0) > 0:
-            acc.add("kalip", g["key"], f"Kalıp - {g['label']}", g["formwork_m2"], count=g.get("element_count", 0))
+            acc.add("kalip", g["key"], f"Kalıp - {g['label']}", g["formwork_m2"], count=g.get("element_count", 0),
+                    note=RULES["formwork"].text)
         if g.get("rebar_kg", 0) > 0 and g.get("rebar_source", "oran") == "oran":
             acc.add("demir", g["key"], f"Demir - {g['label']} (oranla)", g["rebar_kg"], count=g.get("element_count", 0),
                     note="Beton × kg/m³ oranı; donatı paftası yüklenince tablodan alınır")
@@ -221,7 +236,9 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
             mat_label = WALL_MATERIALS.get(mat, (mat.capitalize(),))[0] if mat != "duvar" else "Duvar (malzeme belirsiz)"
             wall_groups[key] = wall_groups.get(key, 0.0) + length * h * (_g(e, "count") or 1)
             wall_labels[key] = f"{mat_label} {_fmt_cm(b)} cm"
-        opening_area = 0.0
+        opening_area = 0.0        # duvardan düşülen boşluk (0,10 m² ve üstü; ÇŞB 15.225)
+        opening_all = 0.0         # sıva / boyadan düşülen boşluk (tümü; ÇŞB 15.280 / 15.540)
+        small_openings = 0
         for e in elements:
             et = _g(e, "etype")
             if et not in ("door", "window"):
@@ -229,7 +246,11 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
             b, h = _g(e, "b") or 0.0, _g(e, "h") or 0.0
             n = _g(e, "count") or 1
             area = b * h * n
-            opening_area += area
+            opening_all += area
+            if deductible_opening(b * h):
+                opening_area += area
+            else:
+                small_openings += n
             if (_g(e, "meta") or {}).get("poz") in schedule_poz:
                 continue
             name = _g(e, "name") or f"{_fmt_cm(b)}x{_fmt_cm(h)}"
@@ -241,22 +262,31 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
                 acc.add("cam", "*", "Cam (pencere alanı)", area * mult, count=n * mult,
                         note="Pencere genişlik × yükseklik; doğrama payı düşülmedi")
         gross = sum(wall_groups.values())
-        # boşluklar duvar gruplarından alanlarıyla orantılı düşülür
+        # boşluklar duvar gruplarından alanlarıyla orantılı düşülür (0,10 m² altı boşluk düşülmez: ÇŞB 15.225)
         net_total = 0.0
         for key, area in wall_groups.items():
             share = opening_area * (area / gross) if gross > 0 else 0.0
             net = max(area - share, 0.0) * mult
             net_total += net
-            note = f"{d.get('label', '')}: brüt {area*mult:.1f} m², boşluk −{share*mult:.1f} m²" if share > 0 else None
-            it = acc.add("duvar", key, wall_labels[key], net, note=note, gross_m2=area * mult, openings_m2=share * mult)
+            it = acc.add("duvar", key, wall_labels[key], net, gross_m2=area * mult, openings_m2=share * mult)
+            # pafta bazlı döküm nota değil ayrıntıya yazılır (not sütunu kural ve uyarı için)
+            it.detail.setdefault("by_drawing", []).append(
+                {"drawing": d.get("label", ""), "gross_m2": round(area * mult, 2), "openings_m2": round(share * mult, 2), "net_m2": round(net, 2)})
             if h_note and h_note not in it.notes:
                 it.notes.append(h_note)
-        if net_total > 0:
+            rule = RULES["wall_opening"].text
+            if rule not in it.notes:
+                it.notes.append(rule)
+            if small_openings:
+                it.detail["small_openings"] = it.detail.get("small_openings", 0) + small_openings
+        if gross > 0:
+            # sıva ve boya: tüm boşluklar düşülür (küçükler dahil), yüz sayısı ile çarpılır
+            finish_net = max(gross - opening_all, 0.0) * mult
             ps, bs = float(params.get("plaster_sides") or 0), float(params.get("paint_sides") or 0)
-            if ps > 0:
-                acc.add("siva", "*", f"Sıva ({ps:g} yüz)", net_total * ps, note="Net duvar alanı × yüz sayısı")
-            if bs > 0:
-                acc.add("boya", "*", f"Boya ({bs:g} yüz)", net_total * bs, note="Net duvar alanı × yüz sayısı")
+            if ps > 0 and finish_net > 0:
+                acc.add("siva", "*", f"Sıva ({ps:g} yüz)", finish_net * ps, note=RULES["plaster_openings"].text + "; × yüz sayısı")
+            if bs > 0 and finish_net > 0:
+                acc.add("boya", "*", f"Boya ({bs:g} yüz)", finish_net * bs, note=RULES["paint_openings"].text + "; × yüz sayısı")
     return list(acc.items.values())
 
 
@@ -362,7 +392,7 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
                 okind = meta.get("opening_kind", "window")
                 note = f"{_fmt_cm(b)}×{_fmt_cm(h)} cm ({'kapı' if okind == 'door' else 'pencere / vitrin'}); ölçü görünüş / doğrama paftasından"
             acc.add(kind, group, label, qty * mult, count=n * mult, note=note,
-                    meta=(kname, unit, disc_key, catalog.discipline_name(p.discipline)))
+                    meta=(kname, unit, disc_key, catalog.discipline_name(p.discipline)), poz=(item.poz if item else ""))
             if kind == "dograma" and b and h and meta.get("opening_kind", "window") == "window":
                 acc.add("cam", "*", "Cam (doğrama poz listesi)", b * h * n * mult, count=n * mult,
                         note="Poz adedi × doğrama ölçüsü (genişlik × yükseklik); kapı pozları hariç, doğrama payı düşülmedi")
@@ -405,25 +435,34 @@ def expand_systems(items: list[BoqItem], systems: list[dict], catalog: Catalog) 
             src = {"project": "projede yazıyor", "manual": "elle eklendi", "default": "sistem varsayılanı"}.get(comp.get("source"), "")
             acc.add(comp["code"].lower(), group, f"{name}" + (f" {spec}" if spec else ""), it.quantity * comp["factor"],
                     count=0.0, note=f"{sys['name']} bileşeni × {comp['factor']:g}" + (f" ({src})" if src else ""),
-                    meta=(name, unit, f"ksf:{disc}", catalog.discipline_name(disc)), system_code=sys["code"])
+                    meta=(name, unit, f"ksf:{disc}", catalog.discipline_name(disc)), poz=(citem.poz if citem else ""),
+                    system_code=sys["code"])
     return out + list(acc.items.values())
 
 
 def sort_items(items: list[BoqItem]) -> list[BoqItem]:
     def k(i: BoqItem):
-        return (KIND_ORDER.index(i.kind) if i.kind in KIND_META else 100, i.discipline, i.kind_label, i.group != "*", i.label)
+        wg = WORK_GROUP_ORDER.index(i.work_group) if i.work_group in WORK_GROUPS else 99
+        return (wg, KIND_ORDER.index(i.kind) if i.kind in KIND_META else 100, i.discipline, i.kind_label, i.group != "*", i.label)
     return sorted(items, key=k)
 
 
 def boq_summary(items: list[BoqItem]) -> dict:
     by_disc: dict[str, tuple[str, list[dict]]] = {}
+    by_group: dict[str, list[dict]] = {}
     for it in sort_items(items):
-        by_disc.setdefault(it.discipline, (it.discipline_label, []))[1].append(it.to_dict())
+        d = it.to_dict()
+        by_disc.setdefault(it.discipline, (it.discipline_label, []))[1].append(d)
+        by_group.setdefault(it.work_group, []).append(d)
     kinds = {k: {"label": v[0], "unit": v[1], "discipline": v[2]} for k, v in KIND_META.items()}
     for it in items:
         kinds.setdefault(it.kind, {"label": it.kind_label, "unit": it.unit, "discipline": it.discipline})
     return {
         "items": [it.to_dict() for it in sort_items(items)],
         "by_discipline": [{"discipline": d, "label": lbl, "items": its} for d, (lbl, its) in by_disc.items()],
+        "by_group": [{"group": g, "label": WORK_GROUPS.get(g, g), "items": by_group[g]}
+                     for g in WORK_GROUP_ORDER + [g for g in by_group if g not in WORK_GROUPS] if g in by_group],
+        "work_groups": WORK_GROUPS,
+        "rules": {k: {"text": r.text, "source": r.source} for k, r in RULES.items()},
         "kinds": kinds,
     }
