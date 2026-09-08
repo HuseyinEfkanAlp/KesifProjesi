@@ -130,9 +130,9 @@ RECIPES_BY_KIND: dict[str, list[dict]] = {
     "kablo": [_r("KABLO_CEKME", 0.05)],
     "boru": [_r("BORU_MONTAJ_ELK", 0.1)],
     "armatur": [_r("ARMATUR_MONTAJ", 0.5), _r("BUAT", 1.0)],
-    "pencere": [{"code": "LENTO", "factor": 1.0, "spec": "", "times": ""}, {"code": "DOGRAMA_MONTAJ", "factor": 1.0, "spec": "", "times": ""},
-                {"code": "MONTAJ_KOPUGU", "factor": 1.0, "spec": "", "times": ""}],
-    "kapi": [{"code": "LENTO", "factor": 1.0, "spec": "", "times": ""}, {"code": "DOGRAMA_MONTAJ", "factor": 1.5, "spec": "", "times": ""},
-             {"code": "MONTAJ_KOPUGU", "factor": 1.0, "spec": "", "times": ""}],
+    "pencere": [_r("LENTO"), _r("DOGRAMA_MONTAJ", 1.0), _r("MONTAJ_KOPUGU"), _r("KORKASA"), _r("KORKASA_MONTAJ", 0.5), _r("DUBEL_VIDA", 8.0),
+                _r("CAM_FITIL", 1.0, "", "PER"), _r("SILIKON", 1.0, "", "PER"), _r("MASTIK", 1.0, "", "PER"), _r("DENIZLIK", 1.0, "", "WID")],
+    "kapi": [_r("LENTO"), _r("DOGRAMA_MONTAJ", 1.5), _r("MONTAJ_KOPUGU"), _r("KAPI_KASASI"), _r("PERVAZ", 1.0, "", "PER"), _r("MENTESE", 3.0),
+             _r("KILIT"), _r("KAPI_KOLU"), _r("STOPER"), _r("ESIK", 1.0, "", "WID"), _r("DUBEL_VIDA", 6.0), _r("SILIKON", 1.0, "", "PER")],
 }
 RECIPE_MAX_DEPTH = 4

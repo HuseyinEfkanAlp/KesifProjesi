@@ -79,3 +79,40 @@ def test_catalog_recipe_text_format():
     assert it.recipe[2] == {"code": "KALIP_ISKELESI", "factor": 1.0, "spec": "", "times": "H"}
     with pytest.raises(ValueError):
         cat.upsert_item({"code": "X", "discipline": "STA", "name": "x", "measure": "area", "recipe": "YOK_BOYLE_KALEM×1"})
+
+
+def test_openings_recipe_uses_perimeter_and_width():
+    """Pencere: körkasa adet, fitil / silikon / mastik çevre, denizlik genişlik; kapı: kasa, pervaz çevre, menteşe 3, kilit, kol, eşik."""
+    cat = Catalog()
+    walls = [{"etype": "wall", "b": 0.2, "length": 10.0, "subtype": "ytong", "count": 1}]
+    win = {"etype": "window", "b": 1.2, "h": 1.4, "count": 3, "name": "P1"}
+    door = {"etype": "door", "b": 0.9, "h": 2.1, "count": 2, "name": "K1"}
+    arch = architectural_items([{"label": "Z", "storey_count": 1, "storey_height": 3.0, "slab_thickness": 0.0, "elements": walls + [win, door]}], {})
+    k = _keys(expand_recipes(arch, cat, storey_height=3.0))
+    assert k["korkasa:*"].quantity == pytest.approx(3) and k["korkasa_montaj:*"].quantity == pytest.approx(1.5)
+    assert k["cam_fitil:*"].quantity == pytest.approx(3 * 2 * (1.2 + 1.4))
+    assert k["mastik:*"].quantity == pytest.approx(3 * 5.2) and k["denizlik:*"].quantity == pytest.approx(3 * 1.2)
+    assert k["silikon:*"].quantity == pytest.approx(3 * 5.2 + 2 * 2 * (0.9 + 2.1))        # pencere + kapı derzi
+    assert k["kapi_kasasi:*"].quantity == pytest.approx(2) and k["mentese:*"].quantity == pytest.approx(6)
+    assert k["pervaz:*"].quantity == pytest.approx(2 * 6.0) and k["esik:*"].quantity == pytest.approx(2 * 0.9)
+    assert k["kilit:*"].quantity == pytest.approx(2) and k["kapi_kolu:*"].quantity == pytest.approx(2) and k["stoper:*"].quantity == pytest.approx(2)
+    assert k["dubel_vida:*"].quantity == pytest.approx(3 * 8 + 2 * 6)
+
+
+def test_dograma_recipe_by_opening_kind():
+    """Poz listesi: pencere pozuna körkasa + cam izolasyonu, kapı pozuna kasa + aksesuar; ölçüsüz pozda çevre kalemleri yazılmaz."""
+    cat = Catalog()
+    dog = [{"etype": "dograma", "subtype": "EMP1", "name": "EMP1", "layer": "(poz listesi)", "count": 10, "length": 0, "area": 0,
+            "b": 1.4, "h": 1.9, "meta": {"ksf_code": "DOGRAMA", "measure": "count", "spec": "EMP1", "opening_kind": "window"}},
+           {"etype": "dograma", "subtype": "EMP3", "name": "EMP3", "layer": "(poz listesi)", "count": 4, "length": 0, "area": 0,
+            "b": 1.4, "h": 2.4, "meta": {"ksf_code": "DOGRAMA", "measure": "count", "spec": "EMP3", "opening_kind": "door"}},
+           {"etype": "dograma", "subtype": "EMP8", "name": "EMP8", "layer": "(poz listesi)", "count": 5, "length": 0, "area": 0,
+            "b": None, "h": None, "meta": {"ksf_code": "DOGRAMA", "measure": "count", "spec": "EMP8", "opening_kind": "window"}}]
+    std = standard_items([{"label": "D", "storey_count": 1, "elements": dog}], {}, cat)
+    k = _keys(expand_recipes(std, cat, storey_height=3.0))
+    assert k["korkasa:*"].quantity == pytest.approx(15)                  # EMP1 10 + EMP8 5 (ölçüsüz olsa da adet)
+    assert k["cam_fitil:*"].quantity == pytest.approx(10 * 2 * (1.4 + 1.9))   # yalnız ölçülü pencere pozu
+    assert k["kapi_kasasi:*"].quantity == pytest.approx(4) and k["mentese:*"].quantity == pytest.approx(12)
+    assert k["pervaz:*"].quantity == pytest.approx(4 * 2 * (1.4 + 2.4)) and k["esik:*"].quantity == pytest.approx(4 * 1.4)
+    assert "kilit:*" in k and k["kilit:*"].quantity == pytest.approx(4)
+    assert k["cam:*"].quantity == pytest.approx(10 * 1.4 * 1.9)

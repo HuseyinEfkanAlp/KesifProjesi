@@ -48,19 +48,30 @@ def expand_recipes(items: list[BoqItem], catalog: Catalog, storey_height: float 
             if not cit:
                 warnings.append(f"{parent.label}: reçetedeki {code} katalogda yok")
                 continue
+            when = str(comp.get("when") or "")
+            if when and parent.detail.get("opening_kind", "window") != when:
+                continue   # yalnız pencere (ya da yalnız kapı) pozlarına uygulanan bileşen
             factor = float(comp.get("factor") or 1.0)
-            times_h = str(comp.get("times") or "").upper() == "H"
+            times = str(comp.get("times") or "").upper()
+            times_h = times == "H"
+            base = parent.quantity
             if times_h:
                 if H <= 0:
                     warnings.append(f"{parent.label} → {cit.name}: kat yüksekliği girilmedi, miktar hesaplanamadı")
                     continue
                 factor *= H
+            elif times in ("PER", "WID", "AREA"):
+                key_d = {"PER": "perimeter_m", "WID": "width_m", "AREA": "area_m2"}[times]
+                base = float(parent.detail.get(key_d) or 0.0)
+                if base <= 0:
+                    continue   # boşluk ölçüsü bilinmiyor (poz ölçüsü okunmadı): çevre / genişlik kalemi yazılmaz
             spec = str(comp.get("spec") or "").strip()
             group = slug(spec) if spec else "*"
-            qty = parent.quantity * factor
+            qty = base * factor
             key = f"{kind}:{group}"
             first = key not in acc.items
-            note = (f"Reçete varsayılanı: {parent.kind_label} × {float(comp.get('factor') or 1.0):g}" + (" × H" if times_h else "")
+            times_txt = {"H": " × H", "PER": " × boşluk çevresi", "WID": " × boşluk genişliği", "AREA": " × boşluk alanı"}.get(times, "")
+            note = (f"Reçete varsayılanı: {parent.kind_label} × {float(comp.get('factor') or 1.0):g}{times_txt}"
                     + "; çarpan katalogdan düzenlenir") if first else None
             child = acc.add(kind, group, cit.name + (f" {spec}" if spec else ""), qty, note=note,
                             meta=(cit.name, cit.unit, f"ksf:{cit.discipline}", catalog.discipline_name(cit.discipline)),

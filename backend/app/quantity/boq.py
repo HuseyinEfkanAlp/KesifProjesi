@@ -257,7 +257,7 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
             group = slug(f"{name}_{_fmt_cm(b)}x{_fmt_cm(h)}")
             kind = "kapi" if et == "door" else "pencere"
             acc.add(kind, group, f"{KIND_META[kind][0]} {name} ({_fmt_cm(b)}×{_fmt_cm(h)} cm)", n * mult, count=n * mult,
-                    width_cm=0, area_m2=area * mult)
+                    width_cm=0, area_m2=area * mult, perimeter_m=2 * (b + h) * n * mult, width_m=b * n * mult)
             if et == "window":
                 acc.add("cam", "*", "Cam (pencere alanı)", area * mult, count=n * mult,
                         note="Pencere genişlik × yükseklik; doğrama payı düşülmedi")
@@ -388,11 +388,20 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
             group = slug(spec) if spec else "*"
             label = f"{kname}" + (f" {spec}" if spec else "")
             b, h = _g(e, "b"), _g(e, "h")
-            if kind == "dograma" and b and h:
-                okind = meta.get("opening_kind", "window")
-                note = f"{_fmt_cm(b)}×{_fmt_cm(h)} cm ({'kapı' if okind == 'door' else 'pencere / vitrin'}); ölçü görünüş / doğrama paftasından"
+            extra: dict[str, Any] = {}
+            if kind in ("dograma", "kapi", "pencere"):
+                okind = meta.get("opening_kind") or ("door" if kind == "kapi" else "window")
+                extra["opening_kind"] = okind
+                if not (b and h):
+                    dims = [x for x in nums if 30 <= x <= 600]
+                    if len(dims) >= 2:
+                        b, h = dims[-2] / 100.0, dims[-1] / 100.0
+                if b and h:
+                    extra.update(area_m2=b * h * n * mult, perimeter_m=2 * (b + h) * n * mult, width_m=b * n * mult)
+                    if kind == "dograma":
+                        note = f"{_fmt_cm(b)}×{_fmt_cm(h)} cm ({'kapı' if okind == 'door' else 'pencere / vitrin'}); ölçü görünüş / doğrama paftasından"
             acc.add(kind, group, label, qty * mult, count=n * mult, note=note,
-                    meta=(kname, unit, disc_key, catalog.discipline_name(p.discipline)), poz=(item.poz if item else ""))
+                    meta=(kname, unit, disc_key, catalog.discipline_name(p.discipline)), poz=(item.poz if item else ""), **extra)
             if kind == "dograma" and b and h and meta.get("opening_kind", "window") == "window":
                 acc.add("cam", "*", "Cam (doğrama poz listesi)", b * h * n * mult, count=n * mult,
                         note="Poz adedi × doğrama ölçüsü (genişlik × yükseklik); kapı pozları hariç, doğrama payı düşülmedi")

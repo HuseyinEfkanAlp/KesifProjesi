@@ -27,6 +27,11 @@ import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+# Reçete çarpanının ayrıca çarpıldığı büyüklük: H kat yüksekliği; PER / WID / AREA boşluğun (kapı, pencere, doğrama)
+# toplam çevresi (m) / genişliği (m) / alanı (m²) — adet yerine bunlar esas alınır (fitil, pervaz, denizlik, cam).
+TIMES: dict[str, str] = {"H": "× kat yüksekliği", "PER": "× boşluk çevresi (adet yerine)", "WID": "× boşluk genişliği (adet yerine)",
+                         "AREA": "× boşluk alanı (adet yerine)"}
+
 MEASURES: dict[str, tuple[str, str]] = {
     "count": ("Adet (blok sayımı)", "adet"),
     "length": ("Uzunluk (çizgi)", "m"),
@@ -114,11 +119,11 @@ def normalize_components(comps) -> list[dict]:
             part = part.strip()
             if not part:
                 continue
-            m = re.match(r"^([^×x*:]+?)\s*(?:[×x*]\s*([0-9.,]+)(H)?)?\s*(?::\s*(.+))?$", part)
+            m = re.match(r"^([^×x*:]+?)\s*(?:[×x*]\s*([0-9.,]+)([HPWA])?)?\s*(?::\s*(.+))?$", part)
             if not m:
                 continue
             parsed.append({"code": m.group(1), "factor": m.group(2) or 1, "spec": (m.group(4) or "").strip(),
-                           "times": "H" if m.group(3) else ""})
+                           "times": {"H": "H", "P": "PER", "W": "WID", "A": "AREA"}.get(m.group(3) or "", "")})
         comps = parsed
     out: list[dict] = []
     seen: set[str] = set()
@@ -136,8 +141,12 @@ def normalize_components(comps) -> list[dict]:
             continue
         seen.add(code)
         row = {"code": code, "factor": factor, "spec": str(c.get("spec") or "").strip()}
-        if str(c.get("times") or "").upper() == "H":
-            row["times"] = "H"
+        times = str(c.get("times") or "").upper()
+        if times in TIMES:
+            row["times"] = times
+        when = str(c.get("when") or "").lower()
+        if when in ("window", "door"):
+            row["when"] = when
         out.append(row)
     return out
 
@@ -154,8 +163,8 @@ def _i(code, disc, name, measure, spec_label="", example="", components=None, un
                        components=components or [], recipe=recipe or [], poz=poz)
 
 
-def _c(code, factor=1.0, spec="", times=""):
-    return {"code": code, "factor": factor, "spec": spec, "times": times}
+def _c(code, factor=1.0, spec="", times="", when=""):
+    return {"code": code, "factor": factor, "spec": spec, "times": times, "when": when}
 
 
 DEFAULT_ITEMS: list[CatalogItem] = [
@@ -194,6 +203,20 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("PENCERE", "MIM", "Pencere", "count", "tip / ölçü (120x140)", "KSF-MIM-PENCERE-P1_120x140",
        recipe=[_c("LENTO", 1.0), _c("DOGRAMA_MONTAJ", 1.0), _c("MONTAJ_KOPUGU", 1.0)]),
     _i("LENTO", "MIM", "Lento (kapı / pencere üstü)", "count", "tip (PREFABRIK / YERINDE)", "KSF-MIM-LENTO"),
+    # doğrama alt işleri: körkasa, cam takma / izolasyon, kapı aksesuarları
+    _i("KORKASA", "MIM", "Körkasa (galvaniz / ahşap)", "count", "tip", "KSF-MIM-KORKASA"),
+    _i("KORKASA_MONTAJ", "MIM", "Körkasa montaj işçiliği", "count", "", "KSF-MIM-KORKASA_MONTAJ", unit="saat"),
+    _i("DUBEL_VIDA", "MIM", "Dübel + vida (doğrama sabitleme)", "count", "", "KSF-MIM-DUBEL_VIDA"),
+    _i("CAM_FITIL", "MIM", "Cam fitili / EPDM conta", "length", "", "KSF-MIM-CAM_FITIL"),
+    _i("SILIKON", "MIM", "Silikon (cam / kasa derzi)", "length", "", "KSF-MIM-SILIKON"),
+    _i("MASTIK", "MIM", "Dış mastik (kasa - duvar derzi)", "length", "", "KSF-MIM-MASTIK"),
+    _i("KAPI_KASASI", "MIM", "Kapı kasası", "count", "tip", "KSF-MIM-KAPI_KASASI"),
+    _i("PERVAZ", "MIM", "Pervaz", "length", "tip", "KSF-MIM-PERVAZ"),
+    _i("MENTESE", "MIM", "Menteşe", "count", "", "KSF-MIM-MENTESE"),
+    _i("KILIT", "MIM", "Kilit + silindir", "count", "tip", "KSF-MIM-KILIT"),
+    _i("KAPI_KOLU", "MIM", "Kapı kolu", "count", "tip", "KSF-MIM-KAPI_KOLU"),
+    _i("STOPER", "MIM", "Kapı stoperi", "count", "", "KSF-MIM-STOPER"),
+    _i("ESIK", "MIM", "Eşik", "length", "tip", "KSF-MIM-ESIK"),
     _i("DOGRAMA_MONTAJ", "MIM", "Doğrama montaj işçiliği", "count", "", "KSF-MIM-DOGRAMA_MONTAJ", unit="saat"),
     _i("MONTAJ_KOPUGU", "MIM", "Montaj köpüğü", "count", "", "KSF-MIM-MONTAJ_KOPUGU", unit="tüp"),
     _i("DUVAR_TUTKAL", "MIM", "Gazbeton tutkalı", "count", "", "KSF-MIM-DUVAR_TUTKAL", unit="kg"),
@@ -459,7 +482,19 @@ DEFAULT_RECIPES: dict[str, list[tuple]] = {
     "DUVAR_TUGLA": [("DUVAR_ISCILIK", 1.0), ("HARC", 25.0)],
     "DUVAR_BIMS": [("DUVAR_ISCILIK", 0.9), ("HARC", 20.0)],
     "DUVAR_ALCIPAN": [("DUVAR_ISCILIK", 0.9), ("ALCIPAN_PROFIL", 3.0), ("ALCIPAN_VIDA", 30.0), ("DERZ_BANDI", 2.0), ("TASYUNU", 1.0, "5")],
-    "CAM": [("CAM_MONTAJ", 0.5)],
+    "CAM": [("CAM_MONTAJ", 0.5)],   # fitil / silikon pencere ve doğrama reçetesinde (boşluk çevresinden); cam m² ile çift yazılmaz
+    # pencere: körkasa + sabitleme + cam izolasyonu (çevre) + denizlik (genişlik)
+    "PENCERE": [("KORKASA", 1.0), ("KORKASA_MONTAJ", 0.5), ("DUBEL_VIDA", 8.0), ("CAM_FITIL", 1.0, "", "PER"),
+                ("SILIKON", 1.0, "", "PER"), ("MASTIK", 1.0, "", "PER"), ("DENIZLIK", 1.0, "", "WID")],
+    # kapı: kasa, pervaz (iki yüz ≈ çevre), menteşe, kilit, kol, stoper, eşik (genişlik), sabitleme, derz silikonu
+    "KAPI": [("KAPI_KASASI", 1.0), ("PERVAZ", 1.0, "", "PER"), ("MENTESE", 3.0), ("KILIT", 1.0), ("KAPI_KOLU", 1.0), ("STOPER", 1.0),
+             ("ESIK", 1.0, "", "WID"), ("DUBEL_VIDA", 6.0), ("SILIKON", 1.0, "", "PER")],
+    # doğrama (poz listesi): pencere pozlarına pencere alt işleri, kapı pozlarına kapı alt işleri (opening_kind)
+    "DOGRAMA": [("KORKASA", 1.0, "", "", "window"), ("KORKASA_MONTAJ", 0.5, "", "", "window"), ("DUBEL_VIDA", 8.0),
+                ("CAM_FITIL", 1.0, "", "PER", "window"), ("SILIKON", 1.0, "", "PER"), ("MASTIK", 1.0, "", "PER", "window"),
+                ("DENIZLIK", 1.0, "", "WID", "window"),
+                ("KAPI_KASASI", 1.0, "", "", "door"), ("PERVAZ", 1.0, "", "PER", "door"), ("MENTESE", 3.0, "", "", "door"),
+                ("KILIT", 1.0, "", "", "door"), ("KAPI_KOLU", 1.0, "", "", "door"), ("STOPER", 1.0, "", "", "door"), ("ESIK", 1.0, "", "WID", "door")],
     "KOREKUYU": [("KOREKUYU_MONTAJ", 0.8), ("ANKRAJ_BULONU", 2.0, "M10")],
     # INC
     "SIVA": [("SIVA_ISCILIK", 0.7), ("KOSE_PROFILI", 0.2)],
@@ -562,7 +597,8 @@ def _apply_default_recipes() -> None:
         recipe = list(it.recipe)   # kod içinde tanımlı reçete korunur, yeni bileşenler eklenir
         have = {c["code"] for c in recipe}
         for row in rows:
-            comp = _c(row[0], row[1] if len(row) > 1 else 1.0, row[2] if len(row) > 2 else "", row[3] if len(row) > 3 else "")
+            comp = _c(row[0], row[1] if len(row) > 1 else 1.0, row[2] if len(row) > 2 else "", row[3] if len(row) > 3 else "",
+                      row[4] if len(row) > 4 else "")
             if comp["code"] not in have:
                 recipe.append(comp)
         it.recipe = normalize_components(recipe)
