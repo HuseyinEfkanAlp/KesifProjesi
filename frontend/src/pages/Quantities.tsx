@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import Loading from '../components/Loading'
 import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
 import { ETYPE_LABELS, SUBTYPE_LABELS, type Boq, type Project, type QuantityLine, type QuantitySummary } from '../types'
@@ -21,7 +22,7 @@ export default function Quantities() {
       .catch((e) => setError(e.message))
   }, [pid, refresh])
 
-  if (!project || !summary || !boq) return <p className="muted">{error || 'Yükleniyor...'}</p>
+  if (!project || !summary || !boq) return <Loading error={error} />
   const hasStructural = summary.groups.length > 0
   const wallH = project.params?.wall_height
 
@@ -30,11 +31,13 @@ export default function Quantities() {
       <ProjectNav id={pid} name={project.name} />
       {error && <div className="error">{error}</div>}
 
-      {boq.items.length === 0 && <p className="muted">Henüz metraj yok; çizim yükleyin.</p>}
-
-      <div className="panel">
-        <SystemsPanel projectId={pid} refreshKey={0} onChanged={() => setRefresh((r) => r + 1)} />
-      </div>
+      {boq.items.length === 0 && (
+        <div className="panel empty-state">
+          <h2>Henüz metraj yok</h2>
+          <p>Çizimler ve Parametreler sayfasından plan yükleyin; keşif iş grubu, poz ve reçeteleriyle burada listelenir.</p>
+          <Link className="btn" to={`/projects/${pid}`}>Plan yükle</Link>
+        </div>
+      )}
 
       {boq.by_group.map((g) => (
         <div className="panel" key={g.group}>
@@ -70,6 +73,12 @@ export default function Quantities() {
           )}
         </div>
       ))}
+      {boq.items.length > 0 && (
+        <details className="section">
+          <summary>Katmanlı sistemler ve tamlık kontrolü<span className="muted">çatı / cephe bileşenleri, türetilmiş kalemler, çizimden çıkmayan işler</span></summary>
+          <div className="panel"><SystemsPanel projectId={pid} refreshKey={0} onChanged={() => setRefresh((r) => r + 1)} /></div>
+        </details>
+      )}
       {boq.items.length > 0 && (
         <details className="section">
           <summary>Ölçü kuralları<span className="muted">ÇŞB birim fiyat tariflerine göre; poz numarası katalogdan ya da varsayılan eşlemeden</span></summary>

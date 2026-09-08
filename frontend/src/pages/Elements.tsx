@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Loading from '../components/Loading'
 import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
 import { DISCIPLINES, ETYPE_COLORS, ETYPE_LABELS, ETYPES_BY_DISCIPLINE, SUBTYPE_LABELS, layerTypeLabels, type Catalog, type Discipline, type Drawing, type Element, type EType } from '../types'
@@ -97,7 +98,7 @@ export default function Elements() {
     )
   }
 
-  if (!drawing) return <p className="muted">{error || 'Yükleniyor...'}</p>
+  if (!drawing) return <Loading error={error} />
   const discipline = drawing.discipline
   const isMapped = discipline === 'mapped'
   const isStd = discipline === 'standard' || isMapped

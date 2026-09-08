@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import Loading from '../components/Loading'
 import { useParams } from 'react-router-dom'
 import { Api } from '../api/client'
 import type { PriceIn, PriceItem, Project } from '../types'
@@ -43,7 +44,7 @@ export default function Prices() {
     } catch (e) { setError((e as Error).message) }
   }
 
-  if (!project) return <p className="muted">{error || 'Yükleniyor...'}</p>
+  if (!project) return <Loading error={error} />
   const hoursPerDay = project.params?.work_hours_per_day ?? 8
 
   const discKeys = Array.from(new Set(items.map((i) => i.discipline)))

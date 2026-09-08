@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
+import Loading from '../components/Loading'
 import { Link, useParams } from 'react-router-dom'
 import { Api, type DrawingPatch } from '../api/client'
 import { DISCIPLINES, DRAWING_STATUS, ETYPE_LABELS, HEURISTIC_DISCIPLINES, STRUCTURAL_ETYPES, type CatalogItem, type Discipline, type Drawing, type Project, type ProjectParams } from '../types'
+import Icon from '../components/Icon'
 import PlanChecklist from '../components/PlanChecklist'
 import PlanIntake from '../components/PlanIntake'
 import SystemsPanel from '../components/SystemsPanel'
@@ -85,7 +87,7 @@ export default function ProjectDetail() {
     drawingsChanged()
   }
 
-  if (!project) return <p className="muted">{error || 'Yükleniyor...'}</p>
+  if (!project) return <Loading error={error} />
 
   const disciplineOptions = (Object.keys(DISCIPLINES) as Discipline[]).map((d) => <option key={d} value={d}>{DISCIPLINES[d]}</option>)
   const planTypeOptions = (
@@ -110,6 +112,13 @@ export default function ProjectDetail() {
         <div className="warn">
           <b>Kat yüksekliği girilmedi.</b> Duvar, sıva ve boya m² için duvar yüksekliği 3,0 m varsayılıyor; <b>Metraj parametreleri</b>'nden
           kat yüksekliğini (H) ve döşeme kalınlığını (d) girip kaydedin.
+        </div>
+      )}
+      {drawings.length === 0 && (
+        <div className="panel empty-state">
+          <span className="empty-icon"><Icon name="layers" size={32} /></span>
+          <h2>Henüz çizim yok</h2>
+          <p>Aşağıya DXF ya da DWG planlarınızı bırakın: pafta tipi başlıktan tanınır, metraj ve reçeteli keşif kendiliğinden çıkar.</p>
         </div>
       )}
       {drawings.length > 0 && (

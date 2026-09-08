@@ -79,6 +79,8 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
             "group": it.group, "group_label": it.label, "discipline": it.discipline,
             "discipline_label": it.discipline_label,
             "unit": it.unit, "quantity": round(it.quantity, 3),
+            "work_group": it.work_group, "work_group_label": it.to_dict()["work_group_label"], "poz": it.poz,
+            "recipe": bool(it.detail.get("recipe")),
             "brand": brand or "",
             "unit_price": float(mat), "labor_price": float(lab),
             "material_total": mat_total, "labor_total": lab_total, "total": round(mat_total + lab_total, 2),
@@ -93,8 +95,17 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
     vat = round(subtotal * vat_rate, 2)
     by_kind: dict[str, float] = {}
     by_disc: dict[str, dict] = {}
+    by_group: dict[str, dict] = {}
     for l in lines:
         by_kind[l["kind"]] = round(by_kind.get(l["kind"], 0.0) + l["total"], 2)
+        g = by_group.setdefault(l["work_group"], {"group": l["work_group"], "label": l["work_group_label"],
+                                                  "material": 0.0, "labor": 0.0, "total": 0.0, "hours": 0.0, "days": 0.0, "lines": 0})
+        g["material"] = round(g["material"] + l["material_total"], 2)
+        g["labor"] = round(g["labor"] + l["labor_total"], 2)
+        g["total"] = round(g["total"] + l["total"], 2)
+        g["hours"] = round(g["hours"] + l["hours"], 1)
+        g["days"] = round(g["days"] + l["days"], 2)
+        g["lines"] += 1
         d = by_disc.setdefault(l["discipline"], {"discipline": l["discipline"], "label": l["discipline_label"],
                                                  "material": 0.0, "labor": 0.0, "total": 0.0, "hours": 0.0, "days": 0.0})
         d["material"] = round(d["material"] + l["material_total"], 2)
@@ -112,6 +123,7 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
         "grand_total": round(subtotal + vat, 2),
         "by_kind": by_kind,
         "by_discipline": list(by_disc.values()),
+        "by_group": list(by_group.values()),
         "missing_prices": [l["key"] for l in lines if l["unit_price"] <= 0],
         "missing_labor": [l["key"] for l in lines if l["labor_price"] <= 0],
         "duration": {

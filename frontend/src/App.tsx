@@ -1,17 +1,25 @@
-import { Link, Outlet } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
+import Icon from './components/Icon'
 
 export default function App() {
+  const { pathname } = useLocation()
+  const section = pathname === '/standard' ? 'Çizim standardı' : pathname === '/projects/new' ? 'Yeni proje' : pathname === '/' ? 'Projeler' : 'Proje çalışma alanı'
   return (
     <div className="app">
-      <header className="topbar">
-        <Link to="/" className="brand">Keşif</Link>
-        <span className="muted">DXF planından keşif, maliyet ve süre</span>
-        <span style={{ flex: 1 }} />
-        <Link to="/standard" className="topnav">Çizim standardı (KÇS)</Link>
-      </header>
-      <main className="content">
-        <Outlet />
-      </main>
+      <a className="skip-link" href="#main-content">İçeriğe geç</a>
+      <aside className="sidebar">
+        <Link to="/" className="brand"><span className="brand-symbol"><Icon name="layers" size={26} /></span><span>keşif<span className="brand-caption">PROJE & METRAJ</span></span></Link>
+        <div className="nav-label">ÇALIŞMA ALANI</div>
+        <nav className="side-nav" aria-label="Ana menü">
+          <NavLink to="/" end className={() => pathname !== '/standard' ? 'active' : ''}><Icon name="grid" />Projeler</NavLink>
+          <NavLink to="/standard"><Icon name="book" />Çizim standardı</NavLink>
+        </nav>
+        <div className="sidebar-footer"><span className="workspace-avatar">K</span><div>Keşif çalışma alanı<small>Metraj · Maliyet · Planlama</small></div></div>
+      </aside>
+      <div className="workspace">
+        <header className="topbar"><div className="breadcrumb"><span>Çalışma alanı</span><span className="breadcrumb-slash">/</span><strong>{section}</strong></div><span className="workspace-tag">DXF / DWG</span></header>
+        <main className="content" id="main-content"><Outlet /></main>
+      </div>
     </div>
   )
 }

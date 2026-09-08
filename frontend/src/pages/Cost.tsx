@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import Loading from '../components/Loading'
 import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
 import type { CostResult, Project } from '../types'
@@ -16,7 +17,7 @@ export default function Cost() {
       .catch((e) => setError(e.message))
   }, [pid])
 
-  if (!project || !cost) return <p className="muted">{error || 'Yükleniyor...'}</p>
+  if (!project || !cost) return <Loading error={error} />
   const money = (v: number) => fmt(v) + ' ₺'
   const dur = cost.duration
 
@@ -44,19 +45,35 @@ export default function Cost() {
       )}
 
       <div className="panel">
-        <h3>Disiplin bazında</h3>
+        <h3>İş grubu bazında</h3>
         <table>
-          <thead><tr><th>Disiplin</th><th className="num">Malzeme</th><th className="num">İşçilik</th><th className="num">Toplam</th><th className="num">Adam-saat</th><th className="num">Süre (gün)</th></tr></thead>
+          <thead><tr><th>İş grubu</th><th className="num">Kalem</th><th className="num">Malzeme</th><th className="num">İşçilik</th><th className="num">Toplam</th><th className="num">Adam-saat</th><th className="num">Süre (gün)</th></tr></thead>
           <tbody>
-            {cost.by_discipline.map((d) => (
-              <tr key={d.discipline}>
-                <td><span className={`badge disc-${d.discipline}`}>{d.label}</span></td>
-                <td className="num">{money(d.material)}</td><td className="num">{money(d.labor)}</td><td className="num">{money(d.total)}</td>
-                <td className="num">{fmt(d.hours, 0)}</td><td className="num">{fmt(d.days, 1)}</td>
+            {cost.by_group.map((g) => (
+              <tr key={g.group}>
+                <td><b>{g.label}</b></td><td className="num">{g.lines}</td>
+                <td className="num">{money(g.material)}</td><td className="num">{money(g.labor)}</td><td className="num"><b>{money(g.total)}</b></td>
+                <td className="num">{fmt(g.hours, 0)}</td><td className="num">{fmt(g.days, 1)}</td>
               </tr>
             ))}
+            <tr className="total"><td>TOPLAM</td><td className="num">{cost.lines.length}</td><td className="num">{money(cost.material_subtotal)}</td><td className="num">{money(cost.labor_subtotal)}</td><td className="num">{money(cost.material_subtotal + cost.labor_subtotal)}</td><td className="num">{fmt(dur.total_hours, 0)}</td><td className="num">{fmt(dur.sequential_days, 1)}</td></tr>
           </tbody>
         </table>
+        <details style={{ marginTop: 8 }}>
+          <summary className="muted">Disiplin bazında</summary>
+          <table style={{ marginTop: 8 }}>
+            <thead><tr><th>Disiplin</th><th className="num">Malzeme</th><th className="num">İşçilik</th><th className="num">Toplam</th><th className="num">Adam-saat</th><th className="num">Süre (gün)</th></tr></thead>
+            <tbody>
+              {cost.by_discipline.map((d) => (
+                <tr key={d.discipline}>
+                  <td><span className={`badge disc-${d.discipline.split(':')[0]}`}>{d.label.split(' (')[0]}</span></td>
+                  <td className="num">{money(d.material)}</td><td className="num">{money(d.labor)}</td><td className="num">{money(d.total)}</td>
+                  <td className="num">{fmt(d.hours, 0)}</td><td className="num">{fmt(d.days, 1)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
         <p className="muted">Süre her kalem için miktar × adam-saat / (ekip × günlük saat). Disiplinler aynı anda çalışırsa toplam süre en uzun disiplin kadardır; tek ekip sırayla yaparsa kalemlerin toplamıdır.</p>
       </div>
 
@@ -69,7 +86,7 @@ export default function Cost() {
           <table>
             <thead>
               <tr>
-                <th>Disiplin</th><th>Tür</th><th>Kalem</th><th>Marka</th><th className="num">Miktar</th><th>Birim</th>
+                <th>İş grubu</th><th>Poz</th><th>Tür</th><th>Kalem</th><th>Marka</th><th className="num">Miktar</th><th>Birim</th>
                 <th className="num">Malzeme ₺/birim</th><th className="num">İşçilik ₺/birim</th>
                 <th className="num">Malzeme</th><th className="num">İşçilik</th><th className="num">Toplam</th>
                 <th className="num">Süre (gün)</th><th>Kaynak</th>
@@ -78,7 +95,8 @@ export default function Cost() {
             <tbody>
               {cost.lines.map((l) => (
                 <tr key={l.key}>
-                  <td><span className={`badge disc-${l.discipline}`}>{l.discipline_label}</span></td>
+                  <td>{l.work_group_label}{l.recipe ? <span className="badge recipe" style={{ marginLeft: 6 }}>reçete</span> : null}</td>
+                  <td className="mono">{l.poz || <span className="muted">-</span>}</td>
                   <td>{l.kind_label}</td><td>{l.group_label}</td><td className="muted">{l.brand || '-'}</td>
                   <td className="num">{fmt(l.quantity, l.unit === 'kg' || l.unit === 'adet' ? 0 : 2)}</td><td>{l.unit}</td>
                   <td className="num">{fmt(l.unit_price)}</td><td className="num">{fmt(l.labor_price)}</td>

@@ -517,6 +517,10 @@ export interface PriceIn {
 }
 
 export interface CostLine {
+  work_group: string
+  work_group_label: string
+  poz: string
+  recipe: boolean
   key: string
   kind: string
   kind_label: string
@@ -550,6 +554,8 @@ export interface CostResult {
   grand_total: number
   by_kind: Record<string, number>
   by_discipline: { discipline: string; label: string; material: number; labor: number; total: number; hours: number; days: number }[]
+  /** İş grubu bazında (kaba yapı, ince işler, mekanik, elektrik, altyapı) */
+  by_group: { group: string; label: string; material: number; labor: number; total: number; hours: number; days: number; lines: number }[]
   missing_prices: string[]
   missing_labor: string[]
   duration: { hours_per_day: number; total_hours: number; sequential_days: number; parallel_days: number; missing_rates: string[] }

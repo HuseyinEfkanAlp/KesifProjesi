@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import Loading from '../components/Loading'
 import { Api } from '../api/client'
 import type { Catalog, CatalogItem, LayerCheck } from '../types'
 
@@ -36,7 +37,7 @@ export default function Standard() {
     try { setCheck(await Api.catalog.checkLayer(test)) } catch (e) { setError((e as Error).message) }
   }
 
-  if (!cat) return <p className="muted">{error || 'Yükleniyor...'}</p>
+  if (!cat) return <Loading error={error} />
   const f = filter.toLocaleLowerCase('tr-TR')
   const groups = cat.by_discipline
     .filter((g) => !disc || g.code === disc)
