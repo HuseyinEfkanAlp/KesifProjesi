@@ -108,64 +108,47 @@ export default function ProjectDetail() {
 
       {project.storey_height <= 0 && (
         <div className="warn">
-          <b>Kat yüksekliği girilmedi.</b> Duvar, sıva ve boya m² için duvar yüksekliği 3,0 m varsayılıyor; sağdaki <b>Metraj parametreleri</b>'nden
+          <b>Kat yüksekliği girilmedi.</b> Duvar, sıva ve boya m² için duvar yüksekliği 3,0 m varsayılıyor; <b>Metraj parametreleri</b>'nden
           kat yüksekliğini (H) ve döşeme kalınlığını (d) girip kaydedin.
         </div>
       )}
-      <div className="panel">
-        <h3 style={{ marginTop: 0 }}>Çizimlerden ne anlaşıldı</h3>
-        {drawings.length === 0 && <p className="muted">Henüz çizim yüklenmedi; aşağıdan planları bırakın.</p>}
-        {drawings.length > 0 && (
-          <>
-            <div className="summary-line">
-              <span><b>{drawings.length}</b> pafta</span>
-              <span><span className="badge st-present">{counts.ok}</span> okundu, metraja giriyor</span>
-              {counts.problem > 0 && <span><span className="badge st-missing">{counts.problem}</span> sorunlu (plan geometrisi yok / birim)</span>}
-              {counts.empty > 0 && <span><span className="badge st-optional_missing">{counts.empty}</span> boş (eleman bulunamadı)</span>}
-              {counts.untyped > 0 && <span><span className="badge st-skipped">{counts.untyped}</span> tipi seçilmedi</span>}
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table>
-                <thead><tr><th>Plan</th><th>Plan tipi</th><th>Durum</th><th>Bulunanlar</th><th>Not</th><th></th></tr></thead>
-                <tbody>
-                  {drawings.map((d) => {
-                    const st = statusOf(d)
-                    return (
-                      <tr key={d.id}>
-                        <td title={d.filename}><b>{d.label}</b></td>
-                        <td>
-                          <select value={d.plan_type} disabled={busy} className={d.plan_type ? '' : 'unset'} title="Plan seti kontrolünde hangi paftayı karşıladığı"
-                            onChange={(e) => patchDrawing(d, { plan_type: e.target.value })}>{planTypeOptions}</select>
-                        </td>
-                        <td><span className={`badge ${st.cls}`}>{st.label}</span></td>
-                        <td className="found">{d.found || (d.element_count > 0 ? `${d.element_count} eleman` : <span className="muted">-</span>)}</td>
-                        <td className="note" title={d.warnings.join('\n')}>
-                          {d.note || (d.warnings.length > 0 ? d.warnings[0].slice(0, 140) : <span className="muted">-</span>)}
-                          {d.warnings.length > 1 && <span className="muted"> (+{d.warnings.length - 1} uyarı)</span>}
-                        </td>
-                        <td className="row">
-                          <Link className="btn" to={`/projects/${id}/drawings/${d.id}`}>Elemanlar</Link>
-                          <button className="danger small" onClick={() => removeDrawing(d)}>Sil</button>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <p className="muted" style={{ marginBottom: 0 }}>
-              Disiplin, birim, kat sayısı ve kat yüksekliği aşağıdaki <b>Çizim ayarları</b> bölümünde; her paftanın tüm uyarıları ve katmanları <b>Elemanlar</b> sayfasında.
-            </p>
-          </>
-        )}
-      </div>
+      {drawings.length > 0 && (
+        <div className="panel summary">
+          <div className="row between">
+            <h3 style={{ margin: 0 }}>Çizimlerden ne anlaşıldı</h3>
+            <span className="muted">
+              {drawings.length} pafta · <span className="ok">{counts.ok} okundu</span>
+              {counts.problem > 0 && <> · <span className="bad">{counts.problem} sorunlu</span></>}
+              {counts.empty > 0 && <> · {counts.empty} boş</>}
+              {counts.untyped > 0 && <> · {counts.untyped} tipi seçilmedi</>}
+            </span>
+          </div>
+          <table className="summary-table">
+            <tbody>
+              {drawings.map((d) => {
+                const st = statusOf(d)
+                const pt = planTypes.find((t) => t.code === d.plan_type)
+                return (
+                  <tr key={d.id}>
+                    <td className="st"><span className={`dot ${st.cls}`} title={st.label} /></td>
+                    <td className="name" title={d.filename}><Link to={`/projects/${id}/drawings/${d.id}`}>{d.label}</Link></td>
+                    <td className="type muted">{pt ? pt.label : <span className="bad">tip seçilmedi</span>}</td>
+                    <td className="found">{d.found || <span className="muted">{st.label === 'Okundu' ? `${d.element_count} eleman` : st.label.toLowerCase()}</span>}</td>
+                    <td className="note" title={d.warnings.join('\n')}>{d.note || (d.warnings[0] ?? '')}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="grid2">
         <div className="panel">
           <h3>Plan yükle</h3>
           <p className="muted">
             Plan tipi ve disiplin dosya adı / pafta başlığından tanınır; ruhsat projesi dosyasında paftalar ayrılır ve siz onaylarsınız.
-            Yanlış tanındıysa yukarıdaki listeden plan tipini, <b>Çizim ayarları</b>'ndan disiplini değiştirin.
+            Yanlış tanındıysa aşağıdaki çizim listesinden plan tipini ve disiplini değiştirin.
           </p>
           <PlanIntake projectId={id} storeyHeight={params.storey_height} onChanged={drawingsChanged} compact />
         </div>
@@ -245,46 +228,54 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      <details className="section">
-        <summary>Çizim ayarları<span className="muted">plan adı, disiplin, birim, kat sayısı, kat yüksekliği</span></summary>
-        <div className="panel">
-          {drawings.length === 0 && <p className="muted">Henüz çizim yüklenmedi.</p>}
-          {drawings.length > 0 && (
-            <div style={{ overflowX: 'auto' }}>
-              <table>
-                <thead>
-                  <tr><th>Plan</th><th>Disiplin</th><th>Dosya</th><th>Birim</th><th className="num">Kat sayısı</th><th className="num">Kat yüksekliği H (m)</th><th className="num">Eleman</th></tr>
-                </thead>
-                <tbody>
-                  {drawings.map((d) => (
-                    <tr key={d.id}>
-                      <td><input className="wide" defaultValue={d.label} onBlur={(e) => e.target.value !== d.label && patchDrawing(d, { label: e.target.value })} /></td>
-                      <td>
-                        <select value={d.discipline} disabled={busy} title="Değiştirilirse çizim yeniden analiz edilir"
-                          onChange={(e) => patchDrawing(d, { discipline: e.target.value as Discipline })}>{disciplineOptions}</select>
-                      </td>
-                      <td className="mono">{d.filename}</td>
-                      <td>
-                        <select value={d.unit_override ?? ''} onChange={(e) => patchDrawing(d, { unit_override: e.target.value })}>
-                          <option value="">Otomatik ({d.unit}{d.unit_detected ? '' : ', tahmin'})</option>
-                          <option value="cm">cm</option><option value="mm">mm</option><option value="m">m</option>
-                        </select>
-                      </td>
-                      <td className="num"><input type="number" min={1} defaultValue={d.storey_count} onBlur={(e) => +e.target.value !== d.storey_count && patchDrawing(d, { storey_count: +e.target.value })} /></td>
-                      <td className="num">
-                        <input type="number" step="0.01" placeholder={`proje: ${params.storey_height}`} defaultValue={d.storey_height ?? ''}
-                          title="Boş bırakılırsa projenin kat yüksekliği kullanılır"
-                          onBlur={(e) => { const v = e.target.value ? +e.target.value : null; if (v !== d.storey_height) patchDrawing(d, { storey_height: v }) }} />
-                      </td>
-                      <td className="num">{d.element_count}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </details>
+      <div className="panel">
+        <h3>Çizimler</h3>
+        {drawings.length === 0 && <p className="muted">Henüz çizim yüklenmedi.</p>}
+        {drawings.length > 0 && (
+          <div style={{ overflowX: 'auto' }}>
+            <table>
+              <thead>
+                <tr><th>Plan</th><th>Plan tipi</th><th>Disiplin</th><th>Dosya</th><th>Birim</th><th className="num">Kat</th><th className="num">H (m)</th><th className="num">Eleman</th><th>Uyarı</th><th></th></tr>
+              </thead>
+              <tbody>
+                {drawings.map((d) => (
+                  <tr key={d.id}>
+                    <td><input className="wide" defaultValue={d.label} onBlur={(e) => e.target.value !== d.label && patchDrawing(d, { label: e.target.value })} /></td>
+                    <td>
+                      <select value={d.plan_type} disabled={busy} className={`narrow${d.plan_type ? '' : ' unset'}`} title="Plan seti kontrolünde hangi paftayı karşıladığı"
+                        onChange={(e) => patchDrawing(d, { plan_type: e.target.value })}>{planTypeOptions}</select>
+                    </td>
+                    <td>
+                      <select value={d.discipline} disabled={busy} className="narrow" title="Değiştirilirse çizim yeniden analiz edilir"
+                        onChange={(e) => patchDrawing(d, { discipline: e.target.value as Discipline })}>{disciplineOptions}</select>
+                    </td>
+                    <td className="mono" title={d.filename}>{d.filename.split(' › ')[0]}</td>
+                    <td>
+                      <select value={d.unit_override ?? ''} title={d.unit_detected ? 'Birim çizim başlığından' : 'Birim yazı yüksekliklerinden tahmin edildi'}
+                        onChange={(e) => patchDrawing(d, { unit_override: e.target.value })}>
+                        <option value="">Oto ({d.unit})</option>
+                        <option value="cm">cm</option><option value="mm">mm</option><option value="m">m</option>
+                      </select>
+                    </td>
+                    <td className="num"><input type="number" min={1} defaultValue={d.storey_count} onBlur={(e) => +e.target.value !== d.storey_count && patchDrawing(d, { storey_count: +e.target.value })} /></td>
+                    <td className="num">
+                      <input type="number" step="0.01" placeholder={`proje: ${params.storey_height}`} defaultValue={d.storey_height ?? ''}
+                        title="Boş bırakılırsa projenin kat yüksekliği kullanılır"
+                        onBlur={(e) => { const v = e.target.value ? +e.target.value : null; if (v !== d.storey_height) patchDrawing(d, { storey_height: v }) }} />
+                    </td>
+                    <td className="num">{d.element_count}</td>
+                    <td>{d.warnings.length > 0 ? <span title={d.warnings.join('\n')}>⚠ {d.warnings.length}</span> : <span className="muted">-</span>}</td>
+                    <td className="row">
+                      <Link className="btn small" to={`/projects/${id}/drawings/${d.id}`}>Elemanlar</Link>
+                      <button className="danger small" onClick={() => removeDrawing(d)}>Sil</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       <details className="section">
         <summary>Plan seti kontrolü<span className="muted">hangi plan tipleri yüklendi, hangileri eksik</span></summary>

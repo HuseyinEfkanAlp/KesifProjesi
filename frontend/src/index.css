@@ -42,7 +42,7 @@ button:disabled { opacity: .5; cursor: default; }
 button.secondary { background: #e5e9ee; color: var(--text); }
 button.secondary:hover { background: #d5dbe2; }
 button.danger { background: var(--danger); }
-button.small { padding: 3px 8px; font-size: 12px; }
+button.small, .btn.small { padding: 3px 8px; font-size: 12px; }
 input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
 input[type=number] { width: 90px; }
 label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
@@ -154,9 +154,22 @@ details.section > summary::-webkit-details-marker { display: none; }
 details.section > summary::before { content: '▸ '; color: var(--muted); }
 details.section[open] > summary { border-radius: 8px 8px 0 0; }
 details.section[open] > summary::before { content: '▾ '; }
-details.section > .panel { border-top: 0; border-radius: 0 0 8px 8px; }
+details.section > .panel { border-top: 0; border-radius: 0 0 8px 8px; margin-top: 0; }
 details.section > summary .muted { font-weight: 400; margin-left: 8px; }
-.summary-line { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 4px 0 10px; }
-.summary-line b { font-size: 18px; }
-td.note { max-width: 420px; font-size: 12.5px; color: #444; }
-td.found { white-space: nowrap; }
+.bad { color: var(--danger); }
+/* Çizim özeti: pafta başına tek satır */
+.summary-table { margin-top: 8px; table-layout: fixed; }
+.summary-table td { padding: 5px 8px; border-bottom: 1px solid #eef2f6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.summary-table tr:last-child td { border-bottom: 0; }
+.summary-table td.st { width: 22px; padding-right: 0; }
+.summary-table td.name { width: 30%; font-weight: 600; }
+.summary-table td.type { width: 16%; font-size: 12.5px; }
+.summary-table td.found { width: 22%; }
+.summary-table td.note { color: var(--muted); font-size: 12.5px; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #c8ced5; vertical-align: -1px; }
+.dot.st-present { background: var(--ok); }
+.dot.st-missing { background: var(--danger); }
+.dot.st-skipped { background: #e0a800; }
+.dot.st-optional_missing { background: #c8ced5; }
+select.narrow { width: 190px; }
+td.row { flex-wrap: nowrap; white-space: nowrap; }
