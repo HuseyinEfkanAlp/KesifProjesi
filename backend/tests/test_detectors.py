@@ -282,3 +282,19 @@ def test_crossing_beam_polygons_intersection_deducted(tmp_path):
     beams = {b.name: b for b in r.by_type("beam")}
     assert beams["K1"].length == pytest.approx(8.0, abs=0.05)
     assert beams["K2"].length == pytest.approx(6.0 - 0.40, abs=0.05) and any("Kesişen" in w for w in beams["K2"].warnings)
+
+
+def test_parapet_detected_with_section_label(tmp_path):
+    """'VM Parapet Tarama' katmanındaki hat + 'Parapet (20/15)' etiketi: beton b·h·L, kalıp 2·h·L; tarama yok-sayması geçerli değil."""
+    from app.quantity.engine import ElementData, QuantityParams, compute_element
+    doc = _doc_cm(); msp = doc.modelspace()
+    doc.layers.add("VM Parapet Tarama")
+    msp.add_line((0, 0), (1000, 0), dxfattribs={"layer": "VM Parapet Tarama"})
+    msp.add_line((0, 20), (1000, 20), dxfattribs={"layer": "VM Parapet Tarama"})
+    msp.add_text("Parapet (20/15)", dxfattribs={"layer": "VM Parapet Marka", "height": 6}).set_placement((400, 30))
+    path = tmp_path / "parapet.dxf"; doc.saveas(path)
+    r = analyze_file(str(path), unit_override="cm")
+    par = r.by_type("parapet")
+    assert len(par) == 1 and par[0].length == pytest.approx(10.0, abs=0.05) and par[0].b == pytest.approx(0.20) and par[0].h == pytest.approx(0.15)
+    ln = compute_element(ElementData.from_obj(par[0], id=1), QuantityParams(storey_height=3.0, slab_thickness=0.15))
+    assert ln.concrete_m3 == pytest.approx(0.2 * 0.15 * 10.0, rel=1e-2) and ln.formwork_m2 == pytest.approx(2 * 0.15 * 10.0, rel=1e-2)

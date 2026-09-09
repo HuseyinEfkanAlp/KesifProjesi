@@ -6,6 +6,20 @@ import { ETYPE_LABELS, SUBTYPE_LABELS, type Boq, type Project, type QuantityLine
 import ProjectNav from './ProjectNav'
 import SystemsPanel from '../components/SystemsPanel'
 
+
+const REBAR_SOURCE_LABEL: Record<string, string> = {
+  oran: 'oranla tahmin', tablo: 'donatı tablosu', poz: 'poz yazıları', elle: 'elle girildi',
+  'tablo+poz': 'tablo + poz', 'tablo+oran': 'tablo + oran', 'poz+oran': 'poz + oran', 'tablo+poz+oran': 'tablo + poz + oran',
+}
+const REBAR_SOURCE_HINT: Record<string, string> = {
+  oran: 'Beton × kg/m³ tahmini (düşük güven); donatı paftası yüklenince tablodan alınır',
+  tablo: 'Donatı paftasındaki metraj tablosundan okundu (yüksek güven)',
+  poz: 'Adetli poz yazılarından hesaplandı (kanca / bindirme yazıda yoksa eksik olabilir)',
+  elle: 'Kullanıcı elle girdi',
+  'tablo+oran': 'Bazı katların donatı paftası yok: o katlar oranla',
+  'poz+oran': 'Bazı katların donatı paftası yok: o katlar oranla',
+}
+
 export default function Quantities() {
   const pid = Number(useParams().id)
   const [project, setProject] = useState<Project | null>(null)
@@ -178,7 +192,13 @@ export default function Quantities() {
 
           {summary.rebar_by_dia.length > 0 && (
             <div className="panel">
-              <h3>Demir: çap bazında (donatı tablolarından, {fmt(summary.rebar_table_total_kg / 1000, 1)} t)</h3>
+              <h3>Demir: çap bazında (donatı paftalarından, {fmt(summary.rebar_table_total_kg / 1000, 1)} t)</h3>
+              {summary.rebar_by_source && (
+                <p className="muted">Kaynak: {Object.entries(summary.rebar_by_source).map(([k, v]) => `${REBAR_SOURCE_LABEL[k] ?? k} ${fmt(v / 1000, 1)} t`).join(' · ')}</p>
+              )}
+              {summary.warnings && summary.warnings.length > 0 && (
+                <ul className="warnings">{summary.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+              )}
               <table>
                 <thead><tr><th>Çap</th><th className="num">Toplam boy (m)</th><th className="num">Ağırlık (kg)</th><th className="num">Ton</th><th>Dağılım</th></tr></thead>
                 <tbody>
@@ -188,7 +208,7 @@ export default function Quantities() {
                       <td className="num">{fmt(d.length_m, 0)}</td>
                       <td className="num">{fmt(d.weight_kg, 0)}</td>
                       <td className="num">{fmt(d.weight_kg / 1000, 2)}</td>
-                      <td className="muted">{Object.entries(d.targets).map(([k, v]) => `${ETYPE_LABELS[k as keyof typeof ETYPE_LABELS] ?? k} ${fmt(v / 1000, 1)} t`).join(' · ')}</td>
+                      <td className="muted">{Object.entries(d.targets).map(([k, v]) => `${ETYPE_LABELS[k as keyof typeof ETYPE_LABELS] ?? k} ${fmt(v / 1000, 1)} t`).join(' · ')}{d.sources && Object.keys(d.sources).length > 0 ? ` — ${Object.entries(d.sources).map(([k, v]) => `${REBAR_SOURCE_LABEL[k] ?? k} ${fmt(v / 1000, 1)} t`).join(', ')}` : ''}</td>
                     </tr>
                   ))}
                   <tr className="total"><td>TOPLAM</td><td></td><td className="num">{fmt(summary.rebar_table_total_kg, 0)}</td><td className="num">{fmt(summary.rebar_table_total_kg / 1000, 2)}</td><td className="muted">{summary.rebar_ratio_total_kg > 0 ? `+ oranla tahmin edilen ${fmt(summary.rebar_ratio_total_kg / 1000, 1)} t (tablosu olmayan elemanlar)` : ''}</td></tr>
@@ -229,7 +249,7 @@ export default function Quantities() {
               <thead><tr><th>Grup</th><th className="num">Adet (kat dahil)</th><th className="num">Beton (m³)</th><th className="num">Kalıp (m²)</th><th className="num">Demir (kg)</th></tr></thead>
               <tbody>
                 {summary.groups.map((g) => (
-                  <tr key={g.key}><td><span className={`badge ${g.etype}`}>{g.label}</span></td><td className="num">{g.element_count}</td><td className="num">{fmt(g.concrete_m3, 3)}</td><td className="num">{fmt(g.formwork_m2)}</td><td className="num">{fmt(g.rebar_kg, 0)} <span className="muted">({g.rebar_source})</span></td></tr>
+                  <tr key={g.key}><td><span className={`badge ${g.etype}`}>{g.label}</span></td><td className="num">{g.element_count}</td><td className="num">{fmt(g.concrete_m3, 3)}</td><td className="num">{fmt(g.formwork_m2)}</td><td className="num">{fmt(g.rebar_kg, 0)} <span className="muted" title={REBAR_SOURCE_HINT[g.rebar_source] ?? g.rebar_source}>({REBAR_SOURCE_LABEL[g.rebar_source] ?? g.rebar_source}{g.rebar_kots_ratio && g.rebar_kots_ratio.length > 0 ? `; oranla: ${g.rebar_kots_ratio.join(', ')}` : ''})</span></td></tr>
                 ))}
                 <tr className="total"><td>TOPLAM</td><td></td><td className="num">{fmt(summary.totals.concrete_m3, 3)}</td><td className="num">{fmt(summary.totals.formwork_m2)}</td><td className="num">{fmt(summary.totals.rebar_kg, 0)}</td></tr>
               </tbody>

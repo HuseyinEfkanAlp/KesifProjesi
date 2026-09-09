@@ -33,6 +33,7 @@ STRUCTURAL_TYPES: dict[str, str] = {
     "beam": "Kiriş",
     "slab": "Döşeme",
     "foundation": "Temel",
+    "parapet": "Parapet",
 }
 ARCHITECTURAL_TYPES: dict[str, str] = {
     "wall": "Duvar",
@@ -101,7 +102,7 @@ def types_for(discipline: str) -> dict[str, str]:
 
 
 # Öncelik sırası: daha spesifik tipler önce (ör. "DÖŞEME ŞAFT" -> hole, "TEMEL_KIRIS" -> temel, "KABLO TAVASI" -> tava)
-MATCH_ORDER = ("hole", "foundation", "shear_wall", "column", "beam", "slab",
+MATCH_ORDER = ("hole", "parapet", "foundation", "shear_wall", "column", "beam", "slab",
                "window", "door", "wall",
                "tray", "conduit", "fixture", "cable",
                "pipe", "duct", "mech_fixture")
@@ -110,6 +111,7 @@ DEFAULT_PROFILE: dict[str, list[str]] = {
     # statik
     "column": [r"KOLON", r"\bCOL\b", r"S[-_]?COL", r"COLUMN", r"STR[-_]COL"],
     "shear_wall": [r"PERDE", r"S[-_]?WALL", r"SHEAR", r"STR[-_]WALL"],
+    "parapet": [r"PARAPET"],   # "VM Parapet Tarama" da parapet (tarama yok-sayması bu tip için geçerli değil)
     "beam": [r"KIRI[SŞ]", r"KİRİ[SŞ]", r"\bBEAM\b", r"S[-_]?BEAM", r"STR[-_]BEAM"],
     "slab": [r"DO[SŞ]EME", r"DÖ[SŞ]EME", r"\bSLAB", r"S[-_]?SLAB", r"STR[-_]SLAB"],
     "foundation": [r"TEMEL", r"RADYE", r"FOUND", r"FOOTING", r"RAFT", r"S[-_]?FND"],
@@ -155,6 +157,7 @@ IGNORE_PATTERNS = [
 ]
 # Mimari paftada duvarlar çoğu zaman tarama (hatch) ile çizilir; bu desenler mimaride yok sayılmaz
 ARCH_KEEP = {r"TARAMA", r"HATCH"}
+STRUCT_KEEP_TYPES = {"parapet"}   # bu tiplerin deseni yok-sayma listesinden önce denenir (PARAPET TARAMA katmanı)
 # Elektrik paftasında "MERDIVEN TAVA" (merdiven tipi kablo tavası) elemandır; tava deseni yok-saymadan önce gelir
 ELEC_KEEP = {r"MERDIVEN", r"MERDİVEN"}
 
@@ -207,6 +210,9 @@ class LayerProfile:
                     return etype if etype in allowed else None
         if any(_is_exact(pat) and pat.search(name) for pat in self._compiled.get("ignore", [])):
             return None
+        for etype in STRUCT_KEEP_TYPES:
+            if etype in allowed and any(pat.search(name) for pat in self._compiled.get(etype, [])):
+                return etype
         ignore = {"architectural": self._ignore_arch, "electrical": self._ignore_elec}.get(discipline, self._ignore)
         for pat in ignore:
             if pat.search(name):

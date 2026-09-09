@@ -169,3 +169,32 @@ def test_crop_margin_does_not_enter_neighbour_frame(tmp_path):
     # tek pafta kırpılsa da komşu çerçeve verilirse pay oraya taşmaz
     crop_sheets(src, [(a, da)], neighbors=[a, b])
     assert [e.text for e in load_dxf(str(da)).texts()] == ["P45 4Ø14 ila. l=160"]
+
+
+def test_title_inside_block_definition_and_stream_hatch(tmp_path):
+    """Antet bloğunun içindeki 'PLANI' yazısı pafta başlığı olur; büyük dosya yolunda (akış) tarama sınırları da kırpılır."""
+    import ezdxf
+    from app.parser.sheets import crop_sheets, scan_sheets
+    from app.parser.loader import load_dxf
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 5
+    msp = doc.modelspace()
+    antet = doc.blocks.new("ANTET")
+    antet.add_lwpolyline([(0, 0), (30, 0), (30, 10), (0, 10)], close=True)
+    antet.add_text("ZEMİN KAT KALIP PLANI", dxfattribs={"height": 3.0}).set_placement((2, 4))
+    for i, (x0, name) in enumerate(((0.0, "A"), (200.0, "B"))):
+        msp.add_lwpolyline([(x0, 0), (x0 + 150, 0), (x0 + 150, 100), (x0, 100)], close=True, dxfattribs={"layer": "CERCEVE"})
+        for k in range(40):
+            msp.add_line((x0 + 10 + k, 20), (x0 + 10 + k, 60), dxfattribs={"layer": "KOLON"})
+            msp.add_text(f"S{k}", dxfattribs={"height": 1.0}).set_placement((x0 + 10 + k, 62))
+        msp.add_blockref("ANTET", (x0 + 110, 5), dxfattribs={"layer": "ANTET"})
+        h = msp.add_hatch(dxfattribs={"layer": "brn_hatch_gazbeton"})
+        h.paths.add_polyline_path([(x0 + 20, 70), (x0 + 40, 70), (x0 + 40, 80), (x0 + 20, 80)], is_closed=True)
+    src = tmp_path / "antet.dxf"; doc.saveas(src)
+    scan = scan_sheets(src)
+    assert len(scan.sheets) == 2 and all(sh.titled and "KALIP PLANI" in sh.title for sh in scan.sheets)
+    da = tmp_path / "a.dxf"
+    crop_sheets(src, [(scan.sheets[0].bbox, da)], stream_min_bytes=0)     # 100 MB üstü dosya yolu (akış) zorlanır
+    dr = load_dxf(str(da))
+    polys = [e for e in dr.entities if e.layer == "brn_hatch_gazbeton" and e.kind == "polygon"]
+    assert len(polys) == 1 and abs(abs((polys[0].points[1][0] - polys[0].points[0][0]) * (polys[0].points[2][1] - polys[0].points[1][1])) - 0.02) < 1e-6   # 20 × 10 cm

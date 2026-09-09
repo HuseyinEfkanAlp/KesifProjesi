@@ -173,10 +173,10 @@ def _c(code, factor=1.0, spec="", times="", when=""):
 DEFAULT_ITEMS: list[CatalogItem] = [
     # STA
     _i("BETON", "STA", "Beton (alan × kalınlık)", "volume", "kalınlık (cm)", "KSF-STA-BETON-20"),
-    _i("GROBETON", "STA", "Grobeton", "volume", "kalınlık (cm)", "KSF-STA-GROBETON-10"),
+    _i("GROBETON", "STA", "Grobeton", "volume", "kalınlık (cm)", "KSF-STA-GROBETON-10", poz="15.150.1003"),
     _i("DOLGU", "STA", "Dolgu / blokaj", "volume", "kalınlık (cm)", "KSF-STA-DOLGU-30"),
-    _i("KAZI", "STA", "Kazı", "volume", "derinlik (cm)", "KSF-STA-KAZI-350"),
-    _i("DEMIR", "STA", "Nervürlü demir (kg)", "count", "çap (mm)", "KSF-STA-DEMIR-12", unit="kg", poz="15.160.1003"),
+    _i("KAZI", "STA", "Kazı", "volume", "derinlik (cm)", "KSF-STA-KAZI-350", poz="15.120.1101"),
+    _i("DEMIR", "STA", "Nervürlü demir (kg)", "count", "çap (mm)", "KSF-STA-DEMIR-12", unit="kg"),   # poz çapa göre: rules.default_poz (Ø8–12 / Ø14–28)
     _i("KALIP", "STA", "Kalıp", "area", "", "KSF-STA-KALIP"),
     _i("KALIP_ISKELESI", "STA", "Kalıp iskelesi (çelik boru)", "volume", "", "KSF-STA-KALIP_ISKELESI", unit="m³", poz="15.185.1001"),
     _i("BETON_POMPAJ", "STA", "Beton pompajı / yerleştirme", "volume", "", "KSF-STA-BETON_POMPAJ", unit="m³"),
@@ -196,7 +196,7 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("CELIK_BOYA", "STA", "Çelik son kat boya", "area", "tip", "KSF-STA-CELIK_BOYA"),
     _i("CELIK_MONTAJ", "STA", "Çelik montaj işçiliği", "count", "", "KSF-STA-CELIK_MONTAJ", unit="saat"),
     _i("VINC", "STA", "Vinç (mobil / kule)", "count", "kapasite (ton)", "KSF-STA-VINC", unit="saat"),
-    _i("IS_ISKELESI", "STA", "İş iskelesi (cephe / dış)", "area", "tip (CELIK_BORU)", "KSF-STA-IS_ISKELESI", unit="m²"),
+    _i("IS_ISKELESI", "STA", "İş iskelesi (cephe / dış)", "area", "tip (CELIK_BORU)", "KSF-STA-IS_ISKELESI", unit="m²", poz="15.185.1013"),
     # MIM
     _i("DUVAR_YTONG", "MIM", "Ytong / gazbeton duvar", "wall_area", "kalınlık (cm) [x yükseklik (cm)]", "KSF-MIM-DUVAR_YTONG-20"),
     _i("DUVAR_TUGLA", "MIM", "Tuğla duvar", "wall_area", "kalınlık (cm)", "KSF-MIM-DUVAR_TUGLA-13.5"),
@@ -233,7 +233,7 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("SIVA", "INC", "Sıva", "wall_area", "tip (ALCI / CIMENTO)", "KSF-INC-SIVA-ALCI"),
     _i("BOYA", "INC", "Boya", "wall_area", "tip", "KSF-INC-BOYA-PLASTIK"),
     _i("SERAMIK_ZEMIN", "INC", "Zemin seramiği", "area", "ebat (60x60)", "KSF-INC-SERAMIK_ZEMIN-60x60"),
-    _i("SERAMIK_DUVAR", "INC", "Duvar seramiği", "wall_area", "ebat", "KSF-INC-SERAMIK_DUVAR-30x60"),
+    _i("SERAMIK_DUVAR", "INC", "Duvar seramiği", "wall_area", "ebat", "KSF-INC-SERAMIK_DUVAR-30x60", poz="15.380.1056"),
     _i("LAMINAT", "INC", "Laminat parke", "area", "tip", "KSF-INC-LAMINAT-8MM"),
     _i("ASMA_TAVAN", "INC", "Asma tavan", "area", "tip (ALCIPAN / METAL / TASYUNU)", "KSF-INC-ASMA_TAVAN-TASYUNU"),
     _i("SUPURGELIK", "INC", "Süpürgelik", "length", "tip", "KSF-INC-SUPURGELIK-MDF"),
@@ -241,16 +241,16 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("ASTAR", "INC", "Boya astarı", "wall_area", "tip", "KSF-INC-ASTAR"),
     _i("DOSEME_KAPLAMA", "INC", "Döşeme kaplaması (tip seçilecek)", "area", "tip (SERAMIK / PARKE / EPOKSI)", "KSF-INC-DOSEME_KAPLAMA-SERAMIK"),
     _i("TAVAN_SIVA_BOYA", "INC", "Tavan sıva + astar + boya", "area", "tip", "KSF-INC-TAVAN_SIVA_BOYA"),
-    _i("TEMEL_SU_YALITIMI", "IZO", "Temel su yalıtımı (bitümlü membran / sürme)", "area", "tip", "KSF-IZO-TEMEL_SU_YALITIMI"),
+    _i("TEMEL_SU_YALITIMI", "IZO", "Temel su yalıtımı (bitümlü membran / sürme)", "area", "tip", "KSF-IZO-TEMEL_SU_YALITIMI", poz="15.255.1009"),
     _i("KORUMA_SAPI", "IZO", "Koruma şapı (temel yalıtımı üstü)", "area", "kalınlık (cm)", "KSF-IZO-KORUMA_SAPI-5"),
     _i("DRENAJ", "IZO", "Drenaj levhası / drenaj borusu", "area", "tip", "KSF-IZO-DRENAJ"),
     # CEP
     _i("KOMPOZIT_PANEL", "CEP", "Kompozit cephe paneli", "area", "kalınlık / renk", "KSF-CEP-KOMPOZIT_PANEL-4MM",
-       recipe=[_c("IS_ISKELESI", 1.0), _c("CEPHE_TASIYICI_PROFIL", 2.5, "ALU"), _c("ANKRAJ_BULONU", 1.5, "M10")]),
+       recipe=[_c("CEPHE_TASIYICI_PROFIL", 2.5, "ALU"), _c("ANKRAJ_BULONU", 1.5, "M10")]),
     _i("GIYDIRME_CEPHE", "CEP", "Giydirme cephe", "area", "sistem", "KSF-CEP-GIYDIRME_CEPHE",
-       recipe=[_c("IS_ISKELESI", 1.0), _c("ANKRAJ_BULONU", 1.2, "M12"), _c("VINC", 0.05)]),
-    _i("MANTOLAMA", "CEP", "Mantolama", "area", "malzeme + kalınlık (EPS_5)", "KSF-CEP-MANTOLAMA-EPS_5", recipe=[_c("IS_ISKELESI", 1.0)]),
-    _i("CEPHE_TASI", "CEP", "Cephe taşı / kaplama", "area", "tip", "KSF-CEP-CEPHE_TASI", recipe=[_c("IS_ISKELESI", 1.0)]),
+       recipe=[_c("ANKRAJ_BULONU", 1.2, "M12"), _c("VINC", 0.05)]),
+    _i("MANTOLAMA", "CEP", "Mantolama", "area", "malzeme + kalınlık (EPS_5)", "KSF-CEP-MANTOLAMA-EPS_5"),
+    _i("CEPHE_TASI", "CEP", "Cephe taşı / kaplama", "area", "tip", "KSF-CEP-CEPHE_TASI"),
     _i("CEPHE_BOYA", "CEP", "Dış cephe boyası", "area", "tip", "KSF-CEP-CEPHE_BOYA"),   # iskele: cephe sistemi / mantolama kaleminden (çift sayılmasın)
     _i("CEPHE_TASIYICI_PROFIL", "CEP", "Cephe taşıyıcı profil (alt konstrüksiyon)", "length", "malzeme (ALU / GALVANIZ)", "KSF-CEP-CEPHE_TASIYICI_PROFIL-ALU"),
     # CEP — mantolama sistemi bileşenleri
@@ -270,7 +270,7 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("MANTOLAMA_SISTEM", "CEP", "Mantolama sistemi (katmanlı)", "area", "yalıtım + kalınlık (EPS_5)",
        "KSF-CEP-MANTOLAMA_SISTEM-EPS_5",
        [_c("EPS", 1.0, "5"), _c("MANTOLAMA_YAPISTIRICI"), _c("MANTOLAMA_DUBEL", 6.0, "120"), _c("MANTOLAMA_FILE"),
-        _c("MANTOLAMA_SIVA"), _c("CEPHE_BOYA"), _c("KOSE_PROFILI", 0.3)], recipe=[_c("IS_ISKELESI", 1.0)]),
+        _c("MANTOLAMA_SIVA"), _c("CEPHE_BOYA"), _c("KOSE_PROFILI", 0.3)]),
     # CAT
     _i("CATI_MEMBRAN", "CAT", "Çatı membranı", "area", "tip", "KSF-CAT-CATI_MEMBRAN-3MM"),
     _i("CATI_SANDVIC_PANEL", "CAT", "Sandviç panel", "area", "kalınlık (mm)", "KSF-CAT-CATI_SANDVIC_PANEL-50",
@@ -524,12 +524,12 @@ DEFAULT_RECIPES: dict[str, list[tuple]] = {
     "TEMEL_SU_YALITIMI": [("YALITIM_ISCILIK", 0.35), ("BITUM_ASTAR", 0.4)],
     "KORUMA_SAPI": [("SAP_ISCILIK", 0.4)], "DRENAJ": [("YALITIM_ISCILIK", 0.3)],
     # CEP
-    "MANTOLAMA": [("IS_ISKELESI", 1.0), ("MANTOLAMA_ISCILIK", 1.2)],
-    "MANTOLAMA_SISTEM": [("IS_ISKELESI", 1.0), ("MANTOLAMA_ISCILIK", 1.2)],
-    "KOMPOZIT_PANEL": [("IS_ISKELESI", 1.0), ("CEPHE_TASIYICI_PROFIL", 2.5, "ALU"), ("ANKRAJ_BULONU", 1.5, "M10"), ("CEPHE_MONTAJ", 1.0)],
-    "GIYDIRME_CEPHE": [("IS_ISKELESI", 1.0), ("ANKRAJ_BULONU", 1.2, "M12"), ("VINC", 0.05), ("CEPHE_MONTAJ", 1.5)],
-    "CEPHE_TASI": [("IS_ISKELESI", 1.0), ("CEPHE_MONTAJ", 1.5), ("SERAMIK_YAPISTIRICI", 8.0)],
-    "CEPHE_BOYA": [("IS_ISKELESI", 1.0), ("BOYA_ISCILIK", 0.3)],
+    "MANTOLAMA": [("MANTOLAMA_ISCILIK", 1.2)],
+    "MANTOLAMA_SISTEM": [("MANTOLAMA_ISCILIK", 1.2)],
+    "KOMPOZIT_PANEL": [("CEPHE_TASIYICI_PROFIL", 2.5, "ALU"), ("ANKRAJ_BULONU", 1.5, "M10"), ("CEPHE_MONTAJ", 1.0)],
+    "GIYDIRME_CEPHE": [("ANKRAJ_BULONU", 1.2, "M12"), ("VINC", 0.05), ("CEPHE_MONTAJ", 1.5)],
+    "CEPHE_TASI": [("CEPHE_MONTAJ", 1.5), ("SERAMIK_YAPISTIRICI", 8.0)],
+    "CEPHE_BOYA": [("BOYA_ISCILIK", 0.3)],
     "SOVE": [("CEPHE_MONTAJ", 0.5)], "SILME": [("CEPHE_MONTAJ", 0.4)], "DENIZLIK": [("CEPHE_MONTAJ", 0.4)],
     "PREKAST_PANEL": [("ANKRAJ_BULONU", 4.0, "M20"), ("KAYNAK", 1.2), ("PREKAST_MONTAJ", 2.0), ("VINC", 0.5), ("PANEL_DERZ", 6.0)],
     # CAT

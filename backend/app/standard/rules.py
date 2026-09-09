@@ -95,8 +95,8 @@ def deductible_opening(area_m2: float) -> bool:
 DEFAULT_POZ: list[tuple[str, str, str, str]] = [
     ("beton", r".*", "15.150.1006", "C 30/37 hazır beton, pompalı"),
     ("kalip", r".*", "15.180.1003", "Plywood ile düz yüzeyli betonarme kalıbı"),
-    ("demir", r"^o(8|10|12)$", "15.160.1003", "Ø8–Ø12 nervürlü çelik"),
-    ("demir", r"^o(14|16|18|20|22|24|26|28)$", "15.160.1004", "Ø14–Ø28 nervürlü çelik"),
+    ("demir", r"^o?(8|10|12)$", "15.160.1003", "Ø8–Ø12 nervürlü çelik"),
+    ("demir", r"^o?(14|16|18|20|22|24|26|28)$", "15.160.1004", "Ø14–Ø28 nervürlü çelik"),
     ("demir", r".*", "15.160.1004", "Nervürlü çelik (çap bilinmiyor: Ø14–Ø28 pozu)"),
     ("duvar", r"^ytong:10$", "15.225.1004", "10 cm gazbeton duvar"),
     ("duvar", r"^ytong:15$", "15.225.1007", "15 cm gazbeton duvar"),
@@ -110,15 +110,23 @@ DEFAULT_POZ: list[tuple[str, str, str, str]] = [
     ("boru_pvc", r"^125$", "25.305.6104", "Sert PVC pis su borusu Ø125"),
     ("boru_pprc_temiz", r"^20$", "25.305.2101", "PN 20 polipropilen temiz su borusu 1/2\" (20 mm)"),
     ("boru_pprc_temiz", r"^40$", "25.305.2104", "PN 20 polipropilen temiz su borusu 1 1/4\" (40 mm)"),
-    ("boru_pprc_temiz", r".*", "25.305.21", "PN 20 polipropilen temiz su borusu (çapa göre alt poz)"),
+    ("boru_pprc_temiz", r".*", "", "PN 20 polipropilen temiz su borusu — çapa göre 25.305.21xx alt pozunu katalogdan seçin"),
     ("boru_pe", r"^32$", "25.305.7101", "PE100 SDR17 PN10 polietilen boru Ø32"),
     ("hava_kanal", r"^[1-5]\d\dx\d+$|^600x\d+$", "25.470.1101", "Galvanizli sacdan dikdörtgen hava kanalı, en geniş kenar ≤ 600 mm (0,60 mm)"),
     ("hava_kanal", r"^(6[0-9]\d|[7-9]\d\d|1[01]\d\d|12[0-4]\d)x\d+$", "25.470.1102", "Galvanizli sacdan dikdörtgen hava kanalı, en geniş kenar ≤ 1249 mm (0,80 mm)"),
     ("hava_kanal", r"^(1[3-9]\d\d|2[0-4]\d\d)x\d+$", "25.470.1103", "Galvanizli sacdan dikdörtgen hava kanalı, en geniş kenar ≤ 2490 mm (1,00 mm)"),
-    ("hava_kanal", r".*", "25.470.11", "Galvanizli sacdan dikdörtgen hava kanalı (kenara göre alt poz)"),
+    ("hava_kanal", r".*", "", "Galvanizli sacdan dikdörtgen hava kanalı — kenara göre 25.470.11xx alt pozunu katalogdan seçin"),
     ("hava_kanal_yuvarlak", r".*", "25.470.1204", "Kenetli spiral galvanizli sacdan silindirik hava kanalı Ø ≤ 1000 mm"),
     ("sprinkler", r".*", "25.705.1102", "Dik DN20 standart uygulama otomatik yangın sprinkleri"),
     ("seramik_zemin", r".*", "15.375.1053", "40x40 cm I. kalite renkli seramik yer karosu ile döşeme kaplaması (karo yapıştırıcısı ile)"),
+    # 9 Eyl 2026: birimfiyat.net / herpoz / kamupro / csb.gov.tr ile doğrulananlar
+    ("seramik_duvar", r".*", "15.380.1056", "20x60 / 30x60 / 33x60 cm I. kalite renkli seramik duvar karosu ile duvar kaplaması (karo yapıştırıcısı ile)"),
+    ("kazi", r".*", "15.120.1101", "Makine ile her derinlik ve genişlikte yumuşak ve sert toprak kazılması (derin kazı)"),
+    ("grobeton", r".*", "15.150.1003", "C 16/20 hazır beton, pompalı (grobeton)"),
+    ("kalip_iskelesi", r".*", "15.185.1001", "Çelik borudan kalıp iskelesi yapılması (0,00–4,00 m arası)"),
+    ("is_iskelesi", r".*", "15.185.1013", "Ön yapımlı bileşenlerden tam güvenlikli dış cephe iş iskelesi (0,00–51,50 m)"),
+    ("temel_su_yalitimi", r".*", "15.255.1009", "3 + 4 mm elastomer esaslı polimer bitümlü örtü ile iki kat su yalıtımı"),
+    ("kablo", r"^nyy_4x16$", "35.140.3225", "4x16 mm² NYY kolon / besleme hattı"),
 ]
 _DEFAULT_POZ_RE = [(k, re.compile(p, re.IGNORECASE), poz, name) for k, p, poz, name in DEFAULT_POZ]
 

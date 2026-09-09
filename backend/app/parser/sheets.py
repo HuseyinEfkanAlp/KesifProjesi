@@ -187,6 +187,8 @@ def _iter_entities(f, with_blocks: bool = False):
     blk_xs: list[float] = []
     blk_ys: list[float] = []
     in_blk_entity = False
+    blk_titles: list[tuple[float, float, float, str]] = []
+    blk_txt: dict | None = None
     while True:
         try:
             code = next(it).strip()
@@ -208,15 +210,23 @@ def _iter_entities(f, with_blocks: bool = False):
             if section == "ENTITIES":
                 cur = {"t": val, "xs": [], "ys": []}
             elif section == "BLOCKS" and with_blocks:
+                # blok içindeki başlık yazısı (antet bloğu): TEXT / MTEXT / ATTDEF varsayılanı, yerel koordinatla saklanır
+                if blk_txt is not None and blk_txt.get("x") is not None and blk_txt.get("y") is not None:
+                    txt = _clean_text("".join(blk_txt.get("3", [])) + blk_txt.get("1", ""))
+                    if txt and TITLE_RE.search(txt) and len(txt) <= 120:
+                        blk_titles.append((blk_txt["x"], blk_txt["y"], float(blk_txt.get("40", 0.0) or 0.0), txt))
+                blk_txt = None
                 if val == "BLOCK":
-                    blk_name, blk_xs, blk_ys, in_blk_entity = None, [], [], False
+                    blk_name, blk_xs, blk_ys, in_blk_entity, blk_titles = None, [], [], False, []
                 elif val == "ENDBLK":
                     if blk_name and blk_xs and blk_ys:
                         yield {"t": "__block__", "name": blk_name,
-                               "bbox": (min(blk_xs), min(blk_ys), max(blk_xs), max(blk_ys))}
-                    blk_name, in_blk_entity = None, False
+                               "bbox": (min(blk_xs), min(blk_ys), max(blk_xs), max(blk_ys)), "titles": list(blk_titles)}
+                    blk_name, in_blk_entity, blk_titles = None, False, []
                 else:
                     in_blk_entity = val not in ("INSERT", "HATCH", "DIMENSION", "ATTDEF")
+                    if val in ("TEXT", "MTEXT", "ATTDEF"):
+                        blk_txt = {}
             continue
         if code == "2" and section is None:
             section = val.strip()
@@ -237,9 +247,42 @@ def _iter_entities(f, with_blocks: bool = False):
                 blk_xs.append(float(val))
             elif in_blk_entity and code in ("20", "21"):
                 blk_ys.append(float(val))
+            if blk_txt is not None:
+                if code == "10" and "x" not in blk_txt:
+                    blk_txt["x"] = float(val)
+                elif code == "20" and "y" not in blk_txt:
+                    blk_txt["y"] = float(val)
+                elif code == "40":
+                    blk_txt["40"] = val
+                elif code == "1":
+                    blk_txt["1"] = val
+                elif code == "3":
+                    blk_txt.setdefault("3", []).append(val)
             continue
         if cur is None:
             continue
+        if cur["t"] == "HATCH":
+            # sınır yolları: 92 yol bayrağı (bit 2 = polyline), 72 kenar tipi (1 çizgi) / polyline'da bulge bayrağı,
+            # 10/20 köşe (polyline) ya da kenar başı, 11/21 çizgi kenarının sonu. Yay / elips / spline kenarlı yol atlanır.
+            if code == "92":
+                try:
+                    cur.setdefault("paths", []).append({"flags": int(val), "pts": [], "ok": True})
+                except ValueError:
+                    pass
+                continue
+            paths = cur.get("paths")
+            if paths:
+                pth = paths[-1]
+                if code == "72" and not (pth["flags"] & 2):
+                    try:
+                        if int(val) != 1:
+                            pth["ok"] = False
+                    except ValueError:
+                        pth["ok"] = False
+                elif code in ("10", "11"):
+                    pth["pts"].append([float(val), None])
+                elif code in ("20", "21") and pth["pts"] and pth["pts"][-1][1] is None:
+                    pth["pts"][-1][1] = float(val)
         if code in ("10", "11", "12", "13"):
             cur["xs"].append(float(val))
         elif code in ("20", "21", "22", "23"):
@@ -589,6 +632,8 @@ def scan_sheets(path: str | Path) -> SheetScan:
     rects: list[Bbox] = []                # kapalı dikdörtgen polyline'lar
     inserts: list[tuple[str, float, float, float, float]] = []   # ad, x, y, sx, sy
     blocks: dict[str, Bbox] = {}
+    block_titles: dict[str, list[tuple[float, float, float, str]]] = {}
+    block_texts: list[tuple[float, float, float, str]] = []      # antet bloğu içinden gelen başlıklar (yedek)
     texts: list[tuple[float, float, float, str]] = []
     other_texts: list[tuple[float, float, float, str]] = []   # başlık deseni geçmeyen yazılar (başlık satırı tamamlama)
     layer_ids = array("i")
@@ -605,6 +650,8 @@ def scan_sheets(path: str | Path) -> SheetScan:
                 continue
             if t == "__block__":
                 blocks[ent["name"]] = ent["bbox"]
+                if ent.get("titles"):
+                    block_titles[ent["name"]] = ent["titles"]
                 continue
             if not ent["xs"] or not ent["ys"]:
                 continue
@@ -629,6 +676,16 @@ def scan_sheets(path: str | Path) -> SheetScan:
             elif t == "INSERT" and ent.get("2"):
                 inserts.append((ent["2"], ent["xs"][0], ent["ys"][0],
                                 float(ent.get("41", 1.0) or 1.0), float(ent.get("42", 1.0) or 1.0)))
+                bt = block_titles.get(ent["2"])
+                if bt:
+                    # antet bloğunun içindeki başlık: blok yerleşimine göre dönüştürülür; yalnız başlıksız kalan paftalara
+                    # yedek olarak atanır ("KESİT ADI" gibi yer tutucu blok yazıları pafta üretmesin)
+                    sx, sy = float(ent.get("41", 1.0) or 1.0), float(ent.get("42", 1.0) or 1.0)
+                    rot = math.radians(float(ent.get("50", 0.0) or 0.0))
+                    for dx, dy, h, txt in bt:
+                        px = ent["xs"][0] + dx * sx * math.cos(rot) - dy * sy * math.sin(rot)
+                        py = ent["ys"][0] + dx * sx * math.sin(rot) + dy * sy * math.cos(rot)
+                        block_texts.append((px, py, h * abs(sx) if h > 0 else 0.0, txt))
             elif t in ("TEXT", "MTEXT", "ATTRIB"):
                 h = float(ent.get("40", 0.0) or 0.0)
                 txt = _clean_text("".join(ent.get("3", [])) + ent.get("1", ""))   # MTEXT: kod 3 parçaları önce, kod 1 son parça
@@ -696,6 +753,17 @@ def scan_sheets(path: str | Path) -> SheetScan:
     npl = np.frombuffer(layer_ids, dtype="i").copy() if len(layer_ids) else np.zeros(0, dtype="i")
     geom = ~(np.frombuffer(is_text, dtype="b").astype(bool)) if len(is_text) else np.ones(0, dtype=bool)
     sheets = _build_sheets(boxes, npx, npy, titles, extent, npl, layer_names, geom) if len(boxes) >= 2 else []
+    if block_texts:
+        placeholder = re.compile(r"\b(ADI|ADİ|NAME|TITLE)\b", re.IGNORECASE)   # "KESİT ADI", "PAFTA ADI": yer tutucu
+        for sh in sheets:
+            if sh.titled:
+                continue
+            x0, y0, x1, y1 = sh.bbox
+            inside = [t for t in block_texts if x0 <= t[0] <= x1 and y0 <= t[1] <= y1 and not placeholder.search(t[3])]
+            if inside:
+                best = max(inside, key=lambda t: t[2])
+                sh.title, sh.titled = best[3], True
+                sh.titles = [t[3] for t in inside if t[3] != best[3]][:6]
     if title_bands and len(band_names) == len(tb):
         # pafta adı = başlık satırındaki yazı; paftadaki daha büyük alt başlıklar (ÖN GÖRÜNÜŞ…) aday listesine
         by_box = {tuple(round(v, 3) for v in b): n for b, n in zip(tb, band_names)}
@@ -773,7 +841,8 @@ BLOCK_EXPAND_DEPTH = 4
 
 
 def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_ratio: float = 0.02,
-                include_blocks: bool = True, neighbors: list[Bbox] | None = None) -> list[int]:
+                include_blocks: bool = True, neighbors: list[Bbox] | None = None,
+                stream_min_bytes: int | None = None) -> list[int]:
     """Birden çok paftayı tek geçişte kırpar; her hedef için yazılan nesne sayısını döndürür.
 
     neighbors: dosyadaki bütün pafta çerçeveleri (kırpılmayanlar dahil); kırpma payı bunların içine taşmaz.
@@ -789,7 +858,7 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
     insunits = 0
     inserts_hit = 0
     size = Path(src).stat().st_size
-    stream_blocks = include_blocks and size > STREAM_BLOCK_MIN_BYTES
+    stream_blocks = include_blocks and size > (STREAM_BLOCK_MIN_BYTES if stream_min_bytes is None else stream_min_bytes)
     ins_records: list[list[dict]] = [[] for _ in tg]   # akış genişletmesi için hedef başına INSERT kayıtları
     with _open_dxf_text(src) as f:
         for ent in _iter_entities(f):
@@ -809,7 +878,19 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
                             if g.inside(xs, ys):
                                 ins_records[i].append(rec)
                 elif t == "HATCH":
-                    inserts_hit += 1          # tarama sınır noktaları akışta okunmaz; ezdxf geçişinde kontrol edilir
+                    inserts_hit += 1
+                if t == "HATCH" and stream_blocks:
+                    # büyük dosya: ezdxf geçişi yapılmayacak, tarama sınırları akıştan yazılır (cephe / mimari alan ölçümü)
+                    for pth in ent.get("paths") or []:
+                        pts = [(x, y) for x, y in pth["pts"] if y is not None]
+                        if not pth["ok"] or len(pts) < 3:
+                            continue
+                        pxs = [q[0] for q in pts]; pys = [q[1] for q in pts]
+                        for g in tg:
+                            if g.inside(pxs, pys):
+                                g.msp.add_lwpolyline(pts, close=True, dxfattribs={"layer": layer})
+                                g.layers.add(layer)
+                                g.written += 1
                 continue
             if t == "POLYLINE":
                 poly = {"layer": layer, "closed": bool(ent.get("70", 0) & 1), "pts": []}

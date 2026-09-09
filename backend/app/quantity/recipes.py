@@ -23,6 +23,14 @@ def recipe_of(item: BoqItem, catalog: Catalog) -> list[dict]:
     cit = catalog.get(item.kind)
     if cit and cit.recipe:
         return list(cit.recipe)
+    if item.kind == "duvar":
+        # sezgisel duvar: malzemeye göre katalog reçetesi (tuğlaya gazbeton tutkalı yazılmasın)
+        mat = (item.group or "").split(":")[0].lower()
+        code = {"ytong": "DUVAR_YTONG", "gazbeton": "DUVAR_YTONG", "tugla": "DUVAR_TUGLA", "bims": "DUVAR_BIMS",
+                "alcipan": "DUVAR_ALCIPAN"}.get(mat)
+        wit = catalog.get(code) if code else None
+        if wit and wit.recipe:
+            return list(wit.recipe)
     return list(RECIPES_BY_KIND.get(item.kind, []))
 
 

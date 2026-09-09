@@ -250,21 +250,50 @@ Bu çizimle yapılan düzeltmeler:
   2.5 m içindeki çizgiye kendi doğrultusunda uzatılarak köprülenir (`raft_line_snap`); yan yana paralel çizgiler (sürekli temel)
   köprülenmez. Dört RD1 (70 cm) bölgesi yakalandı; aralardaki koridorlar kalan alan olarak RD2 (40 cm) etiketinden alınır.
 - **Etiketsiz kirişler** (%7–14): kattaki baskın kiriş yüksekliğiyle hesaplanır, not düşülür (eskiden 0 alınıyordu).
-- Temel paftasındaki kolon/perde izleri metraj dışı (doğru); "Parapet (20/82)" etiketleri ve `VM Parapet Tarama` henüz sayılmıyor.
-- +15.65 çatı paftasında 66 döşeme etiketi kiriş ağı olmayan bölgede: bu döşemeler bulunamıyor (elle eklenmeli).
+- Temel paftasındaki kolon/perde izleri metraj dışı (doğru); "Parapet (20/82)" etiketleri `parapet` ipucu alır, kolona yapışmaz;
+  `VM Parapet Tarama` henüz metraja girmiyor (bkz. güven paketi notu).
+
+**Güven paketi (9 Eyl 2026)** — dört bağımsız inceleme (demir, statik, mimari/elektrik/mekanik, altyapı) sonrası bu çizimle yeniden kalibre edildi:
+
+- **Döşeme hücreleri kayan-nokta gürültüsüyle kapanmıyordu**: kiriş çizgi uçları 1e-13 m farkla "çakışmadığı" için `polygonize`
+  hücreyi kapatamıyor, açık bölgeler dış halkayla birleşip sahte "birleşik panel" oluyordu. Çizgiler 1 mm hassasiyet ızgarasına
+  oturtulur (`shapely.set_precision`, `faces_from_network` / `polygons_on_layers`). +15.65'te 66 kayıp döşemenin hepsi bulundu
+  (104 → 163 döşeme, 902 → 2.502 m²); +7.95 ve +10.65'teki 1.300 m²'lik sahte halkalar gitti. Tek etiketli 400 m² üstü panel
+  atılmaz, düşük güvenle (metraj dışı) listelenir.
+- **Kırpma payı komşu paftaya taşıyordu**: bitişik çerçevelerde kenardaki kiriş / poz yazısı iki paftaya da yazılıyordu. Pay komşu
+  çerçevenin çekirdeğine kadar kırpılır; kiriş detaylarında poz satırı 8.264 → 7.987 (kaynak dosyadaki sayıyla birebir).
+- **Donatı paftası kalıp planı sanılıyordu**: başlığı "+7.95 KOTU KALIP PLANI" olan döşeme donatı paftaları (alt başlık "X YÖNÜ
+  DONATI PLANI") statik analiz ediliyor, tablo okunmuyor ve kalıp betonu ikinci kez sayılıyordu. Bütün başlık adayları değerlendirilir,
+  donatı adayı kazanır; katmanlarda DONATI / POZ / METRAJ nesneleri kalabalıksa katman kanıtı da donatı der.
+- **Kiriş detaylarının demiri döşemeye yazılıyordu** (pafta başlığı "K1075"): hedef eleman artık plan tipi > başlıktaki açık sözcük
+  > dosya adı sırasıyla bulunur.
+- **Kesit etiketi alanla tutarlı olan seçilir**: "Parapet (20/82)" ya da komşu kirişin "(100/45)" yazısı 100×100 kolona yapışmaz
+  (kesit uyuşmazlığı 48 → 3 kolon). Yüzey içindeki "(100/100)" yazısı döşeme kalınlığı olmaz (1,00 m sahte kalınlık gitti).
+- **Kiriş yan kalıbı döşeme altına kadar** (h − d; ÇŞB 15.180.1003 "kalıp gören yüz"): kiriş kalıbı 18.612 → 15.067 m². Kesişen
+  kirişlerde ortak hacim dar kirişten düşülür (~150 m³). Etiketsiz kiriş için etiket 0,6 m'ye kadar aranır; atanmamış kiriş /
+  döşeme etiketleri uyarıda listelenir (eksik kiriş → elle ekleme).
+- **Temel**: etiketsiz açık polyline kutuları ("MİLANO 1/2", 405 m² → 202 m³ sahte beton) metraj dışı; RD2 tahmini yalnız etiketli
+  bölgelere dayanır (3.368 → 2.907 m²).
+- **Demir toplama**: tip kat çarpanı tablo demirine de uygulanır; kot bazında eşleme (donatı paftası olan katın oranı düşer, olmayan
+  kat oranla kalır ve uyarı verir); kaynak (tablo / poz / elle / oran) çap bazında ve keşifte görünür; "AĞIRLIK (ton)" satırı,
+  sütunlar arasına ortalanmış genel toplam sağlaması, `160+30` kanca payı, metre boy, `4Q14`, "(2 ADET)" çarpanı, adetsiz poz uyarısı.
+  Fire kalemi yalnız kesim artığıdır (%3): bindirme ve kanca poz boylarında zaten vardır. Varsayılan oranlar kolon 180 / perde 140 /
+  kiriş 140 / döşeme 85 / temel 95 kg/m³ (oran her zaman düşük güven).
 
 Demir: 11 donatı paftasının metraj tabloları (temel X/Y/ilave, döşeme alt/üst × 4 kot) birebir okundu (907,9 t); kolon paftalarının
-tabloları blok içindeydi (5 tablo, 633 t); kiriş detaylarında tablo yok, 7.987 adetli poz yazısından 607 t hesaplandı. Yalnız perde
-(7 t) oranla kaldı. Gerçek oranlar bu projede: radye 97, kolon **374**, kiriş 178, döşeme 82 kg/m³ — kolon için varsayılan 130 çok düşüktü.
+tabloları blok içindeydi (5 tablo, 633 t); kiriş detaylarında tablo yok, 7.987 adetli poz yazısından 604,6 t hesaplandı. Yalnız perde
+(7 t) oranla kaldı. Gerçek oranlar bu projede: radye 97, kolon **374**, kiriş 178, döşeme 82 kg/m³.
+
+Güven paketi sonrası (9 Eyl 2026; `find_parallel_pairs` çoklu eşleme ile aynı çizgiyi paylaşan ardışık kirişler de yakalanır):
 
 | Grup | Adet | Beton m³ | Kalıp m² | Demir t | Demir kaynağı |
 |---|---|---|---|---|---|
-| Radye (RD1 7.166 m² × 0,70 + RD2 3.368 m² × 0,40) | 8 | 6.572 | 945 | 635,5 | tablo |
+| Radye (RD1 7.166 m² × 0,70 + RD2 2.907 m² × 0,40) | 5 | 6.186 | 779 | 635,5 | tablo |
 | Kolon | 457 | 1.693 | 5.963 | 633,0 | tablo (blok içi) |
-| Perde | 23 | 74 | 433 | 7,4 | oran |
-| Kiriş | 1.746 | 3.405 | 16.797 | 607,5 | poz yazıları |
-| Döşeme | 1.254 | 3.319 | 22.225 | 272,3 | tablo |
-| **Toplam** | | **15.064** | **46.363** | **2.156** | |
+| Perde | 23 | 74 | 433 | 10,4 | oran (140 kg/m³) |
+| Kiriş | 1.760 | 3.734 | 15.067 | 604,6 | poz yazıları (7.987 satır) |
+| Döşeme | 1.349 | 3.128 | 21.106 | 272,3 | tablo |
+| **Toplam** | | **14.815** | **43.348** | **2.156** | |
 
 Çap bazında: Ø8 154 t, Ø10 200 t, Ø12 367 t, Ø14 268 t, Ø16 82 t, Ø20 596 t, Ø26 481 t.
 
@@ -476,8 +505,8 @@ Zaman ya da maliyet doğuran her alt iş keşfe girer: ana kalem keşfe yazılı
 Çelik çatı 1.000 m²   → çelik konstrüksiyon 25 t → ankraj bulonu 250 → tij 250, somun 500, pul 500
                                                  → kaynak 1.000 m, antipas 500 m², boya 500 m², montaj 750 saat, vinç 100 saat
                       → aşık 1.600 m, sandviç panel 1.050 m² → panel vidası, mahya kapama, panel montajı
-Kalıp 800 m²          → kalıp iskelesi 800 × H m³ (ÇŞB 15.185.1006)     Beton → pompaj m³
-Cephe (mantolama / kompozit / giydirme / taş / boya) → iş iskelesi m² (+ taşıyıcı profil, ankraj, vinç)
+Döşeme 800 m²         → kalıp iskelesi 800 × (H − d) m³ (ÇŞB 15.185.1001; reçete değil, türetilir)   Beton → pompaj m³
+Cephe (mantolama / kompozit / giydirme / taş / boya) → iş iskelesi cephe brüt m² (tek kez, türetilir) (+ taşıyıcı profil, ankraj, vinç)
 Prekast panel (adet)  → ankraj 4, kaynak 1,2 m, montaj 2 saat, vinç 0,5 saat, derz 6 m
 Pencere / kapı / doğrama (adet) → lento, montaj saati, montaj köpüğü      Duvar m² → gazbeton tutkalı 4 kg
 ```

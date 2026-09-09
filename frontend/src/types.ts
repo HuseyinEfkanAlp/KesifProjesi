@@ -13,7 +13,7 @@ export const DISCIPLINES: Record<Discipline, string> = {
 }
 
 export type EType =
-  | 'column' | 'shear_wall' | 'beam' | 'slab' | 'foundation'
+  | 'column' | 'shear_wall' | 'beam' | 'slab' | 'foundation' | 'parapet'
   | 'wall' | 'door' | 'window'
   | 'tray' | 'cable' | 'conduit' | 'fixture'
   | 'pipe' | 'duct' | 'mech_fixture'
@@ -24,6 +24,7 @@ export const ETYPE_LABELS: Record<EType, string> = {
   beam: 'Kiriş',
   slab: 'Döşeme',
   foundation: 'Temel',
+  parapet: 'Parapet',
   wall: 'Duvar',
   door: 'Kapı',
   window: 'Pencere',
@@ -37,7 +38,7 @@ export const ETYPE_LABELS: Record<EType, string> = {
 }
 
 export const ETYPES_BY_DISCIPLINE: Record<Discipline, EType[]> = {
-  structural: ['column', 'shear_wall', 'beam', 'slab', 'foundation'],
+  structural: ['column', 'shear_wall', 'beam', 'slab', 'foundation', 'parapet'],
   architectural: ['wall', 'door', 'window'],
   electrical: ['tray', 'cable', 'conduit', 'fixture'],
   mechanical: ['pipe', 'duct', 'mech_fixture'],
@@ -65,7 +66,7 @@ export function layerTypeLabels(discipline: Discipline, extras: Discipline[] = [
 export const HEURISTIC_DISCIPLINES: Discipline[] = ['structural', 'architectural', 'electrical', 'mechanical']
 
 export const ETYPE_COLORS: Record<EType, string> = {
-  column: '#d62728', shear_wall: '#9467bd', beam: '#1f77b4', slab: '#2ca02c', foundation: '#ff7f0e',
+  column: '#d62728', shear_wall: '#9467bd', beam: '#1f77b4', slab: '#2ca02c', foundation: '#ff7f0e', parapet: '#b5651d',
   wall: '#8c564b', door: '#e377c2', window: '#17becf',
   tray: '#bcbd22', cable: '#ff9896', conduit: '#c5b0d5', fixture: '#7f7f7f',
   pipe: '#2a9d8f', duct: '#8ab17d', mech_fixture: '#e9c46a',
@@ -299,6 +300,7 @@ export interface RebarDia {
   weight_kg: number
   length_m: number
   targets: Record<string, number>
+  sources?: Record<string, number>
 }
 
 export interface DrawingSummary {
@@ -322,6 +324,8 @@ export interface QuantitySummary {
   rebar_by_dia: RebarDia[]
   rebar_table_total_kg: number
   rebar_ratio_total_kg: number
+  rebar_by_source?: Record<string, number>
+  warnings?: string[]
   by_drawing: DrawingSummary[]
 }
 

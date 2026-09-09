@@ -28,6 +28,8 @@ DEFAULT_REBAR_RATIOS: dict[str, float] = {
     "beam": 140.0,
     "slab": 85.0,
     "foundation": 95.0,
+    "parapet": 100.0,
+    "stair": 120.0,
 }
 
 
@@ -153,6 +155,12 @@ def compute_element(el: ElementData, p: QuantityParams) -> QuantityLine:
         t = el.thickness if el.thickness is not None else d
         concrete = el.area * t
         formwork = el.area
+    elif el.etype == "parapet":
+        if not (el.b and el.h):
+            notes.append("Parapet kesiti (b/h) eksik; 0 alındı")
+        else:
+            concrete = el.b * el.h * el.length
+            formwork = 2.0 * el.h * el.length
     elif el.etype == "foundation":
         multiplier = 1
         if el.subtype == "strip":

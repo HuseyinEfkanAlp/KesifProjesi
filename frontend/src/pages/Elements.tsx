@@ -7,7 +7,7 @@ import { DISCIPLINES, ETYPE_COLORS, ETYPE_LABELS, ETYPES_BY_DISCIPLINE, SUBTYPE_
 
 /** Tipe göre düzenlenebilir sayısal alanlar */
 const FIELDS: Record<EType, Array<'b' | 'h' | 'thickness' | 'length' | 'area'>> = {
-  column: ['b', 'h'], shear_wall: ['b', 'length'], beam: ['b', 'h', 'length'], slab: ['thickness', 'area'], foundation: ['b', 'h', 'thickness', 'length', 'area'],
+  column: ['b', 'h'], shear_wall: ['b', 'length'], beam: ['b', 'h', 'length'], slab: ['thickness', 'area'], foundation: ['b', 'h', 'thickness', 'length', 'area'], parapet: ['b', 'h', 'length'],
   wall: ['b', 'h', 'length'], door: ['b', 'h'], window: ['b', 'h'],
   tray: ['b', 'h', 'length'], cable: ['length'], conduit: ['length'], fixture: [],
   pipe: ['b', 'length'], duct: ['b', 'h', 'length'], mech_fixture: [],

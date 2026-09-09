@@ -158,6 +158,8 @@ def _structural(drawing: Drawing, layers_by_type: dict[str, list[str]], params: 
                          network_segments=segments_on_layers(drawing, beam_layers) if beam_layers else None,
                          supports=supports, holes=holes)
     founds = detect_foundations(drawing, layers_by_type.get("foundation", []), labels, params, supports=supports)
+    from .detectors.parapet import detect_parapets
+    parapets = detect_parapets(drawing, layers_by_type.get("parapet", []), labels, params)
 
     # Temel paftası: üzerindeki kolon/perdeler yerleşim izidir (aynı elemanlar bodrum kalıp planında sayılır).
     # Metraj dışı bırakılır (düşük güven); kullanıcı isterse listede açabilir.
@@ -182,7 +184,7 @@ def _structural(drawing: Drawing, layers_by_type: dict[str, list[str]], params: 
         names = sorted(set(unused_slabs))
         result.warnings.append(f"{len(names)} döşeme etiketi kapalı bir hücreye düşmedi (kiriş / perde çizgileri hücreyi kapatmıyor): "
                                + ", ".join(names[:12]) + ("…" if len(names) > 12 else "") + " — bu döşemeleri elle ekleyin")
-    return columns + walls + beams + slabs + founds
+    return columns + walls + beams + slabs + founds + parapets
 
 
 MIN_PLAN_GEOMETRY = 60   # bu kadar az çizgi / çokgen olan mimari paftada plan çizilmemiştir (yalnız yazı / xref izi)

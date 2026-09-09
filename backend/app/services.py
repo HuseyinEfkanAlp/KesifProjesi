@@ -666,10 +666,36 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
         add("ASTAR", "", boya, "boya alanı kadar astar (duvar)", "astar")
     # 2) kat planı oturumu -> tavan; şap ve döşeme kaplaması yalnız seçili mahallerde (lobi, vitrin…)
     fps = _plan_footprints(project, session, drawings)
-    floor = sum(fp["area"] * max(1, fp["storey_count"]) for fp in fps)
+    # aynı kat birden çok paftada (kat planı + yerleşim planı, iki çatı katı paftası): kot / kat sırası bazında en büyük alan
+    fps_u = _unique_floor_footprints(fps)
+    floor = sum(fp["area"] * max(1, fp["storey_count"]) for fp in fps_u if not fp["basement"])
     if floor > 0 and "tavan_siva_boya" not in kinds:
-        src = ", ".join(f"{fp['drawing']} {fp['area']:,.0f} m²" for fp in fps[:4]) + ("…" if len(fps) > 4 else "")
-        add("TAVAN_SIVA_BOYA", "", floor, f"kat oturumu × kat sayısı ({src}); asma tavanlı mahalleri düşün", "tavan")
+        above = [f for f in fps_u if not f["basement"]]
+        src = ", ".join(f"{fp['drawing']} {fp['area']:,.0f} m²" for fp in above[:4]) + ("…" if len(above) > 4 else "")
+        add("TAVAN_SIVA_BOYA", "", floor, f"kat oturumu × kat sayısı ({src}); bodrum (otopark) hariç, asma tavanlı mahalleri düşün", "tavan")
+    base_area = sum(fp["area"] * max(1, fp["storey_count"]) for fp in fps_u if fp["basement"])
+    if base_area > 0 and "tavan_siva_boya" not in kinds:
+        ask("tavan_bodrum", f"Bodrum katlarının tavanı ({base_area:,.0f} m²) sıva-boya listesine alınmadı (otopark / depo). Gerekiyorsa elle ekleyin.", "optional")
+    # ıslak hacimler: mahal adından (WC / BANYO / DUŞ / ISLAK / LAVABO / TUVALET) yer + duvar seramiği ve sürme izolasyon
+    wet_rooms = []
+    for d in drawings:
+        mult = max(1, d.storey_count or 1)
+        for r in (d.rooms or []):
+            name = str(r.get("name") or "")
+            if re.search(r"\bWC\b|BANYO|DU[SŞ]\b|ISLAK|LAVABO|TUVALET|BATHROOM|TOILET", name, re.IGNORECASE):
+                wet_rooms.append((name, float(r.get("area_m2") or 0.0), mult))
+    wet_area = sum(a * m for _, a, m in wet_rooms)
+    if wet_area > 0:
+        wet_h = float(params.get("wet_wall_h") or 2.2)
+        # çevre çizimde yok: kare mahal varsayımı 4·√alan (not düşülür); kapı boşluğu 0,9 × 2,1 düşülür
+        wall = sum((4 * (a ** 0.5) * wet_h - 0.9 * min(wet_h, 2.1)) * m for _, a, m in wet_rooms)
+        if "seramik_zemin" not in kinds:
+            add("SERAMIK_ZEMIN", "", wet_area, f"ıslak hacim mahal alanları ({len(wet_rooms)} mahal)", "islak")
+        if "seramik_duvar" not in kinds:
+            add("SERAMIK_DUVAR", "", max(wall, 0.0), f"ıslak hacim çevresi × {wet_h:g} m − kapı boşluğu (çevre 4·√alan varsayımı)", "islak")
+        if "surme_izolasyon" not in kinds:
+            add("SURME_IZOLASYON", "", wet_area + sum(4 * (a ** 0.5) * 0.3 * m for _, a, m in wet_rooms),
+                "ıslak hacim zemini + 30 cm etek", "islak")
     fin = finish_area(project, drawings, params)
     if fin["area"] > 0:
         if "sap" not in kinds:
@@ -703,9 +729,13 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
             add("KAZI", f"{depth*100:.0f}", exc, f"temel alanı {found_area:,.0f} m² × derinlik {depth:g} m × şev / çalışma payı {margin:g}", "kazi")
             found_conc = sum(it.quantity for it in items if it.kind == "beton" and it.group == "foundation")
             lean = float(params.get("lean_concrete_cm") or 0.0) / 100.0 * found_area
-            back = exc - found_conc - lean
+            # bodrumlu yapıda çukuru bodrum yapısı doldurur: geri dolgu yalnız çevre şeridi
+            basement_vol = sum(fp["area"] * max(1, fp["storey_count"]) * float(fp.get("storey_height") or 0.0)
+                               for fp in fps_u if fp["basement"])
+            back = exc - found_conc - lean - basement_vol
             if back > 0:
-                add("GERI_DOLGU", "", back, f"kazı {exc:,.0f} m³ − temel betonu {found_conc:,.0f} m³ − grobeton {lean:,.0f} m³", "geri_dolgu")
+                add("GERI_DOLGU", "", back, f"kazı {exc:,.0f} m³ − temel betonu {found_conc:,.0f} m³ − grobeton {lean:,.0f} m³"
+                    + (f" − bodrum hacmi {basement_vol:,.0f} m³" if basement_vol else ""), "geri_dolgu")
         if "drenaj" not in kinds:
             ask("drenaj", f"Temel var ({found_area:,.0f} m²): perimetre drenajı (drenaj borusu + levha) gerekiyorsa ekleyin.", "optional")
     # 4) çatı
@@ -722,6 +752,9 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
     if fa["gross"] > 0 and not str(params.get("facade_system") or "").strip() and not (kinds & facade_kinds):
         ask("cephe_sistemi", f"Cephe brüt alanı {fa['gross']:,.0f} m² ({fa['detail']}) ama cephe sistemi seçilmedi (mantolama + boya / kompozit / "
                              "prekast / cephe taşı). Cephe boyası ve astarı da bu seçimden gelir.")
+    facade_work = kinds & (facade_kinds - {"cephe_brut"})
+    if fa["gross"] > 0 and facade_work and "is_iskelesi" not in kinds:
+        add("IS_ISKELESI", "", fa["gross"], f"cephe brüt alanı ({fa['detail']}); mantolama / boya / kaplama için tek iskele (ÇŞB 15.185.1013)", "iskele")
     openings = qty("pencere") + qty("dograma")
     evidence = merge_materials([d.materials or {} for d in drawings])
     layer_names = {l.get("name", "").upper() for d in drawings for l in (d.layers or [])}
@@ -776,6 +809,20 @@ def building_footprint(elements) -> "tuple[float, float] | None":
         return None
     big = max(parts, key=lambda g: g.area)    # bina oturumu: en büyük parça (uzak aykırı nesneler elenir)
     return float(big.area), float(big.exterior.length)
+
+
+def _unique_floor_footprints(fps: list[dict]) -> list[dict]:
+    """Aynı katı temsil eden paftalardan (kot ya da kat sırası aynı) en büyük oturumlu olan alınır."""
+    from .parser.levels import floor_rank
+    best: dict[object, dict] = {}
+    for fp in fps:
+        kot = kot_from_label(fp["drawing"])
+        key = ("kot", kot) if kot else ("rank", floor_rank(fp["drawing"]))
+        if key[1] is None:
+            key = ("name", fp["drawing"])
+        if key not in best or fp["area"] > best[key]["area"]:
+            best[key] = fp
+    return list(best.values())
 
 
 def _plan_footprints(project: Project, session: Session, drawings: list[Drawing]) -> list[dict]:

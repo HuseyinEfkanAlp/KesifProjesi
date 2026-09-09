@@ -7,7 +7,7 @@ from ..parser.layer_profile import ELEMENT_TYPES
 from .engine import QuantityLine
 
 SUBTYPE_LABELS = {"raft": "Radye Temel", "strip": "Sürekli Temel"}
-GROUP_ORDER = ["foundation:raft", "foundation:strip", "foundation", "column", "shear_wall", "beam", "slab", "stair"]
+GROUP_ORDER = ["foundation:raft", "foundation:strip", "foundation", "column", "shear_wall", "beam", "slab", "parapet", "stair"]
 
 
 def group_key(line: QuantityLine) -> str:

@@ -102,7 +102,7 @@ def test_rooms_finish_area(client, tmp_path):
     msp = doc.modelspace()
     for y in (0, 400):
         msp.add_lwpolyline(_rect(0, y, 600, 20), close=True, dxfattribs={"layer": "DUVAR"})      # 6 m duvarlar
-    for i, t in enumerate(("LOBİ\\P45.20 m2", "VİTRİN 1\\P12.50 m2", "CALZEDONIA\\P106.60m2", "TWIST\\P199.85m2")):
+    for i, t in enumerate(("LOBİ\\P45.20 m2", "VİTRİN 1\\P12.50 m2", "CALZEDONIA\\P106.60m2", "TWIST\\P199.85m2", "WC\\P8.00 m2")):
         msp.add_mtext(t, dxfattribs={"layer": "YAZI", "char_height": 15}).set_location((60 + i * 120, 200))
     for i in range(22):   # birim sağlaması için yeterli yazı (20 cm)
         msp.add_text(f"M{i}", dxfattribs={"layer": "YAZI", "height": 20}).set_placement((20 + i * 25, 100))
@@ -114,11 +114,15 @@ def test_rooms_finish_area(client, tmp_path):
     sy = client.get(f"/api/projects/{pid}/systems").json()
     fin = sy["finish"]
     assert fin["source"] == "rooms" and fin["area"] == pytest.approx((45.2 + 12.5) * 2)
-    assert {r["name"] for r in fin["rooms"] if r["included"]} == {"LOBİ", "VİTRİN 1"} and len(fin["excluded"]) == 2
+    assert {r["name"] for r in fin["rooms"] if r["included"]} == {"LOBİ", "VİTRİN 1"} and len(fin["excluded"]) == 3
     assert any(c["code"] == "kaplama_disi" for c in sy["checklist"])
     by = {i["key"]: i for i in client.get(f"/api/projects/{pid}/quantities").json()["boq"]["items"]}
     assert by["sap:5"]["quantity"] == pytest.approx((45.2 + 12.5) * 2 * 0.05, rel=1e-3) and by["doseme_kaplama:*"]["quantity"] == pytest.approx(115.4)
+    # ıslak hacim (WC 8 m² × 2 kat): yer seramiği, duvar seramiği (4·√8 × 2,2 − kapı) ve sürme izolasyon türetilir
+    assert by["seramik_zemin:*"]["quantity"] == pytest.approx(16.0, rel=1e-3)
+    assert by["seramik_duvar:*"]["quantity"] == pytest.approx((4 * 8 ** 0.5 * 2.2 - 0.9 * 2.1) * 2, rel=1e-3)
+    assert by["surme_izolasyon:*"]["quantity"] == pytest.approx(16.0 + 4 * 8 ** 0.5 * 0.3 * 2, rel=1e-3)
     # mağazaları da dahil et
-    client.patch(f"/api/projects/{pid}", json={"params": {"finish_rooms": "LOBİ, VİTRİN, CALZEDONIA, TWIST"}})
+    client.patch(f"/api/projects/{pid}", json={"params": {"finish_rooms": "LOBİ, VİTRİN, CALZEDONIA, TWIST, WC"}})
     fin = client.get(f"/api/projects/{pid}/systems").json()["finish"]
-    assert fin["area"] == pytest.approx((45.2 + 12.5 + 106.6 + 199.85) * 2) and not fin["excluded"]
+    assert fin["area"] == pytest.approx((45.2 + 12.5 + 106.6 + 199.85 + 8.0) * 2) and not fin["excluded"]

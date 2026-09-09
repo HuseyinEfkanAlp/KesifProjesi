@@ -58,7 +58,7 @@ def test_facade_scaffold_and_openings_recipe():
     facade = [{"etype": "cephe_boya", "subtype": None, "name": "boya", "layer": "KSF-CEP-CEPHE_BOYA", "count": 1, "length": 0, "area": 600.0, "meta": {}}]
     items = expand_recipes(standard_items([{"label": "Cephe", "storey_count": 1, "elements": facade}], {}, cat), cat, storey_height=3.0)
     k = _keys(items)
-    assert k["is_iskelesi:*"].quantity == pytest.approx(600) and k["is_iskelesi:*"].detail["parent"] == "cephe_boya:*"
+    assert "is_iskelesi:*" not in k          # cephe iskelesi reçeteden değil, cephe brüt alanından tek kez türetilir (services.derived_items)
     walls = [{"etype": "wall", "b": 0.2, "length": 10.0, "subtype": "ytong", "count": 1}]
     win = {"etype": "window", "b": 1.2, "h": 1.4, "count": 3, "name": "P1"}
     arch = architectural_items([{"label": "Z", "storey_count": 1, "storey_height": 3.0, "slab_thickness": 0.0, "elements": walls + [win]}], {})
@@ -70,11 +70,12 @@ def test_facade_scaffold_and_openings_recipe():
 def test_recipe_does_not_double_measured_item():
     """Çizimde iskele zaten ölçülmüşse reçete üstüne eklemez, not düşer."""
     cat = Catalog()
-    facade = [{"etype": "cephe_boya", "subtype": None, "name": "boya", "layer": "KSF-CEP-CEPHE_BOYA", "count": 1, "length": 0, "area": 600.0, "meta": {}},
-              {"etype": "is_iskelesi", "subtype": None, "name": "iskele", "layer": "KSF-STA-IS_ISKELESI", "count": 1, "length": 0, "area": 400.0, "meta": {}}]
+    facade = [{"etype": "kompozit_panel", "subtype": "4MM", "name": "panel", "layer": "KSF-CEP-KOMPOZIT_PANEL-4MM", "count": 1, "length": 0, "area": 100.0, "meta": {}},
+              {"etype": "ankraj_bulonu", "subtype": "M10", "name": "ankraj", "layer": "KSF-STA-ANKRAJ_BULONU-M10", "count": 1, "length": 0, "area": 0, "meta": {}}] \
+             + [{"etype": "ankraj_bulonu", "subtype": "M10", "name": "ankraj", "layer": "KSF-STA-ANKRAJ_BULONU-M10", "count": 1, "length": 0, "area": 0, "meta": {}} for _ in range(99)]
     items = expand_recipes(standard_items([{"label": "Cephe", "storey_count": 1, "elements": facade}], {}, cat), cat, storey_height=3.0)
     k = _keys(items)
-    assert k["is_iskelesi:*"].quantity == pytest.approx(400) and any("Reçete de" in n for n in k["is_iskelesi:*"].notes)
+    assert k["ankraj_bulonu:m10"].quantity == pytest.approx(100) and any("Reçete de" in n for n in k["ankraj_bulonu:m10"].notes)
 
 
 def test_catalog_recipe_text_format():
