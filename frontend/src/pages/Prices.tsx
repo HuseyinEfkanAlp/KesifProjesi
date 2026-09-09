@@ -7,6 +7,8 @@ import ProjectNav from './ProjectNav'
 
 type Field = 'unit_price' | 'labor_price' | 'hours_per_unit' | 'crew_size' | 'brand'
 type Edit = Partial<Record<Field, number | string>>
+type Mode = 'material' | 'labor'
+const MODE_FIELDS: Record<Mode, Field[]> = { material: ['brand', 'unit_price'], labor: ['labor_price', 'hours_per_unit', 'crew_size'] }
 
 const GROUP_ORDER = ['KABA', 'INCE', 'MEK', 'ELK', 'ALT']
 
@@ -18,6 +20,7 @@ export default function Prices() {
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
   const [showSpecific, setShowSpecific] = useState(true)
+  const [mode, setMode] = useState<Mode>(() => { try { return (localStorage.getItem('prices.mode') as Mode) || 'material' } catch { return 'material' } })
   const [group, setGroup] = useState('')
   const [q, setQ] = useState('')
 
@@ -59,8 +62,12 @@ export default function Prices() {
   if (!project) return <Loading error={error} />
   const hoursPerDay = project.params?.work_hours_per_day ?? 8
   const dirty = Object.keys(edited).length
+  const dirtyIn = (m: Mode) => Object.values(edited).filter((e) => MODE_FIELDS[m].some((f) => f in e)).length
   const specific = items.filter((i) => !i.is_general)
-  const priced = specific.filter((i) => (i.unit_price > 0 || i.labor_price > 0) || items.some((g) => g.is_general && g.kind === i.kind && (g.unit_price > 0 || g.labor_price > 0))).length
+  const priceField: Exclude<Field, 'brand'> = mode === 'material' ? 'unit_price' : 'labor_price'
+  const has = (i: PriceItem) => i[priceField] > 0 || (i.set_fields || []).includes(priceField)
+  const priced = specific.filter((i) => has(i) || items.some((g) => g.is_general && g.kind === i.kind && g[priceField] > 0)).length
+  const switchMode = (m: Mode) => { setMode(m); try { localStorage.setItem('prices.mode', m) } catch { /* yok say */ } }
   const qq = q.trim().toLocaleLowerCase('tr-TR')
   const groupKeys = Array.from(new Set(items.map((i) => i.work_group)))
     .sort((a, b) => (GROUP_ORDER.indexOf(a) === -1 ? 99 : GROUP_ORDER.indexOf(a)) - (GROUP_ORDER.indexOf(b) === -1 ? 99 : GROUP_ORDER.indexOf(b)))
@@ -71,6 +78,15 @@ export default function Prices() {
     .filter((x) => x.rows.length > 0)
   const kindsOf = (rows: PriceItem[]) => Array.from(new Set(rows.map((r) => r.kind)))
   const fmtQ = (v: number | null) => v == null ? '' : v.toLocaleString('tr-TR', { maximumFractionDigits: v >= 100 ? 0 : 2 })
+  const effective = (i: PriceItem, field: Exclude<Field, 'brand'>): number => {
+    const v = val(i, field)
+    if (v !== '' && +v > 0) return +v
+    if (v === 0 && ((i.set_fields || []).includes(field) || (edited[i.key] && field in edited[i.key]))) return 0   // açık 0: bu kalemde yok
+    const g = items.find((x) => x.is_general && x.kind === i.kind)
+    const gv = g ? val(g, field) : ''
+    return gv === '' ? 0 : +gv
+  }
+  const lineTotal = (i: PriceItem) => i.quantity == null || i.is_general ? null : i.quantity * effective(i, priceField)
 
   const numInput = (i: PriceItem, field: Exclude<Field, 'brand'>, step = '0.01') => {
     const v = val(i, field) as number
@@ -97,7 +113,12 @@ export default function Prices() {
         <div className="panel">
           <div className="row between sticky-bar">
             <div className="row" style={{ gap: 14 }}>
-              <h3 style={{ margin: 0 }}>Birim fiyatlar <span className="count-pill">{priced} / {specific.length} fiyatlı</span></h3>
+              <h3 style={{ margin: 0 }}>Birim fiyatlar</h3>
+              <div className="chips" style={{ margin: 0 }}>
+                <button className={`chip-btn${mode === 'material' ? ' on' : ''}`} onClick={() => switchMode('material')}>Malzeme fiyatları{dirtyIn('material') > 0 && ' •'}</button>
+                <button className={`chip-btn${mode === 'labor' ? ' on' : ''}`} onClick={() => switchMode('labor')}>İşçilik fiyatları{dirtyIn('labor') > 0 && ' •'}</button>
+              </div>
+              <span className="count-pill">{priced} / {specific.length} {mode === 'material' ? 'malzeme fiyatlı' : 'işçilik fiyatlı'}</span>
               <input placeholder="ara: ytong, kablo, 15.225…" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 220 }} />
               <button className={`chip-btn${showSpecific ? '' : ' on'}`} onClick={() => setShowSpecific(!showSpecific)} title="Yalnız türün genel satırlarını göster">yalnız genel satırlar</button>
             </div>
@@ -108,8 +129,9 @@ export default function Prices() {
             </div>
           </div>
           <p className="muted hint">
-            Türün <b>genel</b> satırı, boş bırakılan özel satırlara uygulanır. Süre = miktar × adam-saat / (ekip × {hoursPerDay} saat/gün). Fiyatlar KDV hariç;
-            KDV oranı ve günlük çalışma saati proje parametrelerinde. "Reçete" rozetli kalemler ana kalemden türetilen alt işlerdir (işçilik saatleri dahil).
+            {mode === 'material'
+              ? <>Malzeme birim fiyatı (₺/birim, KDV hariç) ve tercih edilen marka. Türün <b>genel</b> satırı, boş bırakılan kalemlere uygulanır; işçilik ayrı sekmede girilir.</>
+              : <>İşçilik birim fiyatı (₺/birim, KDV hariç), adam-saat / birim ve ekip. Süre = miktar × adam-saat / (ekip × {hoursPerDay} saat/gün). Türün <b>genel</b> satırı boş bırakılan kalemlere uygulanır; "reçete" rozetli kalemler ana kalemden türetilen alt işlerdir.</>}
           </p>
           <div className="chips" style={{ margin: '6px 0 10px' }}>
             <button className={`chip-btn${group === '' ? ' on' : ''}`} onClick={() => setGroup('')}>Tümü</button>
@@ -122,9 +144,10 @@ export default function Prices() {
               <table className="table-compact price-table">
                 <thead>
                   <tr>
-                    <th>Kalem</th><th>Poz</th><th className="num">Miktar</th><th>Birim</th><th>Marka</th>
-                    <th className="num">Malzeme ₺</th><th className="num">İşçilik ₺</th>
-                    <th className="num" title="Adam-saat / birim">A-saat / birim</th><th className="num" title="Aynı anda çalışan kişi">Ekip</th>
+                    <th>Kalem</th><th>Poz</th><th className="num">Miktar</th><th>Birim</th>
+                    {mode === 'material'
+                      ? <><th>Marka</th><th className="num">Malzeme ₺/birim</th><th className="num">Malzeme tutarı ₺</th></>
+                      : <><th className="num">İşçilik ₺/birim</th><th className="num" title="Adam-saat / birim">A-saat / birim</th><th className="num" title="Aynı anda çalışan kişi">Ekip</th><th className="num">İşçilik tutarı ₺</th></>}
                   </tr>
                 </thead>
                 <tbody>
@@ -138,11 +161,16 @@ export default function Prices() {
                       <td className="mono">{i.poz || ''}</td>
                       <td className="num muted">{fmtQ(i.quantity)}</td>
                       <td>{i.unit}</td>
-                      <td><input className="wide" value={val(i, 'brand') as string} placeholder={i.is_general ? 'marka' : ''} onChange={(e) => set(i.key, 'brand', e.target.value)} /></td>
-                      {numInput(i, 'unit_price')}
-                      {numInput(i, 'labor_price')}
-                      {numInput(i, 'hours_per_unit', '0.001')}
-                      {numInput(i, 'crew_size', '1')}
+                      {mode === 'material' && <>
+                        <td><input className="wide" value={val(i, 'brand') as string} placeholder={i.is_general ? 'marka' : ''} onChange={(e) => set(i.key, 'brand', e.target.value)} /></td>
+                        {numInput(i, 'unit_price')}
+                      </>}
+                      {mode === 'labor' && <>
+                        {numInput(i, 'labor_price')}
+                        {numInput(i, 'hours_per_unit', '0.001')}
+                        {numInput(i, 'crew_size', '1')}
+                      </>}
+                      <td className="num muted">{lineTotal(i) == null ? '' : fmtQ(lineTotal(i))}</td>
                     </tr>
                   )))}
                 </tbody>

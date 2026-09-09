@@ -125,6 +125,37 @@ def build_workbook(project: dict, lines: list[QuantityLine], summary: dict, cost
             ])
         _autosize(ws2)
 
+    # ---- Birim fiyatlar: malzeme ve işçilik ayrı sayfalarda ----
+    wsm = wb.create_sheet("Malzeme Fiyatları")
+    _header(wsm, 1, ["İş Grubu", "Poz", "Tür", "Kalem", "Birim", "Miktar", "Marka", "Malzeme (₺/birim)", "Malzeme Tutarı (₺)", "Kaynak"])
+    for l in cost["lines"]:
+        wsm.append([l.get("work_group_label", ""), l.get("poz", ""), l["kind_label"], l["group_label"], l["unit"], l["quantity"],
+                    l.get("brand", ""), l["unit_price"], l.get("material_total", 0.0), l["price_source"]])
+    wsm.append([])
+    wsm.cell(row=wsm.max_row + 1, column=8, value="Malzeme ara toplam").font = BOLD
+    wsm.cell(row=wsm.max_row, column=9, value=cost.get("material_subtotal", 0.0)).font = BOLD
+    for row in wsm.iter_rows(min_row=2, min_col=8, max_col=9):
+        for c in row:
+            if isinstance(c.value, (int, float)):
+                c.number_format = MONEY
+    _autosize(wsm)
+
+    wsl = wb.create_sheet("İşçilik Fiyatları")
+    _header(wsl, 1, ["İş Grubu", "Poz", "Tür", "Kalem", "Birim", "Miktar", "İşçilik (₺/birim)", "İşçilik Tutarı (₺)",
+                     "Adam-saat/birim", "Ekip", "Adam-saat", "Süre (gün)", "Kaynak"])
+    for l in cost["lines"]:
+        wsl.append([l.get("work_group_label", ""), l.get("poz", ""), l["kind_label"], l["group_label"], l["unit"], l["quantity"],
+                    l.get("labor_price", 0.0), l.get("labor_total", 0.0), l.get("hours_per_unit", 0.0), l.get("crew_size", 1.0),
+                    l.get("hours", 0.0), l.get("days", 0.0), l.get("labor_source", "")])
+    wsl.append([])
+    wsl.cell(row=wsl.max_row + 1, column=7, value="İşçilik ara toplam").font = BOLD
+    wsl.cell(row=wsl.max_row, column=8, value=cost.get("labor_subtotal", 0.0)).font = BOLD
+    for row in wsl.iter_rows(min_row=2, min_col=7, max_col=8):
+        for c in row:
+            if isinstance(c.value, (int, float)):
+                c.number_format = MONEY
+    _autosize(wsl)
+
     # ---- Maliyet ve Süre ----
     ws3 = wb.create_sheet("Maliyet")
     _header(ws3, 1, ["Disiplin", "Tür", "Kalem", "Marka", "Birim", "Miktar", "Malzeme (₺/birim)", "İşçilik (₺/birim)",
