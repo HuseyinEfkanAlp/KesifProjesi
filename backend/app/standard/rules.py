@@ -95,8 +95,9 @@ def deductible_opening(area_m2: float) -> bool:
 DEFAULT_POZ: list[tuple[str, str, str, str]] = [
     ("beton", r".*", "15.150.1006", "C 30/37 hazır beton, pompalı"),
     ("kalip", r".*", "15.180.1003", "Plywood ile düz yüzeyli betonarme kalıbı"),
-    ("demir", r"^o?(8|10|12)$", "15.160.1003", "Ø8–Ø12 nervürlü çelik"),
-    ("demir", r"^o?(14|16|18|20|22|24|26|28)$", "15.160.1004", "Ø14–Ø28 nervürlü çelik"),
+    # grup "o12" (tablodan) ya da "column:o12" (oran demiri çapa bölünmüş) olabilir: son parçaya bakılır
+    ("demir", r"^(?:.*:)?o?(8|10|12)$", "15.160.1003", "Ø8–Ø12 nervürlü çelik"),
+    ("demir", r"^(?:.*:)?o?(14|16|18|20|22|24|26|28)$", "15.160.1004", "Ø14–Ø28 nervürlü çelik"),
     ("demir", r".*", "15.160.1004", "Nervürlü çelik (çap bilinmiyor: Ø14–Ø28 pozu)"),
     ("duvar", r"^ytong:10$", "15.225.1004", "10 cm gazbeton duvar"),
     ("duvar", r"^ytong:15$", "15.225.1007", "15 cm gazbeton duvar"),

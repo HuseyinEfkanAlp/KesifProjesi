@@ -15,8 +15,9 @@ from .parser.detectors.base import DetectParams
 from .db import DATA_DIR
 from .parser.layer_profile import (DEFAULT_DISCIPLINE, MAPPED_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE, STRUCTURAL_TYPES,
                                    TYPE_DISCIPLINE, LayerProfile)
-from .parser.rebar_tables import kot_from_label, rebar_target_for
+from .parser.rebar_tables import REBAR_TARGET_BY_PLAN, TARGET_WORDS, kot_from_label, rebar_target_for
 from .parser.materials import merge_materials
+from .parser.rebar_mix import scan_texts as scan_rebar_texts
 from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary, effective_params, electrical_items,
                            expand_systems, slug, sort_items, standard_items, structural_items)
 from .standard.catalog import Catalog, parse_layer
@@ -167,6 +168,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.layers = [l.to_dict() for l in result.layers]
     drawing.warnings = result.warnings
     drawing.materials = result.materials or {}
+    drawing.rebar_mix = {str(k): float(v) for k, v in (result.rebar_mix or {}).items()}
     drawing.rooms = result.rooms or []
     drawing.poz = result.poz or {}
     drawing.unit_verdict = result.unit_verdict
@@ -460,6 +462,48 @@ def project_quantities(project: Project, session: Session, drawings: list[Drawin
 _NOT_MEASURED_KINDS = {"plywood", "bag_teli", "kalip_yagi", "civi", "kalip_iskelesi"}
 
 
+def project_rebar_mix(project: Project, session: Session, drawings: list[Drawing]) -> dict[str, dict[int, float]]:
+    """Eleman tipi -> çap -> ham pay (parser/rebar_mix.py). "*" bütün paftaların ortak havuzudur.
+
+    İki kaynak birleşir: (1) donatı / kolon / temel paftalarının bütün yazıları — paftanın hedef eleman tipine
+    yazılır, (2) elemanların kendi etiketleri ("S1 30/60 8Ø16") — doğrudan o elemanın tipine yazılır."""
+    out: dict[str, dict[int, float]] = {}
+
+    def add(etype: str, dia: int, v: float) -> None:
+        if v <= 0:
+            return
+        out.setdefault(etype, {})[dia] = out.setdefault(etype, {}).get(dia, 0.0) + v
+        if etype != "*":
+            out.setdefault("*", {})[dia] = out.setdefault("*", {}).get(dia, 0.0) + v
+
+    for d in drawings:
+        mix = {int(k): float(v) for k, v in (d.rebar_mix or {}).items()}
+        if not mix:
+            continue
+        target = rebar_mix_target(d)
+        for dia, v in mix.items():
+            add(target, dia, v)
+    for d in drawings:
+        for e in _included_elements(d, session):
+            if not e.label_raw or e.etype not in STRUCTURAL_TYPES:
+                continue
+            for dia, v in scan_rebar_texts([e.label_raw]).items():
+                add(e.etype, dia, v * max(int(e.count or 1), 1))
+    return out
+
+
+def rebar_mix_target(d: Drawing) -> str:
+    """Paftadaki donatı yazılarının hangi eleman tipine ait olduğu; belirsizse "*" (genel havuz)."""
+    t = REBAR_TARGET_BY_PLAN.get(d.plan_type or "")
+    if t:
+        return t
+    text = f"{d.label or ''} {d.filename or ''}"
+    for et, pat in TARGET_WORDS:
+        if pat.search(text):
+            return et
+    return "*"
+
+
 def project_boq(project: Project, session: Session, summary: dict | None = None, expand: bool = True,
                 drawings: list[Drawing] | None = None, measured_only: bool = False) -> list[BoqItem]:
     """Tüm disiplinlerin keşif listesi. expand=True: katmanlı sistemler bileşenlerine açılır (project_systems kararıyla).
@@ -517,7 +561,8 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
             arch.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "architectural"]})
         if any(TYPE_DISCIPLINE.get(e.etype) == "electrical" for e in elements):
             elec.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "electrical"]})
-    items = (structural_items(summary, params) + architectural_items(arch, params, schedule_poz=sched_poz)
+    mix = project_rebar_mix(project, session, all_drawings)
+    items = (structural_items(summary, params, rebar_mix=mix) + architectural_items(arch, params, schedule_poz=sched_poz)
              + electrical_items(elec, params))
     if std:
         items += standard_items(std, params, catalog)

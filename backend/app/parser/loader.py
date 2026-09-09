@@ -106,6 +106,13 @@ def _convert(entity: DXFEntity, scale: float, insert_layer: str | None, block: s
         converted: list[Entity] = []
         for sub in subs:
             converted.extend(_convert(sub, scale, entity.dxf.layer, entity.dxf.name))
+        # Blok yerleşimine bağlı öznitelikler virtual_entities()'e girmez; kolon adı, poz ve donatı yazıları
+        # ("24ƒ14/18", "L=1200") burada durur — ayrıca dönüştürülür.
+        for att in (getattr(entity, "attribs", None) or []):
+            try:
+                converted.extend(_convert(att, scale, entity.dxf.layer, entity.dxf.name))
+            except Exception:
+                continue
         yield from converted
         if not block:
             # Üst düzey blok: sembol sayımı (kapı, pencere, armatür) için tek bir "insert" kaydı; kutu = alt nesnelerin sınırı

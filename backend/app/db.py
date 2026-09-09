@@ -48,6 +48,7 @@ _ADDED_COLUMNS = [
     ("drawing", "plan_type", "VARCHAR DEFAULT ''"),
     ("project", "systems", "JSON"),
     ("drawing", "materials", "JSON"),
+    ("drawing", "rebar_mix", "JSON"),
     ("drawing", "rooms", "JSON"),
     ("drawing", "poz", "JSON"),
     ("drawing", "unit_verdict", "VARCHAR"),

@@ -32,7 +32,7 @@ const SARF_FIELDS: Array<{ key: keyof ProjectParams; label: string; step: string
 /** Sayıya çevrilmeyen (metin) proje parametreleri; ürün seçimi Birim Fiyatlar sayfasından yapılır */
 const STRING_PARAMS = ['facade_system', 'roof_system', 'derived_off', 'finish_rooms', 'concrete_class', 'lean_concrete_class',
   'rebar_grade', 'formwork_material', 'concrete_class_foundation', 'concrete_class_column', 'concrete_class_shear_wall',
-  'concrete_class_beam', 'concrete_class_slab']
+  'concrete_class_beam', 'concrete_class_slab', 'rebar_dia_split']
 
 export default function ProjectDetail() {
   const id = Number(useParams().id)
@@ -232,6 +232,14 @@ export default function ProjectDetail() {
                 <label className="field" key={k}>{ETYPE_LABELS[k]}<input type="number" value={ratios[k] ?? 0} onChange={(e) => setRatios({ ...ratios, [k]: +e.target.value })} /></label>
               ))}
             </div>
+            <h3>Donatı çapı</h3>
+            <label className="field" title="Donatı tablosu olmayan elemanların oran demiri, çizimdeki donatı yazılarının çap dağılımına göre bölünür">
+              Oran demirini çaplara böl
+              <select value={dparams.rebar_dia_split ?? ''} onChange={(e) => setDparams({ ...dparams, rebar_dia_split: e.target.value })}>
+                <option value="">çizimden okunan dağılıma göre (önerilen)</option>
+                <option value="off">bölme, tek "çap karışık" kalemi kalsın</option>
+              </select>
+            </label>
             <h3>Statik sarf ve fire (bağ teli, plywood, kalıp yağı, çivi)</h3>
             <div className="params-grid">
               {SARF_FIELDS.map((f) => (

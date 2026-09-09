@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..parser.labels_ext import FIXTURE_CATEGORIES, WALL_MATERIALS
+from ..parser.rebar_mix import normalize as normalize_mix, split_by_dia
 from ..parser.layer_profile import DISCIPLINES, ELEMENT_TYPES
 from ..standard.catalog import ParsedLayer, Catalog, parse_layer, spec_numbers
 from ..standard.rules import RULES, WORK_GROUPS, WORK_GROUP_ORDER, deductible_opening, default_poz, work_group_of
@@ -81,6 +82,7 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "lean_concrete_cm": 10.0,     # grobeton kalınlığı (cm) — temel alanından türetilir
     "excavation_depth_m": 1.5,    # temel altı kazı derinliği (m; 0 = kazı türetme) — temel alanı × derinlik × şev / çalışma payı
     "excavation_margin": 1.15,    # kazı şev + çalışma payı çarpanı
+    "rebar_dia_split": "auto",    # oran demirini çizimdeki çap dağılımına göre böl (auto) / bölme (off)
     "derived_off": "",            # kapatılan türetme kuralları (virgülle: astar,tavan,sap,kaplama,temel_yalitim,grobeton,koruma_sapi,kazi,geri_dolgu,recete)
 }
 
@@ -170,12 +172,35 @@ class _Acc:
 
 # ------------------------------------------------------------------ statik
 
-def structural_items(summary: dict, params: dict[str, Any] | None = None) -> list[BoqItem]:
+def structural_items(summary: dict, params: dict[str, Any] | None = None,
+                     rebar_mix: dict[str, dict[int, float]] | None = None) -> list[BoqItem]:
     """Beton / kalıp / demir + fire ve sarf (bağ teli, plywood, kalıp yağı, çivi).
 
-    Demir: donatı tablosu olan eleman tiplerinde çap bazında (demir:o12 …), tablosu olmayanlarda eleman grubu bazında oranla."""
+    Demir: donatı tablosu olan eleman tiplerinde çap bazında (demir:o12 …), tablosu olmayanlarda eleman grubu
+    bazında oranla. rebar_mix verilmişse (çizimdeki donatı yazılarının çap dağılımı; services.project_rebar_mix)
+    oran demiri de çaplara bölünür: demir:column:o12 → ürün olarak Ø12 demir."""
     params = effective_params(params)
     acc = _Acc()
+    mixes = rebar_mix or {}
+    split_on = str(params.get("rebar_dia_split") or "auto").lower() != "off"
+
+    def mix_of(etype: str) -> dict[int, float]:
+        return (mixes.get(etype) or mixes.get("*") or {}) if split_on else {}
+
+    def mix_note(mix: dict[int, float]) -> str:
+        n = normalize_mix(mix)
+        return ", ".join(f"Ø{d} %{v * 100:.0f}" for d, v in n.items())
+
+    def add_ratio_rebar(group: str, label: str, kg: float, etype: str, count: float, note: str) -> None:
+        """Oranla bulunan demir: çap dağılımı varsa çaplara bölünür, yoksa tek kalem."""
+        parts = split_by_dia(kg, mix_of(etype))
+        if not parts:
+            acc.add("demir", group, label, kg, count=count, note=note)
+            return
+        mnote = mix_note(mix_of(etype))
+        for dia, part in parts:
+            acc.add("demir", f"{group}:o{dia}", f"{label} Ø{dia}", part, count=0,
+                    note=f"{note}; çizimdeki donatı yazılarının çap dağılımına göre bölündü ({mnote})")
     for g in summary.get("groups", []):
         if g.get("concrete_m3", 0) > 0:
             acc.add("beton", g["key"], f"Beton - {g['label']}", g["concrete_m3"], count=g.get("element_count", 0),
@@ -186,9 +211,10 @@ def structural_items(summary: dict, params: dict[str, Any] | None = None) -> lis
         ratio_kg = float(g.get("rebar_ratio_kg") or (g.get("rebar_kg", 0) if g.get("rebar_source", "oran") == "oran" else 0.0))
         if ratio_kg > 0:
             kots = g.get("rebar_kots_ratio") or []
-            acc.add("demir", g["key"], f"Demir - {g['label']} (oranla)", ratio_kg, count=g.get("element_count", 0),
-                    note="Beton × kg/m³ oranı (düşük güven); donatı paftası yüklenince tablodan alınır"
-                         + (f" — donatı paftası olmayan kotlar: {', '.join(kots)}" if kots else ""))
+            add_ratio_rebar(g["key"], f"Demir - {g['label']} (oranla)", ratio_kg, g.get("etype") or g["key"].split(":")[0],
+                            g.get("element_count", 0),
+                            "Beton × kg/m³ oranı (düşük güven); donatı paftası yüklenince tablodan alınır"
+                            + (f" — donatı paftası olmayan kotlar: {', '.join(kots)}" if kots else ""))
     _SRC = {"tablo": "donatı tablosundan", "poz": "adetli poz yazılarından (kanca / bindirme yazıda yoksa eksik)", "elle": "elle girildi"}
     for d in summary.get("rebar_by_dia", []):
         tg = ", ".join(f"{ELEMENT_TYPES.get(k, k)} {v/1000:.1f} t" for k, v in d["targets"].items())
@@ -210,9 +236,9 @@ def structural_items(summary: dict, params: dict[str, Any] | None = None) -> lis
     if conc > 0 and cw > 0:
         acc.add("beton", "fire", f"Beton fire (%{cw:g})", conc * cw / 100.0, note="Toplam beton × fire yüzdesi")
     if rebar > 0 and rw > 0:
-        acc.add("demir", "fire", f"Demir fire (kesim / artık, %{rw:g})", rebar * rw / 100.0,
-                note="Toplam demir × fire yüzdesi. Bindirme ve kanca poz boylarında (tablo / poz yazısı) zaten vardır, "
-                     "ÇŞB 15.160 ölçüsü de bindirmeyi ayrıca yazmaz; bu kalem yalnız kesim artığıdır")
+        add_ratio_rebar("fire", f"Demir fire (kesim / artık, %{rw:g})", rebar * rw / 100.0, "*", 0.0,
+                        "Toplam demir × fire yüzdesi. Bindirme ve kanca poz boylarında (tablo / poz yazısı) zaten vardır, "
+                        "ÇŞB 15.160 ölçüsü de bindirmeyi ayrıca yazmaz; bu kalem yalnız kesim artığıdır")
     if rebar > 0:
         tw = float(params.get("tie_wire_kg_per_t") or 0.0)
         if tw > 0:

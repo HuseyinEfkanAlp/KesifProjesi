@@ -55,7 +55,7 @@ def rebar_dia(group: str) -> str:
     """Demir kaleminin grubundan çap: "o12", "12", "12MM", "Ø14" -> "12" / "14"; çap değilse "".
 
     Çap donatı tablosundan "o12" biçiminde gelir, KSF katmanından (KSF-STA-DEMIR-12) yalnız sayı olarak."""
-    m = re.fullmatch(r"[oø∅]?(\d+(?:[.,]\d+)?)\s*(?:mm)?", (group or "").strip().lower())
+    m = re.fullmatch(r"[oø∅]?(\d+(?:[.,]\d+)?)\s*(?:mm)?", (group or "").strip().lower().rsplit(":", 1)[-1])
     if not m:
         return ""
     d = m.group(1).replace(",", ".")

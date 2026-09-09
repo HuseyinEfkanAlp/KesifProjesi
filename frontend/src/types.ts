@@ -407,6 +407,8 @@ export interface QuantitiesResponse {
   summary: QuantitySummary
   lines: QuantityLine[]
   boq: Boq
+  /** Çizimdeki donatı yazılarından okunan çap dağılımı: eleman tipi -> paylar ("*": proje geneli) */
+  rebar_mix?: Record<string, { dia_mm: number; share: number }[]>
   params: { storey_height: number; slab_thickness: number } & ProjectParams
   /** Kot yazılarından türeyen kat seviyeleri ve etkin kat yüksekliği (H girilmemişse bunlar kullanılır) */
   levels?: { levels: number[]; heights: number[]; effective: number; source: string; per_drawing: Record<string, { height: number; source: string; kot: number | null }> }

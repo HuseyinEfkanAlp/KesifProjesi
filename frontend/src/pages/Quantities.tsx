@@ -26,13 +26,14 @@ export default function Quantities() {
   const [summary, setSummary] = useState<QuantitySummary | null>(null)
   const [lines, setLines] = useState<QuantityLine[]>([])
   const [boq, setBoq] = useState<Boq | null>(null)
+  const [rebarMix, setRebarMix] = useState<Record<string, { dia_mm: number; share: number }[]>>({})
   const [error, setError] = useState('')
   const [showLines, setShowLines] = useState(false)
   const [refresh, setRefresh] = useState(0)
 
   useEffect(() => {
     Promise.all([Api.projects.get(pid), Api.quantities(pid)])
-      .then(([p, q]) => { setProject(p); setSummary(q.summary); setLines(q.lines); setBoq(q.boq) })
+      .then(([p, q]) => { setProject(p); setSummary(q.summary); setLines(q.lines); setBoq(q.boq); setRebarMix(q.rebar_mix ?? {}) })
       .catch((e) => setError(e.message))
   }, [pid, refresh])
 
@@ -50,6 +51,33 @@ export default function Quantities() {
           <h2>Henüz metraj yok</h2>
           <p>Çizimler ve Parametreler sayfasından plan yükleyin; keşif iş grubu, poz ve reçeteleriyle burada listelenir.</p>
           <Link className="btn" to={`/projects/${pid}`}>Plan yükle</Link>
+        </div>
+      )}
+
+      {Object.keys(rebarMix).length > 0 && (
+        <div className="panel" style={{ paddingTop: 10, paddingBottom: 10 }}>
+          <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+            <b>Çizimden okunan donatı çapları</b>
+            {(rebarMix['*'] ?? []).map((d) => (
+              <span key={d.dia_mm} className="count-pill">Ø{d.dia_mm} %{Math.round(d.share * 100)}</span>
+            ))}
+          </div>
+          <details style={{ marginTop: 6 }}>
+            <summary className="muted">Eleman tipine göre dağılım · donatı tablosu olmayan elemanların oran demiri bu dağılıma göre çaplara bölündü</summary>
+            <table className="table-compact" style={{ marginTop: 8, maxWidth: 520 }}>
+              <thead><tr><th>Eleman</th><th>Çap dağılımı</th></tr></thead>
+              <tbody>
+                {Object.entries(rebarMix).filter(([k]) => k !== '*').map(([k, ds]) => (
+                  <tr key={k}>
+                    <td>{ETYPE_LABELS[k as keyof typeof ETYPE_LABELS] ?? k}</td>
+                    <td>{ds.map((d) => `Ø${d.dia_mm} %${Math.round(d.share * 100)}`).join(' · ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="muted hint">Çap payı, donatı yazılarındaki adet × çap² toplamından çıkar (ağırlık değil, karışım oranı).
+              Donatı tablosu okunan elemanlarda demir zaten çap bazındadır; bu dağılım yalnız oranla hesaplanan demiri böler.</p>
+          </details>
         </div>
       )}
 

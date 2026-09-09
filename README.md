@@ -298,6 +298,16 @@ Bu çizimle yapılan düzeltmeler:
   döşeme etiketleri uyarıda listelenir (eksik kiriş → elle ekleme).
 - **Temel**: etiketsiz açık polyline kutuları ("MİLANO 1/2", 405 m² → 202 m³ sahte beton) metraj dışı; RD2 tahmini yalnız etiketli
   bölgelere dayanır (3.368 → 2.907 m²).
+- **Blok öznitelikleri (ATTRIB)**: blok yerleşimine bağlı öznitelikler `virtual_entities()` çıktısına girmez; ayrıca okunur.
+  A4-A5 temel paftasında yazı sayısı 3.145 → 11.298, tanınan donatı yazısı 87 → 786 (kolon adları, poz ve boy yazıları da burada).
+- **Oran demirinin çapı**: donatı tablosu olmayan elemanların demiri beton × kg/m³ ile bulunur ve çapı bilinmezdi.
+  Artık çizimdeki donatı yazıları (`20ƒ14/20`, `4X7ƒ12/10`, `ƒ14/18`, `8Ø16`, `P01 182ƒ8/10 etr. l=196`) taranıp
+  **çap karışımı** çıkarılır (`parser/rebar_mix.py`: pay = adet × çap², boy yazılıysa × boy) ve oran demiri bu dağılıma
+  göre çap kalemlerine bölünür: `demir:column:o12` → ürün olarak "Nervürlü inşaat demiri Ø12". Karışım paftanın hedef
+  eleman tipine yazılır (kolon aplikasyon → kolon, temel → temel, kiriş detay → kiriş); tipe özel dağılım yoksa proje
+  geneli kullanılır. Metraj sayfasında "Çizimden okunan donatı çapları" olarak görünür, `rebar_dia_split: off` ile kapatılır.
+  A4-A5 projesinde okunan dağılım: temel Ø20 %69 / Ø26 %18 / Ø14 %13, kolon Ø26 %36 / Ø14 %32 / Ø12 %21,
+  döşeme Ø10 %70 / Ø12 %24, kiriş Ø8 %26 / Ø26 %25 / Ø20 %15.
 - **Demir toplama**: tip kat çarpanı tablo demirine de uygulanır; kot bazında eşleme (donatı paftası olan katın oranı düşer, olmayan
   kat oranla kalır ve uyarı verir); kaynak (tablo / poz / elle / oran) çap bazında ve keşifte görünür; "AĞIRLIK (ton)" satırı,
   sütunlar arasına ortalanmış genel toplam sağlaması, `160+30` kanca payı, metre boy, `4Q14`, "(2 ADET)" çarpanı, adetsiz poz uyarısı.
