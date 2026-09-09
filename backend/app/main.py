@@ -15,6 +15,11 @@ from .db import init_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    try:
+        from .services import cleanup_uploads
+        cleanup_uploads()      # seçilmeden bırakılan kaynak dosyalar (src_*.dxf, 500 MB'a kadar) 24 saat sonra silinir
+    except Exception:
+        pass
     yield
 
 
@@ -38,7 +43,7 @@ if DIST.exists():
 
     @app.get("/{full_path:path}")
     def spa(full_path: str):
-        f = DIST / full_path
-        if full_path and f.is_file():
+        f = (DIST / full_path).resolve()
+        if full_path and f.is_file() and f.is_relative_to(DIST.resolve()):
             return FileResponse(f)
         return FileResponse(DIST / "index.html")

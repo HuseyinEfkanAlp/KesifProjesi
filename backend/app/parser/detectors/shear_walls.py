@@ -18,7 +18,7 @@ def detect_shear_walls(drawing: Drawing, layers: list[str], labels: LabelIndex, 
             etype="shear_wall", layer=ent.layer, points=list(ent.points),
             area=area, perimeter=per, source=ent.source, handle=ent.handle, confidence=0.7,
         )
-        lab = labels.find(ent.points, "shear_wall")
+        lab = labels.find(ent.points, "shear_wall", area=area)
         thickness = short_side
         if lab:
             el.label_raw = lab.raw

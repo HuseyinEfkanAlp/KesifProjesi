@@ -27,6 +27,7 @@ class PriceItem:
     brand: str = ""
     hours_per_unit: float = 0.0    # adam-saat / birim
     crew_size: float = 0.0         # 0 = belirtilmedi (genel satır ya da 1 kişi)
+    set_fields: tuple[str, ...] = ()   # kullanıcının açıkça girdiği alanlar: 0 girildiyse genel satıra düşülmez
 
 
 def default_price_items(items: list[BoqItem]) -> list[PriceItem]:
@@ -58,6 +59,9 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
 
         def pick(attr: str, default=0.0):
             v = getattr(own, attr, None) if own else None
+            explicit = bool(own) and attr in (getattr(own, "set_fields", None) or [])
+            if explicit and v is not None:
+                return v, "özel"           # açıkça girilen 0 da özeldir (işçiliği yok / ekip yok)
             if v not in (None, 0, 0.0, ""):
                 return v, "özel"
             g = getattr(gen, attr, None) if gen else None

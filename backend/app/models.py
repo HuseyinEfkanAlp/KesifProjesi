@@ -95,3 +95,4 @@ class PriceItem(SQLModel, table=True):
     brand: str = ""                 # tercih edilen marka / ürün
     hours_per_unit: float = 0.0     # işçilik süresi: adam-saat / birim
     crew_size: float = 0.0          # bu kalemde aynı anda çalışan kişi sayısı (0 = genel satırdan / 1)
+    set_fields: list[str] = Field(default_factory=list, sa_column=Column(JSON))   # kullanıcının açıkça girdiği alanlar (0 dahil)

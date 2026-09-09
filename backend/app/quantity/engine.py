@@ -19,12 +19,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+# Beton × kg/m³ oran tahmini: yalnız donatı paftası yüklenmemişse kullanılır (düşük güven). Değerler Türkiye'de
+# betonarme konut / ticari yapı için yaygın aralıkların orta noktasıdır; gerçek projede (KIYI A4-A5 AVM, 2023) kolon 374,
+# kiriş 178, radye 97, döşeme 82 kg/m³ ölçüldü — kolon ve kiriş için eski varsayılanlar (130 / 110) çok düşüktü.
 DEFAULT_REBAR_RATIOS: dict[str, float] = {
-    "column": 130.0,
-    "shear_wall": 100.0,
-    "beam": 110.0,
-    "slab": 80.0,
-    "foundation": 90.0,
+    "column": 180.0,
+    "shear_wall": 140.0,
+    "beam": 140.0,
+    "slab": 85.0,
+    "foundation": 95.0,
 }
 
 
@@ -139,9 +142,13 @@ def compute_element(el: ElementData, p: QuantityParams) -> QuantityLine:
         if not h or el.b is None:
             notes.append("Kiriş kesiti (b/h) eksik; beton ve kalıp 0 alındı")
         else:
-            web = h if p.beam_full_height else max(h - d, 0.0)
+            web = h if p.beam_full_height else max(h - d, 0.0)     # beton: net döşeme modunda tam yükseklik
+            side = max(h - d, 0.0)                                   # yan kalıp döşeme altına kadar (ÇŞB 15.180: kalıp gören yüz)
             concrete = el.b * web * el.length
-            formwork = (el.b + 2.0 * web) * el.length
+            if p.beam_full_height:
+                formwork = (el.b + 2.0 * side) * el.length           # net döşeme: kiriş alt yüzü döşeme kalıbında değil
+            else:
+                formwork = 2.0 * side * el.length                    # brüt döşeme çokgeni kirişi kapsar: alt yüz döşeme kalıbında sayıldı
     elif el.etype == "slab":
         t = el.thickness if el.thickness is not None else d
         concrete = el.area * t

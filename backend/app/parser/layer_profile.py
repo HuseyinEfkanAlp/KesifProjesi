@@ -123,7 +123,7 @@ DEFAULT_PROFILE: dict[str, list[str]] = {
     "tray": [r"TAVA", r"\bTRAY", r"KABLO\s*KANAL", r"CABLE\s*TRAY", r"\bKT\b", r"BUSBAR", r"MERDIVEN\s*TAVA"],
     "cable": [r"KABLO", r"\bCABLE", r"\bWIRE", r"E[-_]?WIRE", r"BESLEME", r"L[Iİ]NYE", r"SORT[Iİ]", r"KOLON\s*HAT",
               r"E[-_]?POWR", r"CIRCUIT", r"\bHAT\b", r"DATA", r"\bCAT\s?[56]", r"ZAYIF\s*AK"],
-    "conduit": [r"\bBORU", r"CONDUIT", r"\bPVC\b", r"SP[Iİ]RAL", r"KANAL\b"],
+    "conduit": [r"\bBORU", r"CONDUIT", r"\bPVC\b", r"SP[Iİ]RAL", r"^(?!.*(?:HAVA|EGZO|TAZE|\bHT\b|KL[Iİ]MA|DUCT|MENFEZ)).*KANAL\b"],
     "fixture": [r"ARMAT[UÜ]R", r"AYDINLATMA", r"\bLIGHT", r"E[-_]?LITE", r"FIXTURE", r"LUMIN", r"PR[Iİ]Z", r"SOCKET",
                 r"ANAHTAR", r"SWITCH", r"\bBUAT", r"S[Iİ]GORTA", r"PANO", r"\bDEV[Iİ]CE", r"DETEKT[OÖ]R", r"SENS[OÖ]R",
                 r"S[Iİ]REN", r"YANGIN", r"ACIL", r"EXIT", r"\bTV\b", r"DATA\s*PR"],
@@ -147,6 +147,7 @@ IGNORE_PATTERNS = [
     r"DETAIL", r"DETAY", r"REBAR", r"DONATI", r"DONATİ", r"\bKOT\b", r"APLIKASYON", r"APLİKASYON",
     r"KESIT", r"KESİT", r"SECTION", r"MERDIVEN", r"MERDİVEN", r"STAIR", r"\bIZI\b", r"İZİ",
     r"MARKA",  # sadece yazı içerir; yazılar katmandan bağımsız toplanır
+    r"KOLON\s*[SŞ]EMA", r"RISER", r"D[Iİ]YAGRAM", r"[SŞ]EMA\b",  # tesisat kolon şeması: sembol, hat değil
     r"\bLGP",  # LGP-SLAB: döşeme etiketi çerçeve kutuları (döşeme çokgeni değil)
     r"KES[Iİ]K",  # kesik/gizli çizgi kopyaları (KM Temel Kesik: radye sınırının ofsetli kopyası)
     r"G[Iİ]ZL[Iİ]", r"\bHIDE", r"HIDDEN",  # gizli / görünmez yardımcı katmanlar (HB-GIZLI-DATA gibi yazı katmanları)

@@ -121,6 +121,7 @@ export interface Project {
   drawing_count: number
   created_at: string
   plan_check: PlanCheckSummary
+  levels?: { levels: number[]; heights: number[]; effective: number; source: string; per_drawing: Record<string, { height: number; source: string; kot: number | null }> }
 }
 
 /** Plan seti: proje için gerekli pafta tipleri (planset.py) */
@@ -219,7 +220,7 @@ export interface SheetInfo {
   entity_count: number
   text_count: number
   titled: boolean
-  source: 'frame' | 'cluster'
+  source: 'frame' | 'cluster' | 'title'
   /** Paftadaki diğer başlık adayları (ana başlık yanlış yazılmışsa kalıp planını bunlardan tanırız) */
   titles: string[]
   /** Başlıktan tanınan plan tipi ve disiplin önerisi ("" = tanınamadı) */
@@ -287,7 +288,10 @@ export interface QuantityGroup {
   concrete_m3: number
   formwork_m2: number
   rebar_kg: number
-  rebar_source: 'oran' | 'tablo'
+  rebar_source: 'oran' | 'tablo' | 'poz' | 'tablo+poz' | 'tablo+oran' | 'poz+oran' | 'tablo+poz+oran'
+  rebar_ratio_kg?: number
+  rebar_table_kg?: number
+  rebar_kots_ratio?: string[]
 }
 
 export interface RebarDia {
@@ -400,6 +404,7 @@ export interface PriceItem {
   brand: string
   hours_per_unit: number
   crew_size: number
+  set_fields?: string[]
   kind: string
   kind_label: string
   discipline: string
@@ -535,6 +540,7 @@ export interface PriceIn {
   brand?: string
   hours_per_unit?: number
   crew_size?: number
+  clear?: string[]
 }
 
 export interface CostLine {

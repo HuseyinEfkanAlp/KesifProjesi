@@ -45,8 +45,15 @@ def detect_foundations(drawing: Drawing, layers: list[str], labels: LabelIndex, 
                 is_strip = False
         if ent.source == "POLYLINE>CLOSED":
             el.warnings.append("Sınır açık çizilmiş (pafta kesimi); uçları birleştirilerek kapatıldı")
+            if not lab or not (lab.name or lab.thickness or lab.has_dims):
+                # etiketsiz, açık çizilmiş kutu (antet, "MİLANO 1/2" bölge kutusu…): radye sayılmaz, kullanıcı onaylar
+                el.confidence = 0.3
+                el.warnings.append("Etiketsiz açık polyline; radye olduğundan emin değil (metraj dışı, gerekiyorsa açın)")
         if is_strip:
             _fill_strip(el, lab, short_side, long_side, params)
+            if area < 2.0 and not lab:
+                el.confidence = min(el.confidence, 0.3)
+                el.warnings.append("Etiketsiz küçük parça; sürekli temel olduğundan emin değil")
             elements.append(el)
         else:
             el.subtype = "raft"
@@ -64,6 +71,7 @@ def detect_foundations(drawing: Drawing, layers: list[str], labels: LabelIndex, 
     zones = dedupe_elements(zones, tol=0.6)
     _subtract_nested(zones)
     elements.extend(zones)
+    zones = [z for z in zones if z.confidence >= 0.4]   # tahmin (RD2) sınırı yalnız güvenilir bölgelere dayanır
 
     # paralel çizgi çiftleri -> sürekli temel
     segs = segments_on_layers(drawing, layers)

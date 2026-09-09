@@ -96,6 +96,14 @@ def parse_label(text: str, label_unit_scale: float = 0.01) -> Label:
     lab = Label(raw=t)
     if _ELEVATION.match(t):
         return lab
+    if re.match(r"^\s*PARAPET\b", t, re.IGNORECASE):
+        # "Parapet (20/82)": parapet kesiti; kolon / kiriş aramasında elenir (type_hint parapet), parapet dedektörü kullanır
+        lab.name, lab.type_hint = "Parapet", "parapet"
+        d = _DIMS_ONLY.search(t)
+        if d:
+            lab.b = _num(d.group("b")) * label_unit_scale
+            lab.h = _num(d.group("h")) * label_unit_scale
+        return lab
 
     # Donatı ifadeleri ("8Ø16", "Ø8/15") boyut olarak yanlış okunmasın diye önce ayıklanır
     stripped = _REBAR_SPACING.sub(" ", _REBAR_COUNT.sub(" ", t))

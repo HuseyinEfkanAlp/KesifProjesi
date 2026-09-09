@@ -12,7 +12,19 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_URL = os.environ.get("KESIF_DB_URL", f"sqlite:///{(DATA_DIR / 'kesif.db').as_posix()}")
-engine = create_engine(DB_URL, connect_args={"check_same_thread": False} if DB_URL.startswith("sqlite") else {})
+engine = create_engine(DB_URL, connect_args={"check_same_thread": False, "timeout": 60} if DB_URL.startswith("sqlite") else {})
+
+if DB_URL.startswith("sqlite"):
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _record):   # uzun analiz sırasında başka yazma "database is locked" almasın
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA busy_timeout=60000")
+        finally:
+            cur.close()
 
 
 def init_db() -> None:
@@ -43,6 +55,7 @@ _ADDED_COLUMNS = [
     ("drawing", "discipline_hints", "JSON"),
     ("drawing", "levels", "JSON"),
     ("drawing", "kot", "FLOAT"),
+    ("priceitem", "set_fields", "JSON"),
 ]
 
 

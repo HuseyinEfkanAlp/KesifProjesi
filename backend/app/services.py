@@ -13,7 +13,7 @@ from .parser.detectors.base import DetectParams
 from .db import DATA_DIR
 from .parser.layer_profile import (DEFAULT_DISCIPLINE, MAPPED_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE, STRUCTURAL_TYPES,
                                    TYPE_DISCIPLINE, LayerProfile)
-from .parser.rebar_tables import kot_from_label
+from .parser.rebar_tables import kot_from_label, rebar_target_for
 from .parser.materials import merge_materials
 from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary, effective_params, electrical_items,
                            expand_systems, slug, sort_items, standard_items, structural_items)
@@ -89,7 +89,8 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     result = analyze_file(drawing.stored_path, project_profile(project), params,
                           unit_override=drawing.unit_override, discipline=drawing.discipline or DEFAULT_DISCIPLINE,
                           catalog=load_catalog(), label=drawing.label or drawing.filename,
-                          extra_disciplines=tuple(drawing.disciplines or []))
+                          extra_disciplines=tuple(drawing.disciplines or []),
+                          rebar_target=rebar_target_for(drawing.plan_type, drawing.label or "", drawing.filename or ""))
     if pt is not None and not pt.analyze:
         result.warnings.insert(0, f"{pt.label}: metraja girmez; katman adından otomatik eşleme kapalı (kesitteki duvar / sıva taraması plan miktarı değildir). "
                                   "Kesit notları çatı / cephe sistemi kanıtı ve kotlar için okunur.")
@@ -99,16 +100,65 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
         result.warnings.append(f"Kat yüksekliği KSF katman adından alındı: {result.ksf_height:g} m")
     fill_wall_areas(result.elements, project, drawing, session, load_catalog())
 
-    for old in session.exec(select(Element).where(Element.drawing_id == drawing.id, Element.manual == False)):  # noqa: E712
-        session.delete(old)
+    # Elle düzenlenen (manual) elemanlar korunur; dedektör aynı nesneyi (handle) yeniden bulursa ikinci kez eklenmez.
+    # Metraj dışı bırakılan (included=False) otomatik elemanların işareti yeni bulunan aynı nesneye taşınır.
+    old_all = list(session.exec(select(Element).where(Element.drawing_id == drawing.id)))
+
+    def _centroid(pts) -> tuple[float, float]:
+        if not pts:
+            return (0.0, 0.0)
+        return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+
+    def _key(etype: str, layer: str, handle: str, pts) -> str:
+        """Eşleme anahtarı: DXF handle; yoksa (çizgilerden kapatılmış dikdörtgen gibi) tip + katman + konum."""
+        if handle:
+            return handle
+        cx, cy = _centroid(pts or [])
+        return f"geo:{etype}:{layer}:{cx:.1f}:{cy:.1f}"
+
+    kept_manual = [e for e in old_all if e.manual]
+    excluded_handles: dict[str, list[Element]] = {}
+    for e in old_all:
+        if e.manual:
+            continue
+        if not e.included:
+            excluded_handles.setdefault(_key(e.etype, e.layer or "", e.handle or "", e.points), []).append(e)
+        session.delete(e)
+    manual_by_handle: dict[str, list[Element]] = {}
+    for e in kept_manual:
+        if e.source != "MANUAL":
+            manual_by_handle.setdefault(_key(e.etype, e.layer or "", e.handle or "", e.points), []).append(e)
+
+    def _claim(pool: dict[str, list[Element]], det) -> Element | None:
+        """Aynı handle'lı eski elemanlardan konumca en yakını alır (bir kiriş çifti birden çok kirişe bölünmüş olabilir)."""
+        cands = pool.get(_key(det.etype, det.layer or "", det.handle or "", det.points))
+        if not cands:
+            return None
+        cx, cy = _centroid(det.points)
+        best = min(cands, key=lambda e: (_centroid(e.points or [])[0] - cx) ** 2 + (_centroid(e.points or [])[1] - cy) ** 2)
+        bx, by = _centroid(best.points or [])
+        xs = [p[0] for p in det.points] or [cx]
+        ys = [p[1] for p in det.points] or [cy]
+        tol = max(0.5, max(xs) - min(xs), max(ys) - min(ys))   # blok kopyaları aynı handle'ı taşır: konum da tutmalı
+        if ((bx - cx) ** 2 + (by - cy) ** 2) ** 0.5 > tol:
+            return None
+        cands.remove(best)
+        return best
+
     for det in result.elements:
+        kept = _claim(manual_by_handle, det)
+        if kept is not None:
+            kept.points = [[round(x, 4), round(y, 4)] for x, y in det.points]   # geometri güncel kalsın, ölçüler kullanıcının
+            session.add(kept)
+            continue
+        excl = _claim(excluded_handles, det)
         session.add(Element(
             drawing_id=drawing.id, etype=det.etype, subtype=det.subtype, name=det.name, layer=det.layer,
             b=det.b, h=det.h, thickness=det.thickness, area=det.area, length=det.length,
             perimeter=det.perimeter, count=det.count, confidence=det.confidence, warnings=det.warnings,
             label_raw=det.label_raw, source=det.source, handle=det.handle,
             points=[[round(x, 4), round(y, 4)] for x, y in det.points],
-            included=det.confidence >= MIN_INCLUDED_CONFIDENCE, meta=det.meta or {},
+            included=(det.confidence >= MIN_INCLUDED_CONFIDENCE) and excl is None, meta=det.meta or {},
         ))
     drawing.unit = result.unit
     drawing.unit_detected = result.unit_detected
@@ -174,10 +224,24 @@ def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
             per[d.id] = {"height": effective, "source": source, "kot": d.kot}
     # kotu olmayan planlar: kat sırasına göre seviye dizisine oturtulur (aynı sıradaki planlar aynı seviyeyi alır)
     ranked.sort(key=lambda t: t[0])
-    distinct = sorted({r for r, _ in ranked})
-    rank_level = {r: floors[i] for i, r in enumerate(distinct) if i < len(floors)}
+    # Kat sırası mutlak: zemin (0) = seviye dizisinde 0,00'a en yakın kot; 1. kat onun bir üstü, 1. bodrum bir altı.
+    # (Eskiden sıralı listedeki konum kullanılıyordu: "zemin" ve "1. kat" planları −3,30 ve 0,00 kotlarını alıyordu.)
+    zero_idx = min(range(len(floors)), key=lambda i: abs(floors[i])) if floors else None
+
+    def rank_level_of(r: float) -> float | None:
+        if zero_idx is None:
+            return None
+        if r == -100:                       # temel: en alt seviye
+            return floors[0]
+        if r == 99:                         # çatı: en üst kat seviyesi (üstü yok, effective'e düşer)
+            return floors[-1]
+        if r != int(r):                     # asma kat: sıra dışı, medyanla
+            return None
+        i = zero_idx + int(r)
+        return floors[i] if 0 <= i < len(floors) else None
+
     for r, d in ranked:
-        lvl = rank_level.get(r)
+        lvl = rank_level_of(r)
         nxt = above(lvl) if lvl is not None else None
         if lvl is not None and nxt is not None:
             per[d.id] = {"height": round(nxt - lvl, 2), "source": f"kat sırası → kot {lvl:+.2f} → {nxt:+.2f}", "kot": lvl}
@@ -226,6 +290,49 @@ def fill_wall_areas(elements, project: Project, drawing: Drawing, session: Sessi
     return n
 
 
+def refresh_wall_areas(project: Project, session: Session, drawings: list[Drawing] | None = None) -> int:
+    """Kat yüksekliği / duvar yüksekliği değişince: katman adında yüksekliği olmayan (h boş) duvar elemanlarının alanı
+    yeniden uzunluk × yükseklik. Elle düzenlenen (manual) elemanlara dokunulmaz. Döndürür: güncellenen eleman sayısı."""
+    catalog = load_catalog()
+    if drawings is None:
+        drawings = list(session.exec(select(Drawing).where(Drawing.project_id == project.id)).all())
+    n = 0
+    for d in drawings:
+        h = None
+        for e in session.exec(select(Element).where(Element.drawing_id == d.id)):
+            if e.manual or e.h or not e.length:
+                continue
+            measure = (e.meta or {}).get("measure")
+            if not measure:
+                p = parse_layer(e.layer or "", catalog)
+                measure = p.item.measure if p and p.item else None
+            if measure != "wall_area":
+                continue
+            if h is None:
+                h = wall_height_default(project, d, session)
+            e.area = e.length * h
+            session.add(e)
+            n += 1
+    session.commit()
+    return n
+
+
+def cleanup_uploads(max_age_hours: float = 24.0) -> int:
+    """Pafta seçimi için saklanan kaynak dosyalar (src_<token>_*.dxf, .sheets.json) seçilmeden bırakılınca diskte kalır;
+    son erişimi max_age_hours'u geçenler açılışta silinir. Döndürür: silinen dosya sayısı."""
+    import time
+    now = time.time()
+    n = 0
+    for f in UPLOAD_DIR.glob("src_*"):
+        try:
+            if now - f.stat().st_mtime > max_age_hours * 3600:
+                f.unlink()
+                n += 1
+        except OSError:
+            continue
+    return n
+
+
 def recompute_derived(el: Element) -> None:
     """Kullanıcı b/h/uzunluk değiştirdiğinde türetilen alan/çevreyi günceller."""
     if el.etype == "column" and el.b and el.h:
@@ -245,6 +352,24 @@ def recompute_derived(el: Element) -> None:
         el.area = el.b * el.h
     elif el.etype == "tray" and el.b and el.length:
         el.area = el.b * el.length
+
+
+def dominant_slab_thickness(elements) -> float | None:
+    """Kattaki döşemelerin alanla ağırlıklı baskın kalınlığı: kolon / perde beton yüksekliği ve kiriş gövdesi bu d ile düşülür
+    (proje parametresi yalnız döşemesi olmayan paftada kullanılır)."""
+    pairs = [(float(e.thickness), float(e.area or 0.0)) for e in elements if e.etype == "slab" and e.thickness]
+    if not pairs:
+        return None
+    pairs.sort()
+    total = sum(w for _, w in pairs)
+    if total <= 0:
+        return pairs[len(pairs) // 2][0]
+    acc = 0.0
+    for t, w in pairs:
+        acc += w
+        if acc >= total / 2:
+            return t
+    return pairs[-1][0]
 
 
 def dominant_beam_depth(elements) -> float | None:
@@ -269,16 +394,32 @@ def _included_elements(d: Drawing, session: Session) -> list[Element]:
 
 
 def rebar_table_rows(project: Project, session: Session) -> list[dict]:
-    """Donatı paftalarından okunan tablo satırları (çap bazında kg) — özet ve keşif için."""
+    """Donatı paftalarından okunan tablo / poz yazısı satırları (çap bazında kg) — özet ve keşif için.
+
+    Tip kat çarpanı: "3 kat temsil ediyor" denen donatı paftasının demiri de 3 ile çarpılır (kalıp planındaki beton gibi);
+    temel hedefli satırlar hiçbir zaman çarpılmaz. Elle girilen demir (manual, meta'sız) `weight_kg` alanı b/length'ten değil
+    `meta.weight_kg`'den okunur; yoksa `length` (m) × birim ağırlık."""
+    from .parser.rebar_tables import unit_weight
     rows: list[dict] = []
     for d in session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.discipline == REBAR_DISCIPLINE)).all():
+        mult = max(int(d.storey_count or 1), 1)
         for e in _included_elements(d, session):
-            if e.etype != "rebar" or not e.meta:
+            if e.etype != "rebar":
                 continue
-            m = e.meta
+            m = e.meta or {}
+            dia = m.get("dia_mm") or (round(e.b * 1000) if e.b else None)
+            kg = float(m.get("weight_kg") or 0.0)
+            length_m = float(m.get("length_m") or e.length or 0.0)
+            if kg <= 0 and dia and length_m > 0:
+                kg = length_m * unit_weight(int(dia))
+            if kg <= 0 or not dia:
+                continue
+            target = m.get("target") or rebar_target_for(d.plan_type, d.label or "", d.filename or "")
+            k = 1 if target == "foundation" else mult
             rows.append({"drawing": d.label or d.filename, "drawing_id": d.id, "kot": m.get("kot") or kot_from_label(d.label),
-                         "target": m.get("target", "slab"), "dia_mm": m.get("dia_mm"), "weight_kg": m.get("weight_kg", 0.0),
-                         "length_m": m.get("length_m", 0.0)})
+                         "target": target, "dia_mm": int(dia), "weight_kg": kg * k, "length_m": length_m * k,
+                         "source": ("elle" if e.manual else m.get("source", "tablo")), "confidence": e.confidence,
+                         "storey_count": k})
     return rows
 
 
@@ -299,7 +440,8 @@ def project_quantities(project: Project, session: Session, drawings: list[Drawin
         if not elements:
             continue
         net_slabs = any(e.etype == "slab" and e.subtype == "net" for e in elements)
-        params = QuantityParams(storey_height=storey_height_of(project, d, sh), slab_thickness=project.slab_thickness,
+        params = QuantityParams(storey_height=storey_height_of(project, d, sh),
+                                slab_thickness=dominant_slab_thickness(elements) or project.slab_thickness,
                                 storey_count=d.storey_count, beam_full_height=net_slabs,
                                 beam_depth=dominant_beam_depth(elements),
                                 rebar_ratios={**QuantityParams().rebar_ratios, **(project.rebar_ratios or {})})
@@ -307,13 +449,13 @@ def project_quantities(project: Project, session: Session, drawings: list[Drawin
         for e in elements:
             info[e.id] = {"drawing": d.label or d.filename, "drawing_id": d.id, "kot": kot_from_label(d.label), "layer": e.layer,
                           "b": e.b, "h": e.h, "thickness": e.thickness, "area": round(e.area, 4), "length": round(e.length, 4),
-                          "warnings": e.warnings}
+                          "warnings": e.warnings, "storey_height": params.storey_height, "slab_thickness": params.slab_thickness}
         lines.extend(compute_all(data, params))
     return lines, summarize(lines, rebar_table_rows(project, session), info), info
 
 
 # Pafta metrajında yazılmayan kalemler: proje toplamından türeyen fire ve sarf (keşif listesinde kalır)
-_NOT_MEASURED_KINDS = {"plywood", "bag_teli", "kalip_yagi", "civi"}
+_NOT_MEASURED_KINDS = {"plywood", "bag_teli", "kalip_yagi", "civi", "kalip_iskelesi"}
 
 
 def project_boq(project: Project, session: Session, summary: dict | None = None, expand: bool = True,
@@ -811,7 +953,7 @@ def ensure_price_items(project: Project, items: list[BoqItem], session: Session)
 
 def to_price_data(p: PriceItem) -> PriceData:
     return PriceData(p.key, p.name, p.unit, p.unit_price or 0.0, p.labor_price or 0.0, p.brand or "",
-                     p.hours_per_unit or 0.0, p.crew_size or 0.0)
+                     p.hours_per_unit or 0.0, p.crew_size or 0.0, tuple(p.set_fields or []))
 
 
 def project_cost(project: Project, session: Session) -> tuple[list[QuantityLine], dict, dict, list[BoqItem], dict]:

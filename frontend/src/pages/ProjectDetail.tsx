@@ -21,7 +21,7 @@ const PARAM_FIELDS: Array<{ key: keyof ProjectParams; label: string; step: strin
 ]
 const SARF_FIELDS: Array<{ key: keyof ProjectParams; label: string; step: string; hint: string }> = [
   { key: 'concrete_waste_pct', label: 'Beton fire (%)', step: '0.5', hint: '' },
-  { key: 'rebar_waste_pct', label: 'Demir fire / bindirme (%)', step: '0.5', hint: '' },
+  { key: 'rebar_waste_pct', label: 'Demir fire (kesim artığı, %)', step: '0.5', hint: '' },
   { key: 'tie_wire_kg_per_t', label: 'Bağ teli (kg / ton demir)', step: '0.5', hint: 'yaygın 6–10' },
   { key: 'plywood_sheet_m2', label: 'Plywood levha (m²)', step: '0.005', hint: '125×250 = 3.125' },
   { key: 'formwork_reuse', label: 'Kalıp kullanım sayısı', step: '1', hint: 'levha kaç kez kullanılır' },

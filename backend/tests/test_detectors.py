@@ -101,8 +101,8 @@ def test_network_slabs_split_labels_and_unit_fix(network_dxf):
     slabs = sorted(r.by_type("slab"), key=lambda s: s.area)
     assert len(slabs) == 2
     assert all(s.subtype == "net" and s.name == "D1" and s.thickness == pytest.approx(0.12) for s in slabs)
-    assert slabs[1].area == pytest.approx(26.75, abs=0.05)
-    assert slabs[0].area == pytest.approx(25.75, abs=0.05)   # 1 m² şaft düşüldü
+    assert slabs[1].area == pytest.approx(26.75, abs=0.1)   # 1 mm hassasiyet ızgarası (set_precision) ile ±0,05 oynar
+    assert slabs[0].area == pytest.approx(25.75, abs=0.1)   # 1 m² şaft düşüldü
     names = {l.name: l.etype for l in r.layers}
     assert names["VM Döşeme Şaft"] == "hole" and names["VM Kolon Markası"] is None
 
@@ -197,3 +197,88 @@ def test_slab_faces_close_with_column_gap(tmp_path):
     assert len(slabs) == 1 and slabs[0].subtype == "net"
     assert slabs[0].area == pytest.approx(5.7 * 4.7, rel=0.03)   # kirişler arası net alan (iç yüzler 15 cm)
     assert slabs[0].thickness == pytest.approx(0.12)
+
+
+# ---------------------------------------------------------------- 9 Eyl 2026: statik düzeltmeleri
+
+def _doc_cm():
+    import ezdxf
+    doc = ezdxf.new("R2010")
+    doc.header["$INSUNITS"] = 5
+    for name in ("VM Kolon", "VM Kiriş", "VM Kolon Markası", "VM Kiriş Markası", "VM Döşeme Markası", "VM Temel", "VM Parapet Marka"):
+        doc.layers.add(name)
+    return doc
+
+
+def test_slab_faces_close_despite_float_noise(tmp_path):
+    """Kiriş çizgi uçları 1e-10 farkla 'çakışmıyor' (gerçek çizimlerde yaygın): 1 mm hassasiyet ızgarası hücreyi kapatır."""
+    from tests.fixtures.make_dxf import _rect
+    doc = _doc_cm(); msp = doc.modelspace()
+    eps = 1e-9
+    for cx, cy in ((0, 0), (600, 0), (0, 500), (600, 500)):
+        msp.add_lwpolyline(_rect(cx - 25, cy - 25, 50, 50), close=True, dxfattribs={"layer": "VM Kolon"})
+        msp.add_text("S1 (50/50)", dxfattribs={"layer": "VM Kolon Markası", "height": 6}).set_placement((cx - 20, cy + 30))
+    # kirişler çift çizgi; uçlar gürültülü
+    for cy in (0, 500):
+        for off in (-15, 15):
+            msp.add_line((25 + eps, cy + off), (575 - eps, cy + off + eps), dxfattribs={"layer": "VM Kiriş"})
+    for cx in (0, 600):
+        for off in (-15, 15):
+            msp.add_line((cx + off, 25 - eps), (cx + off + eps, 475 + eps), dxfattribs={"layer": "VM Kiriş"})
+    msp.add_text("K1 (30/50)", dxfattribs={"layer": "VM Kiriş Markası", "height": 6}).set_placement((300, -3))
+    msp.add_text("D1", dxfattribs={"layer": "VM Döşeme Markası", "height": 8}).set_placement((300, 260))
+    msp.add_text("d=12", dxfattribs={"layer": "VM Döşeme Markası", "height": 6}).set_placement((300, 245))
+    path = tmp_path / "noise.dxf"; doc.saveas(path)
+    r = analyze_file(str(path))
+    slabs = r.by_type("slab")
+    assert len(slabs) == 1 and slabs[0].area == pytest.approx(26.7, abs=0.2) and slabs[0].thickness == pytest.approx(0.12)
+
+
+def test_dims_only_label_is_not_slab_thickness_and_parapet_not_column(tmp_path):
+    """Yüzey içindeki '(100/100)' kolon kesiti döşeme kalınlığı olmaz; 'Parapet (20/82)' kolon kesitine yapışmaz,
+    alanla tutarlı '(100/100)' seçilir."""
+    from tests.fixtures.make_dxf import _rect
+    from app.parser.text_parser import parse_label
+    lab = parse_label("Parapet (20/82)")
+    assert lab.type_hint == "parapet" and lab.b == pytest.approx(0.20) and lab.h == pytest.approx(0.82)
+    doc = _doc_cm(); msp = doc.modelspace()
+    msp.add_lwpolyline(_rect(0, 0, 100, 100), close=True, dxfattribs={"layer": "VM Kolon"})
+    msp.add_text("S1", dxfattribs={"layer": "VM Kolon Markası", "height": 6}).set_placement((10, 110))
+    msp.add_text("Parapet (20/82)", dxfattribs={"layer": "VM Parapet Marka", "height": 6}).set_placement((10, 120))   # daha yakın
+    msp.add_text("(100/100)", dxfattribs={"layer": "VM Kolon Markası", "height": 6}).set_placement((10, 140))
+    path = tmp_path / "par.dxf"; doc.saveas(path)
+    r = analyze_file(str(path), unit_override="cm")
+    col = r.by_type("column")[0]
+    assert col.b == pytest.approx(1.0) and col.h == pytest.approx(1.0) and not any("uyuşmuyor" in w for w in col.warnings)
+
+
+def test_untagged_closed_polyline_not_raft(tmp_path):
+    """Temel katmanındaki etiketsiz, açık çizilmiş kutu (antet / bölge kutusu) radye sayılmaz; etiketli bölge sayılır."""
+    from tests.fixtures.make_dxf import _rect
+    doc = _doc_cm(); msp = doc.modelspace()
+    msp.add_lwpolyline(_rect(0, 0, 2000, 1500), close=True, dxfattribs={"layer": "VM Temel"})
+    msp.add_text("RD1", dxfattribs={"layer": "VM Kolon Markası", "height": 10}).set_placement((900, 700))
+    msp.add_text("70cm", dxfattribs={"layer": "VM Kolon Markası", "height": 8}).set_placement((900, 680))
+    msp.add_lwpolyline([(5000, 0), (7000, 0), (7000, 1000), (5000, 1000)], close=False, dxfattribs={"layer": "VM Temel"})   # açık kutu, etiketsiz
+    path = tmp_path / "temel.dxf"; doc.saveas(path)
+    r = analyze_file(str(path), unit_override="cm")
+    rafts = sorted(r.by_type("foundation"), key=lambda e: -e.area)
+    good = [e for e in rafts if e.confidence >= 0.4]
+    assert len(good) == 1 and good[0].name == "RD1" and good[0].thickness == pytest.approx(0.7)
+    bad = [e for e in rafts if e.confidence < 0.4]
+    assert bad and any("Etiketsiz açık polyline" in w for w in bad[0].warnings)
+
+
+def test_crossing_beam_polygons_intersection_deducted(tmp_path):
+    """Kesişen kiriş dikdörtgenlerinde ortak alan dar kirişin uzunluğundan düşülür (beton çift sayılmasın)."""
+    from tests.fixtures.make_dxf import _rect
+    doc = _doc_cm(); msp = doc.modelspace()
+    msp.add_lwpolyline(_rect(0, -20, 800, 40), close=True, dxfattribs={"layer": "VM Kiriş"})       # 8 m × 40 cm
+    msp.add_lwpolyline(_rect(380, -300, 25, 600), close=True, dxfattribs={"layer": "VM Kiriş"})    # 6 m × 25 cm, ortada kesişir
+    msp.add_text("K1 (40/60)", dxfattribs={"layer": "VM Kiriş Markası", "height": 6}).set_placement((100, 25))
+    msp.add_text("K2 (25/50)", dxfattribs={"layer": "VM Kiriş Markası", "height": 6, "rotation": 90}).set_placement((410, -250))
+    path = tmp_path / "cross.dxf"; doc.saveas(path)
+    r = analyze_file(str(path), unit_override="cm")
+    beams = {b.name: b for b in r.by_type("beam")}
+    assert beams["K1"].length == pytest.approx(8.0, abs=0.05)
+    assert beams["K2"].length == pytest.approx(6.0 - 0.40, abs=0.05) and any("Kesişen" in w for w in beams["K2"].warnings)

@@ -113,3 +113,41 @@ def test_mapped_discipline_facade(facade_dxf):
     assert by_key["cam:*"].quantity == pytest.approx(9.0) and by_key["korekuyu:*"].quantity == pytest.approx(8.0)
     assert by_key["cephe_tasi:*"].quantity == 5
 
+
+
+def test_ksf_wall_openings_deducted_and_finishes(tmp_path):
+    """KSF duvarında kapı / pencere boşluğu (≥ 0,10 m²) düşülür; sıva / boya duvar alanından türetilir; cam pencereden;
+    asansör gibi proje geneli kalemler kat sayısıyla çarpılmaz; kapalı çokgen duvarda eksen uzunluğu alınır."""
+    import ezdxf
+    from tests.fixtures.make_dxf import _rect
+    doc = ezdxf.new("R2018")
+    doc.header["$INSUNITS"] = 4
+    for name in ["KSF-MIM-DUVAR_YTONG-20x300", "KSF-MIM-KAPI-90x210", "KSF-MIM-PENCERE-120x140", "KSF-ASN-ASANSOR-1000KG"]:
+        doc.layers.add(name)
+    msp = doc.modelspace()
+    msp.add_line((0, 0), (10000, 0), dxfattribs={"layer": "KSF-MIM-DUVAR_YTONG-20x300"})                      # 10 m × 3 = 30 m²
+    msp.add_lwpolyline(_rect(0, 5000, 10000, 200), close=True, dxfattribs={"layer": "KSF-MIM-DUVAR_YTONG-20x300"})  # kapalı çokgen 10 × 0,2 m -> 10 m, 30 m²
+    k = doc.blocks.new("KAPI"); k.add_line((0, 0), (900, 0))
+    w = doc.blocks.new("PENCERE"); w.add_line((0, 0), (1200, 0))
+    a = doc.blocks.new("ASANSOR"); a.add_circle((0, 0), 800)
+    msp.add_blockref("KAPI", (2000, 0), dxfattribs={"layer": "KSF-MIM-KAPI-90x210"})
+    msp.add_blockref("PENCERE", (6000, 0), dxfattribs={"layer": "KSF-MIM-PENCERE-120x140"})
+    msp.add_blockref("PENCERE", (8000, 0), dxfattribs={"layer": "KSF-MIM-PENCERE-120x140"})
+    msp.add_blockref("ASANSOR", (20000, 0), dxfattribs={"layer": "KSF-ASN-ASANSOR-1000KG"})
+    msp.add_blockref("ASANSOR", (25000, 0), dxfattribs={"layer": "KSF-ASN-ASANSOR-1000KG"})
+    path = tmp_path / "ksf_wall.dxf"; doc.saveas(path)
+    r = analyze_file(str(path), discipline="standard", catalog=Catalog())
+    walls = r.by_type("duvar_ytong")
+    assert len(walls) == 2 and all(abs(w.length - 10.0) < 0.05 for w in walls)
+    assert any("eksen uzunluğu" in x for w in walls for x in w.warnings)
+    items = standard_items([{"label": "Kat", "storey_count": 3, "storey_height": 3.0, "slab_thickness": 0.15, "elements": r.elements}],
+                           effective_params({"plaster_sides": 2, "paint_sides": 2}), Catalog())
+    by = {i.key: i for i in items}
+    openings = 0.9 * 2.1 + 2 * 1.2 * 1.4      # 5,25 m² (tek kat)
+    assert by["duvar_ytong:20x300"].quantity == pytest.approx((60.0 - openings) * 3, rel=1e-3)
+    assert by["duvar_ytong:20x300"].detail["openings_m2"] == pytest.approx(openings * 3, rel=1e-3)
+    assert by["kapi:90x210"].quantity == 3 and by["pencere:120x140"].quantity == 6
+    assert by["cam:120x140"].quantity == pytest.approx(2 * 1.2 * 1.4 * 3, rel=1e-3)
+    assert by["siva:*"].quantity == pytest.approx((60.0 - openings) * 3 * 2, rel=1e-3)
+    assert by["boya:*"].quantity == pytest.approx((60.0 - openings) * 3 * 2, rel=1e-3)
+    assert by["asansor:1000kg"].quantity == 2 and "Proje geneli" in by["asansor:1000kg"].notes[0]

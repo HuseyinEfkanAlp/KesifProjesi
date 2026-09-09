@@ -10,7 +10,7 @@ from ..parser.layer_profile import ALL_TYPES, DEFAULT_PROFILE, DISCIPLINES, TYPE
 from ..planset import LEVELS, PLAN_GROUPS, PLAN_TYPE_BY_CODE, PLAN_TYPES, effective_levels, plan_check
 from ..quantity.boq import DEFAULT_PARAMS, KIND_META
 from ..quantity.engine import DEFAULT_REBAR_RATIOS
-from ..services import analyze_and_store, project_params, project_systems
+from ..services import refresh_wall_areas, analyze_and_store, project_params, project_systems
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 class ProjectIn(BaseModel):
     name: str
     description: str = ""
-    storey_height: float = 3.0
+    storey_height: float = 0.0     # 0 = kotlardan türetilir (plan / kesit kot yazıları); yalnız düzeltme için girilir
     slab_thickness: float = 0.15
     vat_rate: float = 0.0
     rebar_ratios: dict[str, float] | None = None
@@ -112,10 +112,14 @@ def update_project(project_id: int, body: ProjectPatch, session: Session = Depen
         p.params = _clean_params({**old_params, **(data.pop("params") or {})})
         # çatı / cephe sistemi seçimi eşlemeli paftalardaki otomatik eşlemeyi yönlendirir -> o paftalar yeniden analiz edilir
         reanalyze_mapped = any((old_params.get(k) or "") != (p.params.get(k) or "") for k in ("roof_system", "facade_system"))
+    height_changed = ("storey_height" in data and data["storey_height"] != p.storey_height) or (
+        "params" in body.model_dump(exclude_unset=True) and (old_params.get("wall_height") or "") != (p.params.get("wall_height") or ""))
     for k, v in data.items():
         setattr(p, k, v)
     session.add(p)
     session.commit()
+    if height_changed and not reanalyze:
+        refresh_wall_areas(p, session)   # katman adında yüksekliği olmayan duvarların alanı = uzunluk × yeni yükseklik
     if reanalyze:  # varsayılan döşeme kalınlığı dedektör parametresi
         for d in session.exec(select(Drawing).where(Drawing.project_id == p.id)):
             analyze_and_store(d, p, session)
@@ -129,9 +133,12 @@ def update_project(project_id: int, body: ProjectPatch, session: Session = Depen
 @router.delete("/{project_id}", status_code=204)
 def delete_project(project_id: int, session: Session = Depends(get_session)):
     p = get_project(project_id, session)
+    from pathlib import Path
     for d in session.exec(select(Drawing).where(Drawing.project_id == p.id)):
         for e in session.exec(select(Element).where(Element.drawing_id == d.id)):
             session.delete(e)
+        if d.stored_path:
+            Path(d.stored_path).unlink(missing_ok=True)     # kırpılmış pafta / yüklenen dosya diskte kalmasın
         session.delete(d)
     for pi in session.exec(select(PriceItem).where(PriceItem.project_id == p.id)):
         session.delete(pi)

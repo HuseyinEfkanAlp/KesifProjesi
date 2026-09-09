@@ -133,3 +133,39 @@ def test_api_sheet_selection_flow(client, multi_dxf):
     assert r.status_code == 400
     r = client.post(f"/api/projects/{pid}/drawings/from-source", json={"token": "0123456789", "sheets": [{"index": 0}]})
     assert r.status_code == 404
+
+
+def test_crop_margin_does_not_enter_neighbour_frame(tmp_path):
+    """Bitişik iki çerçeve: sınıra yakın yazı yalnız kendi paftasına yazılır (kırpma payı komşuya taşmaz)."""
+    import ezdxf
+    from app.parser.sheets import crop_sheets
+    from app.parser.loader import load_dxf
+    doc = ezdxf.new("R2010")
+    msp = doc.modelspace()
+    a = (0.0, 0.0, 100.0, 100.0)
+    b = (100.0, 0.0, 200.0, 100.0)
+    for x0, y0, x1, y1 in (a, b):
+        msp.add_lwpolyline([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], close=True, dxfattribs={"layer": "CERCEVE"})
+    msp.add_text("P45 4Ø14 ila. l=160", dxfattribs={"height": 1.0, "insert": (99.0, 50.0), "layer": "POZ"})   # A'nın sağ kenarı
+    msp.add_text("P46 4Ø14 ila. l=160", dxfattribs={"height": 1.0, "insert": (101.0, 50.0), "layer": "POZ"})  # B'nin sol kenarı
+    blk = doc.blocks.new("KAPI_90"); blk.add_line((0, 0), (0.9, 0))
+    inner = doc.blocks.new("IC"); inner.add_line((0, 0), (1, 1))
+    outer = doc.blocks.new("DIS"); outer.add_blockref("IC", (0, 0))
+    for x in (10.0, 20.0, 30.0):
+        msp.add_blockref("KAPI_90", (x, 10.0), dxfattribs={"layer": "KAPI"})
+        msp.add_blockref("KAPI_90", (100 + x, 10.0), dxfattribs={"layer": "KAPI"})
+    msp.add_blockref("DIS", (50.0, 50.0), dxfattribs={"layer": "DETAY"})
+    src = tmp_path / "two.dxf"; doc.saveas(src)
+    da, db = tmp_path / "a.dxf", tmp_path / "b.dxf"
+    crop_sheets(src, [(a, da), (b, db)])
+    dra, drb = load_dxf(str(da)), load_dxf(str(db))
+    ta = [e.text for e in dra.texts()]
+    tb = [e.text for e in drb.texts()]
+    assert ta == ["P45 4Ø14 ila. l=160"] and tb == ["P46 4Ø14 ila. l=160"]
+    # küçük dosya (ezdxf) yolunda da blok yerleşimleri yazılır (kapı / pencere / armatür sayımı) ve iç içe blok açılır
+    assert len([i for i in dra.inserts() if i.block == "KAPI_90"]) == 3 and len([i for i in drb.inserts() if i.block == "KAPI_90"]) == 3
+    assert any(e.kind == "line" and e.source.startswith("INSERT") is False and e.layer == "DETAY" for e in dra.entities) or \
+        any(e.layer == "DETAY" and e.kind == "line" for e in dra.entities)
+    # tek pafta kırpılsa da komşu çerçeve verilirse pay oraya taşmaz
+    crop_sheets(src, [(a, da)], neighbors=[a, b])
+    assert [e.text for e in load_dxf(str(da)).texts()] == ["P45 4Ø14 ila. l=160"]

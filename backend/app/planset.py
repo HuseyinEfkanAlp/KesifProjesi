@@ -141,8 +141,13 @@ def normalize_title(s: str) -> str:
 
 
 def classify_title(*titles: str) -> PlanType | None:
-    """Verilen başlıklardan (pafta başlığı, dosya adı, diğer adaylar) ilk tanınan plan tipini döndürür."""
-    fallback: PlanType | None = None
+    """Verilen başlıklardan (pafta başlığı, dosya adı, diğer adaylar) plan tipini döndürür.
+
+    Bütün adaylar değerlendirilir: herhangi bir adayda donatı paftası ("X YÖNÜ DONATI PLANI") tanınıyorsa o kazanır —
+    donatı paftasının başlığı çoğu ofiste "+7.95 KOTU KALIP PLANI"dır ve kalıp planı sanılınca hem tablo okunmaz hem de
+    kalıp betonu ikinci kez sayılır (kalıp planında "DONATI" yazısı bulunmaz, tersi olağandır). Sonra ilk adaydaki
+    analiz edilen tip; kesit / detay yalnız başka aday yoksa."""
+    found: list[PlanType] = []
     for raw in titles:
         t = normalize_title(raw)
         if not t:
@@ -153,11 +158,15 @@ def classify_title(*titles: str) -> PlanType | None:
             if p.exclude and re.search(p.exclude, t):
                 continue
             if re.search(p.pattern, t):
-                if p.analyze:
-                    return p
-                fallback = fallback or p   # kesit / detay: başka aday plan yoksa
+                found.append(p)
                 break
-    return fallback
+    rebar = [p for p in found if p.discipline == "rebar"]
+    if rebar:
+        return rebar[0]
+    strong = [p for p in found if p.analyze]
+    if strong:
+        return strong[0]
+    return found[0] if found else None
 
 
 def discipline_for(plan_type: str | None, fallback: str = "structural") -> str:
@@ -226,6 +235,12 @@ def resolve_plan(titles: list[str], layers: dict[str, int] | None = None, explic
         return explicit, discipline_for(explicit)
     found = classify_title(*titles)
     code = found.code if found else ""
+    # Katman kanıtı: kalıp planı sanılan paftada DONATI / POZ / METRAJ katmanları kalabalıksa donatı paftasıdır
+    if found is not None and found.discipline == "structural" and layers:
+        rebar_n = sum(n for name, n in layers.items() if re.search(r"DONATI|DONATİ|\bPOZ\b|METRAJ|REBAR", normalize_title(name)))
+        frame_n = sum(n for name, n in layers.items() if re.search(r"KOLON|KIRIS|COLUMN|BEAM", normalize_title(name)))
+        if rebar_n >= 200 and rebar_n >= 0.3 * max(frame_n, 1):
+            return "sta_doseme_donati", "rebar"
     # "… KAT PLANI" açıkça mimari kat planıdır (statik ofis "KALIP PLANI" yazar); yalnız genel "PLAN" eşleşmesi zayıftır
     strong_arch = any(re.search(r"KAT\s*PLAN|MIMARI", normalize_title(t)) for t in titles if t)
     if found is not None and discipline_from_layers(layers) == "standard":

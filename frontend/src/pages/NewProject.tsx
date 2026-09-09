@@ -13,7 +13,7 @@ export default function NewProject() {
   const nav = useNavigate()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [storeyHeight, setStoreyHeight] = useState(3.0)
+  const [storeyHeight, setStoreyHeight] = useState<number | ''>('')   // boş: kat yüksekliği plan / kesit kotlarından
   const [slab, setSlab] = useState(0.15)
   const [project, setProject] = useState<Project | null>(null)
   const [error, setError] = useState('')
@@ -26,7 +26,7 @@ export default function NewProject() {
     if (!name.trim()) return
     setBusy(true); setError('')
     try {
-      setProject(await Api.projects.create({ name: name.trim(), description, storey_height: storeyHeight, slab_thickness: slab }))
+      setProject(await Api.projects.create({ name: name.trim(), description, storey_height: storeyHeight === '' ? 0 : storeyHeight, slab_thickness: slab }))
     } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
   }
 
@@ -54,7 +54,7 @@ export default function NewProject() {
             <div className="form-grid">
               <label className="field span2">Proje adı<input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Örn. Ataşehir Konut Bloğu" required /></label>
               <label className="field span2"><span>Açıklama <span className="muted">(isteğe bağlı)</span></span><input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="ada / parsel, blok, işveren…" /></label>
-              <label className="field">Kat yüksekliği H (m)<input type="number" step="0.05" min={2} value={storeyHeight} onChange={(e) => setStoreyHeight(+e.target.value)} /></label>
+              <label className="field" title="Boş bırakın: kat yüksekliği plan ve kesitlerdeki kot yazılarından türetilir. Yalnız düzeltme için girin.">Kat yüksekliği H (m) <span className="muted">(boş = kotlardan)</span><input type="number" step="0.05" min={0} placeholder="kotlardan" value={storeyHeight} onChange={(e) => setStoreyHeight(e.target.value === '' ? '' : +e.target.value)} /></label>
               <label className="field">Döşeme kalınlığı d (m)<input type="number" step="0.01" min={0.05} value={slab} onChange={(e) => setSlab(+e.target.value)} /></label>
             </div>
             <p className="muted hint">Duvar yüksekliği H − d alınır; her plan için kat yüksekliği ayrıca girilebilir. KDV, demir oranı, fire ve sıva / boya yüz sayısı proje sayfasında.</p>

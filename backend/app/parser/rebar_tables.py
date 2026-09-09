@@ -22,7 +22,10 @@ from dataclasses import dataclass, field
 
 from .loader import Drawing
 
-DIA_HEADER = re.compile(r"^\s*(?:[ØøΦφ∅ƒ]|%%c|Q|F)\s*(?P<d>\d{1,2})\s*(?:mm)?\s*$", re.IGNORECASE)
+DIA_SYM = r"(?:[ØøΦφ∅ƒ]|%%c|Q)"          # çap simgesi (font glyph'leri dahil); "F12" aks / temel etiketi olabilir, alınmaz
+DIA_HEADER = re.compile(r"^\s*" + DIA_SYM + r"\s*(?P<d>\d{1,2})\s*(?:mm)?\s*$", re.IGNORECASE)
+TON_UNIT = re.compile(r"\(\s*t(?:on)?\s*\)", re.IGNORECASE)      # "AĞIRLIK (ton)" -> kg'a çevrilir
+CM_UNIT = re.compile(r"\(\s*cm\s*\)", re.IGNORECASE)             # "TOPLAM BOY (cm)" -> m'ye çevrilir
 NUM = re.compile(r"^-?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?$|^-?\d+(?:[.,]\d+)?$")
 ROW_TOTAL_LEN = re.compile(r"TOPLAM\s*BOY|TOTAL\s*LENGTH", re.IGNORECASE)
 ROW_UNIT_W = re.compile(r"B[Iİ]R[Iİ]M\s*A[GĞ]IRLIK|UNIT\s*WEIG", re.IGNORECASE)
@@ -143,20 +146,25 @@ def parse_rebar_tables(drawing: Drawing) -> list[RebarTable]:
             continue
         nums = [(x, _num(t)) for x, t in cells if _num(t) is not None]
         # satır etiketi: hücre hücre bakılır (aynı hizada paftanın başka yazıları da olabilir)
-        kind, lx = None, None
+        kind, lx, scale = None, None, 1.0
         for x, t in cells:
             if _num(t) is not None or DIA_HEADER.match(t):
                 continue
             if ROW_TOTAL_LEN.search(t):
                 kind, lx = "total_length", x
+                scale = 0.01 if CM_UNIT.search(t) else 1.0
             elif ROW_UNIT_W.search(t):
                 kind, lx = "unit", x
             elif ROW_TOTAL_W.search(t):
                 kind, lx = "declared", x
+                scale = 1000.0 if TON_UNIT.search(t) else 1.0
             elif ROW_WEIGHT.search(t):
                 kind, lx = "weight", x
+                scale = 1000.0 if TON_UNIT.search(t) else 1.0
             if kind:
                 break
+        if scale != 1.0:
+            nums = [(x, v * scale) for x, v in nums]
         # etiketli satır yalnız etiketin sağındaki en yakın tabloya ait
         scope = open_tables
         if lx is not None:
@@ -185,10 +193,13 @@ def parse_rebar_tables(drawing: Drawing) -> list[RebarTable]:
         elif kind == "unit":
             pass
         elif kind == "declared":
+            # genel toplam hücresi çoğu tabloda sütunlar arasına ortalanmıştır: tablo genişliği içindeki en büyük sayı
             for x, v in nums:
-                hit = nearest(x)
-                if hit:
-                    hit[1].total_kg_declared = max(hit[1].total_kg_declared or 0.0, v)
+                for t in scope:
+                    lo, hi = min(t.columns.values()), max(t.columns.values())
+                    gap = _col_gap(t) if len(t.columns) > 1 else default_tol
+                    if lo - gap <= x <= hi + gap:
+                        t.total_kg_declared = max(t.total_kg_declared or 0.0, v)
         elif kind == "weight":
             by_col("weight")
         elif nums and len(nums) >= 3:
@@ -234,10 +245,31 @@ def kot_from_label(label: str) -> str | None:
 
 
 POZ_LINE = re.compile(
-    r"^\s*P\s*(?P<poz>\d+)\s+(?P<n>\d+)\s*(?:[ØøΦφ∅ƒ]|%%c)\s*(?P<d>\d{1,2})(?:\s*/\s*(?P<s>\d+))?"
-    r"\s*(?P<tip>[A-Za-zçğıöşüÇĞİÖŞÜ]+)?\.?\s*[lL]\s*=\s*(?P<L>\d+(?:[.,]\d+)?)",
+    r"^\s*P\s*(?P<poz>\d+)\s+(?P<n>\d+)\s*" + DIA_SYM + r"\s*(?P<d>\d{1,2})(?:\s*/\s*(?P<s>\d+))?"
+    r"\s*(?P<tip>[A-Za-zçğıöşüÇĞİÖŞÜ]+)?\.?\s*[lL]\s*=\s*(?P<L>\d+(?:[.,]\d+)?(?:\s*\+\s*\d+(?:[.,]\d+)?)*)"
+    r"(?P<rest>.*)$",
+    re.IGNORECASE,
 )
+# adetsiz poz yazısı ("P02 Ø10 l=256"): kesitteki tekrar, sayılmaz — yalnız uyarı için sayılır
+POZ_LINE_NOCOUNT = re.compile(r"^\s*P\s*\d+\s*" + DIA_SYM + r"\s*\d{1,2}(?:\s*/\s*\d+)?\s*[A-Za-zçğıöşüÇĞİÖŞÜ]*\.?\s*[lL]\s*=", re.IGNORECASE)
+# satır sonundaki çarpan: "(2 adet)", "x2", "2 ADET" (aynı kiriş grubu birden çok kez)
+POZ_MULT = re.compile(r"(?:\(\s*(?P<a>\d+)\s*(?:ADET|AD|X)\s*\)|\b(?P<b>\d+)\s*ADET\b|\bX\s*(?P<c>\d+)\b)", re.IGNORECASE)
 POZ_TYPES = {"etr": "etriye", "ila": "ilave", "mon": "montaj", "gov": "gövde", "duz": "düz", "pil": "pilye", "cir": "çiroz"}
+
+
+def _poz_length_m(raw: str) -> float:
+    """'160' -> 1,60 m (cm); '160+30' -> 1,90 (kanca payı toplanır); '1,60' / '2.35' (20'den küçük, ondalıklı) -> metre."""
+    total = 0.0
+    for part in raw.split("+"):
+        part = part.strip().replace(",", ".")
+        if not part:
+            continue
+        v = float(part)
+        if "." in part and v < 20:
+            total += v                  # metre yazılmış
+        else:
+            total += v / 100.0          # cm
+    return total
 
 
 def parse_rebar_labels(drawing: Drawing) -> RebarTable | None:
@@ -245,20 +277,31 @@ def parse_rebar_labels(drawing: Drawing) -> RebarTable | None:
     per: dict[int, float] = {}
     lengths: dict[int, float] = {}
     n_lines = 0
+    n_orphan = 0
+    n_mult = 0
     types: dict[str, int] = {}
     for e in drawing.texts():
-        m = POZ_LINE.match(e.text.strip())
+        txt = e.text.strip()
+        m = POZ_LINE.match(txt)
         if not m:
+            if POZ_LINE_NOCOUNT.match(txt):
+                n_orphan += 1
             continue
         d = int(m.group("d"))
         if not 6 <= d <= 50:
             continue
         n = int(m.group("n"))
-        L = float(m.group("L").replace(",", ".")) / 100.0      # cm -> m
+        L = _poz_length_m(m.group("L"))
         if n <= 0 or L <= 0:
             continue
-        per[d] = per.get(d, 0.0) + n * L * unit_weight(d)
-        lengths[d] = lengths.get(d, 0.0) + n * L
+        mult = 1
+        mm = POZ_MULT.search(m.group("rest") or "")
+        if mm:
+            mult = int(mm.group("a") or mm.group("b") or mm.group("c") or 1)
+            if mult > 1:
+                n_mult += 1
+        per[d] = per.get(d, 0.0) + n * mult * L * unit_weight(d)
+        lengths[d] = lengths.get(d, 0.0) + n * mult * L
         n_lines += 1
         tip = (m.group("tip") or "duz").lower()[:3]
         types[tip] = types.get(tip, 0) + 1
@@ -267,5 +310,28 @@ def parse_rebar_labels(drawing: Drawing) -> RebarTable | None:
     t = RebarTable(columns={d: 0.0 for d in per}, total_length=lengths, weight=per, pos_count=n_lines)
     t.warnings.append(f"Metraj tablosu yok; {n_lines} adetli poz yazısından hesaplandı "
                       f"({', '.join(f'{POZ_TYPES.get(k, k)} {v}' for k, v in sorted(types.items()))}). "
-                      "Boylar yazıdaki değerdir; kanca / bindirme payı yazıda yoksa eksik olabilir")
+                      "Boylar yazıdaki değerdir; kanca / bindirme payı yazıda yoksa eksik olabilir"
+                      + (f"; {n_mult} satırda adet çarpanı uygulandı" if n_mult else ""))
+    if n_orphan:
+        t.warnings.append(f"{n_orphan} poz yazısı adetsiz ('P02 Ø10 l=256' biçiminde), kesit tekrarı sayılıp metraja alınmadı; "
+                          "gerçek poz ise adetini yazıya ekleyin ya da demiri elle girin")
     return t
+
+
+REBAR_TARGET_BY_PLAN: dict[str, str] = {
+    "sta_temel_donati": "foundation", "sta_kolon": "column", "sta_kiris": "beam", "sta_perde": "shear_wall",
+    "sta_merdiven": "stair", "sta_doseme_donati": "slab",
+}
+_TARGET_STRONG = re.compile(r"TEMEL|RADYE|FOUND|RAFT|KOLON|COLUMN|K[Iİ]R[Iİ][SŞ]|BEAM|PERDE|SHEAR|MERD[Iİ]VEN|STAIR", re.IGNORECASE)
+
+
+def rebar_target_for(plan_type: str | None, label: str = "", filename: str = "") -> str:
+    """Donatı paftasının demiri hangi elemana yazılır: plan tipi > pafta başlığında açık sözcük > dosya adı > döşeme.
+    Kiriş detay paftalarının başlığı çoğu zaman kiriş adıdır ("K1075", "(50/45)"); dosya adı "KİRİŞ DETAYLARI" karar verir."""
+    if plan_type in REBAR_TARGET_BY_PLAN:
+        return REBAR_TARGET_BY_PLAN[plan_type]
+    if label and _TARGET_STRONG.search(label):
+        return target_from_label(label)
+    if filename and _TARGET_STRONG.search(filename):
+        return target_from_label(filename)
+    return target_from_label(label)

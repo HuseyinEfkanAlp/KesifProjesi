@@ -20,7 +20,7 @@ from ..parser.dwg import convert_dwg_to_dxf, dwg_supported
 from ..parser.loader import UNIT_SCALE, load_dxf
 from ..parser.sheets import BIG_FILE_BYTES, Sheet, SheetScan, crop_sheets, scan_sheets
 from ..planset import PLAN_TYPE_BY_CODE, resolve_plan
-from ..services import analyze_and_store, boq_payload, detect_params, drawing_boq, load_catalog, recompute_derived
+from ..services import refresh_wall_areas, analyze_and_store, boq_payload, detect_params, drawing_boq, load_catalog, recompute_derived
 from .projects import get_project
 
 router = APIRouter(prefix="/api", tags=["drawings"])
@@ -258,7 +258,7 @@ def _source_out(src: Path, scan: SheetScan) -> dict:
 
 
 @router.post("/projects/{project_id}/drawings", status_code=201)
-async def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = Form(""),
+def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = Form(""),
                          storey_count: int = Form(1), unit_override: str | None = Form(None),
                          discipline: str = Form(AUTO_DISCIPLINE), plan_type: str = Form(""),
                          session: Session = Depends(get_session)):
@@ -287,8 +287,7 @@ async def upload_drawing(project_id: int, file: UploadFile = File(...), label: s
     if is_dwg:
         dwg_path = UPLOAD_DIR / f"src_{token}_{safe}"
         with dwg_path.open("wb") as out:
-            while chunk := await file.read(8 * 1024 * 1024):
-                out.write(chunk)
+            shutil.copyfileobj(file.file, out, 8 * 1024 * 1024)
         safe = safe[:-4] + ".dxf"
         src = UPLOAD_DIR / f"src_{token}_{safe}"
         try:
@@ -301,8 +300,7 @@ async def upload_drawing(project_id: int, file: UploadFile = File(...), label: s
     else:
         src = UPLOAD_DIR / f"src_{token}_{safe}"
         with src.open("wb") as out:
-            while chunk := await file.read(8 * 1024 * 1024):
-                out.write(chunk)
+            shutil.copyfileobj(file.file, out, 8 * 1024 * 1024)
         file_label = fname
     try:
         scan = scan_sheets(src)
@@ -381,7 +379,7 @@ def drawings_from_source(project_id: int, body: FromSourceIn, session: Session =
         dest = UPLOAD_DIR / f"{project_id}_{uuid.uuid4().hex[:8]}_pafta{pick.index + 1}_{orig}"
         jobs.append((sheet, pick, dest))
     if jobs:
-        counts = crop_sheets(src, [(sh.bbox, dest) for sh, _, dest in jobs])
+        counts = crop_sheets(src, [(sh.bbox, dest) for sh, _, dest in jobs], neighbors=[sh.bbox for sh in scan.sheets])
         for (sheet, pick, dest), n in zip(jobs, counts):
             if n == 0:
                 dest.unlink(missing_ok=True)
@@ -455,10 +453,13 @@ def update_drawing(drawing_id: int, body: DrawingPatch, session: Session = Depen
             d.disciplines = extra
     if "plan_type" in data:
         d.plan_type = _check_plan_type(data.pop("plan_type"))
+    height_changed = "storey_height" in data and data["storey_height"] != d.storey_height
     for k, v in data.items():
         setattr(d, k, v)
     session.add(d)
     session.commit()
+    if height_changed and not reanalyze:
+        refresh_wall_areas(session.get(Project, d.project_id), session, [d])
     if reanalyze:
         analyze_and_store(d, session.get(Project, d.project_id), session)
     session.refresh(d)
@@ -526,6 +527,7 @@ class ElementPatch(BaseModel):
     perimeter: float | None = None
     count: int | None = None
     included: bool | None = None
+    meta: dict | None = None      # rebar: {"dia_mm", "weight_kg", "target", "kot"} — elle demir girişi
 
 
 class ElementIn(ElementPatch):

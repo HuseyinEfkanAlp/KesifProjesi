@@ -45,17 +45,20 @@ def detect_slabs(drawing: Drawing, layers: list[str], labels: LabelIndex, params
             if lab is None:
                 continue
             n_labels = 1
-            if area > params.max_slab_area:
-                # büyük yüzey: birden çok döşeme etiketi varsa kiriş çizgileri hücreleri kapatmamış demektir (birleşik panel)
+            big = area > params.max_slab_area
+            if big:
                 n_labels = labels.count_named(pts, "slab")
-                if n_labels < 2:
-                    continue
             el = _make("(kiriş ağı)", pts, area, "BEAM_NETWORK", "", labels, params, hole_union)
             el.subtype = "net"
-            if n_labels >= 2:
+            if big and n_labels >= 2:
                 el.warnings.append(f"Birleşik panel: {n_labels} döşeme etiketi tek yüzeyde (kiriş çizgileri hücreleri kapatmıyor); "
                                    "alan içindeki kiriş gövdeleri de dahil")
                 el.confidence = min(el.confidence, 0.6)
+            elif big:
+                # tek etiketli büyük panel (otopark / bodrum döşemesi): atılmaz, düşük güvenle alınır; sınır kontrol edilmeli
+                el.warnings.append(f"Büyük panel ({area:,.0f} m², tek etiket): sınırını kontrol edin (dış çerçeve çizgisi hücreye karışmış "
+                                   "olabilir); metraj dışı bırakıldı, gerçek döşemeyse listeden açın")
+                el.confidence = min(el.confidence, 0.35)
             elements.append(el)
     return elements
 
@@ -72,10 +75,8 @@ def _make(layer, pts, area, source, handle, labels: LabelIndex, params: DetectPa
         if lab.thickness:
             el.thickness = lab.thickness
             el.confidence = 0.9
-        elif lab.has_dims:
-            el.thickness = min(lab.b, lab.h)
-            el.confidence = 0.7
         else:
+            # salt kesit yazısı ("(100/100)": yüzeyin içindeki kolon kesiti) döşeme kalınlığı DEĞİLDİR; kalınlık yalnız d= / h= / "15cm"
             el.confidence = 0.75
     if el.thickness is None:
         el.thickness = params.default_slab_thickness

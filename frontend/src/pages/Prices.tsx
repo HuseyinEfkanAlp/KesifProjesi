@@ -28,19 +28,29 @@ export default function Prices() {
 
   const set = (key: string, field: Field, value: string) => {
     setSaved(false)
-    const v: number | string = field === 'brand' ? value : (value === '' ? 0 : +value)
+    const v: number | string = field === 'brand' ? value : (value === '' ? '' : +value)   // '' = temizle (genel satır uygulanır)
     setEdited({ ...edited, [key]: { ...(edited[key] || {}), [field]: v } })
   }
   const val = (i: PriceItem, field: Field) => {
     const e = edited[i.key]
     if (e && field in e) return e[field] as number | string
+    if (field !== 'brand' && !i.is_general && !(i.set_fields || []).includes(field) && !(i[field] > 0)) return ''   // girilmedi: boş
     return i[field]
   }
 
   const save = async () => {
     setError(''); setSaved(false)
     try {
-      const body: PriceIn[] = Object.entries(edited).map(([key, e]) => ({ key, ...e } as PriceIn))
+      const body: PriceIn[] = Object.entries(edited).map(([key, e]) => {
+        const out: Record<string, unknown> = { key }
+        const clear: string[] = []
+        for (const [f, v] of Object.entries(e)) {
+          if (f !== 'brand' && v === '') clear.push(f)
+          else out[f] = v
+        }
+        if (clear.length) out.clear = clear
+        return out as unknown as PriceIn
+      })
       await Api.prices.save(pid, body)
       await load(); setSaved(true)
     } catch (e) { setError((e as Error).message) }
@@ -67,7 +77,8 @@ export default function Prices() {
     return (
       <td className="num">
         <input type="number" min={0} step={step} className={`wide${edited[i.key] && field in edited[i.key] ? ' dirty' : ''}`} value={v}
-          placeholder="0" onChange={(e) => set(i.key, field, e.target.value)} />
+          placeholder={i.is_general ? '0' : 'genel'} title={i.is_general ? '' : 'Boş: türün genel satırı uygulanır. 0: bu kalemde yok (ör. işçilik yok)'}
+          onChange={(e) => set(i.key, field, e.target.value)} />
       </td>
     )
   }

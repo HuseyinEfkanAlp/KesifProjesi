@@ -104,9 +104,35 @@ class OpeningLabel:
         return self.etype is not None or self.has_dims
 
 
+_STRUCT_TYPES = {"column", "beam", "slab", "shear_wall", "foundation"}
+
+
+def looks_structural(text: str) -> bool:
+    """'D101', 'K101 (25/50)', 'S1094', 'P1 20/250' gibi statik eleman etiketleri (mimari paftada xref ile gelir):
+    statik önek + (3+ haneli / kat kodlu ad ya da kesit ölçüsü kapı-pencere ölçüsüne benzemeyen)."""
+    from .text_parser import parse_label
+    try:
+        sl = parse_label(text)
+    except Exception:
+        return False
+    if sl.type_hint not in _STRUCT_TYPES:
+        return False
+    m = re.match(r"^\s*[A-ZÇĞİÖŞÜ]{1,3}\s*-?\s*(\d+)", normalize(text), re.IGNORECASE)
+    digits = len(m.group(1)) if m else 0
+    if digits >= 3:
+        return True                                   # D101, K1075, SB033: kat kodlu / numaralı statik ad
+    if sl.b is not None and sl.h is not None:
+        b, h = sl.b * 100, sl.h * 100                 # cm
+        opening_like = b >= 40 and h >= 40 and (h >= 100 or b >= 60)   # 120/140 pencere, 90/210 kapı; 25/50 kiriş, 20/250 perde değil
+        return not opening_like
+    return False
+
+
 def parse_opening_label(text: str, unit_scale: float = 0.01) -> OpeningLabel:
     t = normalize(text)
     lab = OpeningLabel(raw=t)
+    if looks_structural(t):
+        return lab
     m = _OPENING.match(t)
     if m and _up(m.group("prefix")) in OPENING_PREFIXES:
         prefix = _up(m.group("prefix"))
@@ -158,8 +184,10 @@ CABLE_TYPES = (r"NYY", r"NYM", r"NHXMH", r"N2XH", r"N2XCH", r"NYCY", r"NYA(?:F)?
                r"FIBER", r"F/?O", r"HFFR", r"LSZH", r"XLPE", r"NHXH", r"JE-H\(ST\)H", r"RG-?\d+")
 _CABLE_TYPE = re.compile(r"(?<![A-Z0-9])(?P<t>" + "|".join(CABLE_TYPES) + r")(?![A-Z0-9])", re.IGNORECASE)
 _SECTION = re.compile(
-    rf"(?<![\d.,])(?P<n>\d{{1,2}})\s*[xX×]\s*(?P<a>{_NUM})(?:\s*\+\s*(?P<pe>{_NUM}))?(?:\s*(?:mm2|mm²|mm))?(?![\d.,])"
+    rf"(?<![\d.,])(?P<n>\d{{1,2}})\s*[xX×]\s*(?P<a>{_NUM})(?:\s*\+\s*(?P<pe>{_NUM}))?(?:\s*(?:mm2|mm²|mm))?(?![\d.,])(?!\s*(?:W|VA|A|kW|kVA)\b)"
 )
+_NOT_CABLE = re.compile(r"PANO|S[Iİ]GORTA|[SŞ]ALTER|FLORESAN|FLUORESAN|ARMAT|\bLED\b|\d\s*W\b", re.IGNORECASE)
+STD_SECTIONS = {0.5, 0.75, 1, 1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300, 400}
 _TRAY_SIZE = re.compile(rf"(?<![\d.,])(?P<w>\d{{2,4}})\s*[xX×/]\s*(?P<h>\d{{2,3}})(?:\s*mm)?(?![\d.,])")
 _TRAY_WORD = re.compile(r"TAVA|TRAY|\bKT\b|KANAL|BUSBAR", re.IGNORECASE)
 _TRAY_WIDTH_ONLY = re.compile(r"(?:TAVA|TRAY|KT)\s*[:\-]?\s*(?P<w>\d{2,4})(?!\d)", re.IGNORECASE)
@@ -194,9 +222,9 @@ def parse_elec_label(text: str, unit_scale: float = 0.001) -> ElecLabel:
     sec = _SECTION.search(t)
     tray_word = bool(_TRAY_WORD.search(t))
 
-    if sec and not tray_word:
+    if sec and not tray_word and not (_NOT_CABLE.search(t) and not ct):
         n, a = int(sec.group("n")), _num(sec.group("a"))
-        if 1 <= n <= 61 and a <= 400:
+        if 1 <= n <= 61 and a <= 400 and (ct or a in STD_SECTIONS):
             s = f"{n}x{fmt_num(a)}" + (f"+{fmt_num(_num(sec.group('pe')))}" if sec.group("pe") else "")
             lab.kind, lab.section = "cable", s
             lab.cable_type = ct.group("t").upper().replace(" ", "") if ct else None
@@ -233,17 +261,19 @@ def parse_elec_label(text: str, unit_scale: float = 0.001) -> ElecLabel:
     return lab
 
 
+# Sıra önemli: özel kategoriler (acil, data, yangın) genel olanlardan (priz, armatür) önce denenir —
+# "ACIL_AYDINLATMA" acil, "DATA_PRIZ" data, "LED_PANEL" armatürdür (pano değil).
 FIXTURE_CATEGORIES: dict[str, tuple[str, list[str]]] = {
-    "armatur": ("Aydınlatma armatürü", [r"ARMAT", r"AYDINLATMA", r"LIGHT", r"LITE", r"LUMIN", r"LAMBA", r"LAMP", r"SPOT",
-                                        r"DOWNLIGHT", r"FLORESAN", r"LED", r"PANEL\s*ARMAT", r"APLIK", r"APLİK", r"SARKIT"]),
     "acil": ("Acil aydınlatma / exit", [r"ACIL", r"ACİL", r"EXIT", r"EMERGENCY", r"YÖNLENDİRME", r"YONLENDIRME"]),
-    "priz": ("Priz", [r"PR[Iİ]Z", r"SOCKET", r"RECEPT", r"OUTLET", r"\bUPS\s*PR"]),
-    "anahtar": ("Anahtar", [r"ANAHTAR", r"SWITCH", r"KOMÜTATÖR", r"KOMUTATOR", r"VAVIEN", r"VAVİEN", r"DIMMER"]),
-    "buat": ("Buat / kutu", [r"BUAT", r"KUTU", r"\bBOX", r"JUNCTION"]),
-    "pano": ("Pano", [r"PANO", r"PANEL\b", r"TABLO", r"\bDB\b", r"SAYAÇ", r"SAYAC"]),
     "data": ("Data / telefon prizi", [r"DATA", r"RJ45", r"TELEFON", r"PHONE", r"\bTV\b", r"UYDU", r"NETWORK"]),
     "yangin": ("Yangın algılama", [r"DEDEKT", r"DETEKT", r"DETECTOR", r"S[Iİ]REN", r"SIREN", r"BUTON", r"YANGIN",
                                   r"DUMAN", r"SMOKE", r"FLA[SŞ]ÖR", r"FLASOR"]),
+    "buat": ("Buat / kutu", [r"BUAT", r"KUTU", r"\bBOX", r"JUNCTION"]),
+    "pano": ("Pano", [r"PANO", r"^(?!.*(?:LED|ARMAT|AYDINLAT|LAMP|LIGHT)).*PANEL\b", r"TABLO", r"\bDB\b", r"SAYAÇ", r"SAYAC"]),
+    "priz": ("Priz", [r"PR[Iİ]Z", r"SOCKET", r"RECEPT", r"OUTLET", r"\bUPS\s*PR"]),
+    "anahtar": ("Anahtar", [r"ANAHTAR", r"SWITCH", r"KOMÜTATÖR", r"KOMUTATOR", r"VAVIEN", r"VAVİEN", r"DIMMER"]),
+    "armatur": ("Aydınlatma armatürü", [r"ARMAT", r"AYDINLATMA", r"LIGHT", r"LITE", r"LUMIN", r"LAMBA", r"LAMP", r"SPOT",
+                                        r"DOWNLIGHT", r"FLORESAN", r"LED", r"PANEL\s*ARMAT", r"APLIK", r"APLİK", r"SARKIT"]),
 }
 _FIXTURE_RE = {k: [re.compile(p, re.IGNORECASE) for p in pats] for k, (_, pats) in FIXTURE_CATEGORIES.items()}
 
@@ -265,7 +295,7 @@ PIPE_SYSTEMS: list[tuple[str, str]] = [
     (r"SPR[Iİ]NK|YANGIN|FIRE|H[Iİ]DRANT", "YANGIN_BORU"),
     (r"\bPE\b|\bPE\d|POL[Iİ]ET|HDPE", "BORU_PE"),
     (r"PPRC|PPR\b|PP-R|TEM[Iİ]Z\s*SU|SO[GĞ]UK\s*SU|SICAK\s*SU|KULLANMA|\bCW\b|\bHW\b|\bDHW\b|\bDCW\b", "BORU_PPRC_TEMIZ"),
-    (r"\bPVC\b|P[Iİ]S\s*SU|P[Iİ]SSU|AT[Iİ]K|DRENAJ|YA[GĞ]MUR|WASTE|SOIL|SEWER|\bPP\b", "BORU_PVC"),
+    (r"\bPVC\b|P[Iİ]S\s*SU|P[Iİ]SSU|AT[Iİ]K|DRENAJ|DRAIN|YA[GĞ]MUR|WASTE|SOIL|SEWER|\bPP\b", "BORU_PVC"),
     (r"BAKIR|COPPER|\bCU\b|GAZ\b|\bGAS\b", "BORU_BAKIR"),
     (r"[CÇ]EL[Iİ]K|STEEL|\bDN\s*\d|ISITMA|SO[GĞ]UTMA|CHW|HHW|CHILL|HEAT|KALOR|RADYAT|FANCOIL|KAZAN|\bST\b", "BORU_CELIK"),
 ]
@@ -282,7 +312,7 @@ MECH_FIXTURES: list[tuple[str, str]] = [
     (r"DAMPER", "DAMPER"),
     (r"KL[Iİ]MA\s*SANTRAL|\bAHU\b|SANTRAL", "KLIMA_SANTRALI"),
     (r"ASP[Iİ]RAT|\bFAN\b|VANT[Iİ]LAT|EGZOZ\s*FAN|EXHAUST\s*FAN", "FAN"),
-    (r"VRF|VRV|\bIC\s*UN|İÇ\s*ÜN|INDOOR", "VRF_IC_UNITE"),
+    (r"VRF|VRV|\bIC\s*UN|İÇ\s*ÜN|INDOOR|SPLIT|KL[Iİ]MA\b", "VRF_IC_UNITE"),
     (r"DI[SŞ]\s*[UÜ]N|OUTDOOR|KONDENS", "VRF_DIS_UNITE"),
     (r"FANCOIL|FAN\s*COIL|\bFCU\b", "FANCOIL"),
     (r"RADYAT|RADIATOR|PANEL\s*RAD", "RADYATOR"),
@@ -291,7 +321,7 @@ MECH_FIXTURES: list[tuple[str, str]] = [
     (r"POMPA|PUMP", "POMPA"),
     (r"DEPO|TANK", "SU_DEPOSU"),
     (r"VANA|VALVE|K[UÜ]RESEL|GLOBE|[CÇ]EK\s*VALF|STRAINER|P[Iİ]SL[Iİ]K", "VANA"),
-    (r"LAVABO|WASH\s*BASIN|BASIN|EV[Iİ]YE|SINK", "LAVABO"),
+    (r"LAVABO|WASH\s*BASIN|BASIN|\bEV[Iİ]YE|\bSINK", "LAVABO"),
     (r"KLOZET|\bWC\b|WATER\s*CLOSET|TOILET|HELA|ALATURKA", "KLOZET"),
     (r"P[Iİ]SUAR|P[Iİ]SUVAR|URINAL", "PISUAR"),
     (r"BATARYA|FAUCET|MUSLUK|TAP\b|DU[SŞ]\s*BA[SŞ]", "BATARYA"),
@@ -299,7 +329,8 @@ MECH_FIXTURES: list[tuple[str, str]] = [
 ]
 _MECH_FIXTURE_RE = [(re.compile(p, re.IGNORECASE), c) for p, c in MECH_FIXTURES]
 
-_MECH_DIA = re.compile(r"(?:[ØøΦφ∅]|\bDN\s*|\bD\s*=?\s*|\bQ|\bPN\d+\s+)(?P<d>\d{2,4})(?!\d)|(?<![\dx×X])(?P<d2>\d{2,3})\s*(?:mm|MM)\b", re.IGNORECASE)
+# "D101" (döşeme) ve "Q100" (kolon) boru çapı değildir: D yalnız "D=" ile, Q alınmaz
+_MECH_DIA = re.compile(r"(?:[ØøΦφ∅]|\bDN\s*|\bD\s*=\s*|\bPN\d+\s+)(?P<d>\d{2,4})(?!\d)|(?<![\dx×X])(?P<d2>\d{2,3})\s*(?:mm|MM)\b", re.IGNORECASE)
 _MECH_INCH = re.compile(r"(?P<n>\d(?:\s*[½¼¾]|\s+\d/\d)?)\s*(?:\"|''|inch|\bin\b)", re.IGNORECASE)
 _DUCT_SIZE = re.compile(r"(?<![\d.,])(?P<w>\d{3,4})\s*[xX×/]\s*(?P<h>\d{2,4})(?![\d.,])")
 INCH_TO_MM = {"1/2": 20, "3/4": 25, "1": 32, "1 1/4": 40, "1 1/2": 50, "2": 63, "2 1/2": 75, "3": 90, "4": 110}

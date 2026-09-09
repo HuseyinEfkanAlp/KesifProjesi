@@ -62,7 +62,18 @@ def detect_mech_lines(drawing: Drawing, layers: list[str], kind: str, labels: Me
     out: list[DetectedElement] = []
     if not layers:
         return out
-    ents = [e for e in _line_entities(drawing, layers) if not e.source.startswith("INSERT")]   # blok içi çizgiler cihazdır, hat değil
+    raw = [e for e in _line_entities(drawing, layers) if not e.source.startswith("INSERT")]   # blok içi çizgiler cihazdır, hat değil
+    # Yay / daire boru hattı değildir (fitting, kolon şeması sembolü). Yay-daire oranı yüksek katman şemadır: metraj dışı.
+    schema_layers: set[str] = set()
+    for layer in layers:
+        n_line = sum(1 for e in raw if e.layer == layer and e.source in ("LINE", "LWPOLYLINE", "POLYLINE"))
+        n_arc = sum(1 for e in raw if e.layer == layer and e.source in ("ARC", "CIRCLE", "ELLIPSE"))
+        if n_arc >= 20 and n_arc > 0.3 * max(n_line, 1):
+            schema_layers.add(layer)
+    ents = [e for e in raw if e.source not in ("ARC", "CIRCLE", "ELLIPSE") and e.layer not in schema_layers]
+    for layer in sorted(schema_layers):
+        out.append(DetectedElement(etype=kind, layer=layer, points=[], length=0.0, source="SCHEMA", confidence=0.0,
+                                   name="şema", warnings=[f"{layer}: yay / daire oranı yüksek — tesisat kolon şeması sayıldı, hat ölçülmedi"]))
     used_handles: set[str] = set()
     # çift çizgi kanal: paralel çiftler (genişlik = aralık)
     if kind == "duct":

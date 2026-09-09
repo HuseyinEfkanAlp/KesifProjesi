@@ -141,7 +141,7 @@ def _r(code, factor=1.0, spec="", times=""):
 
 
 RECIPES_BY_KIND: dict[str, list[dict]] = {
-    "kalip": [_r("KALIP_ISCILIK", 1.2), _r("KALIP_ISKELESI", 1.0, "", "H")],   # kurma + söküm saat/m²; iskele m³ = m² × H
+    "kalip": [_r("KALIP_ISCILIK", 1.2)],   # kurma + söküm saat/m². Kalıp iskelesi reçetede değil: döşeme alanı × (H − d) (boq.structural_items)
     "beton": [_r("BETON_ISCILIK", 1.0), _r("VIBRATOR", 0.3), _r("BETON_KUR", 1.0), _r("BETON_POMPAJ", 1.0)],
     "demir": [_r("DEMIR_ISCILIK", 0.02)],                                         # 20 saat / ton = 0,02 saat / kg
     "duvar": [_r("DUVAR_ISCILIK", 0.8), _r("DUVAR_TUTKAL", 4.0)],                # saat / m²; kg / m² (gazbeton tutkalı)

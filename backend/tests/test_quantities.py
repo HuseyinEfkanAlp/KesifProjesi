@@ -16,7 +16,7 @@ def test_column_formulas():
     ln = compute_element(el, p)
     assert ln.concrete_m3 == pytest.approx(0.18 * 2.85)
     assert ln.formwork_m2 == pytest.approx(1.8 * 2.85)
-    assert ln.rebar_kg == pytest.approx(0.18 * 2.85 * 130)
+    assert ln.rebar_kg == pytest.approx(0.18 * 2.85 * 180)
     assert ln.multiplier == 2
     assert ln.total_concrete == pytest.approx(0.18 * 2.85 * 2)
 
@@ -25,7 +25,11 @@ def test_beam_slab_wall_foundation_formulas():
     p = QuantityParams(storey_height=3.0, slab_thickness=0.15, storey_count=3)
     beam = compute_element(ElementData(id=1, etype="beam", b=0.25, h=0.50, length=4.7), p)
     assert beam.concrete_m3 == pytest.approx(0.25 * 0.35 * 4.7)
-    assert beam.formwork_m2 == pytest.approx((0.25 + 0.70) * 4.7)
+    assert beam.formwork_m2 == pytest.approx(2 * 0.35 * 4.7)          # brüt döşeme: alt yüz döşeme kalıbında, yalnız yanlar (h − d)
+    pn = QuantityParams(storey_height=3.0, slab_thickness=0.15, storey_count=3, beam_full_height=True)
+    beam_n = compute_element(ElementData(id=1, etype="beam", b=0.25, h=0.50, length=4.7), pn)
+    assert beam_n.concrete_m3 == pytest.approx(0.25 * 0.50 * 4.7)
+    assert beam_n.formwork_m2 == pytest.approx((0.25 + 2 * 0.35) * 4.7)   # net döşeme: alt yüz + yanlar döşeme altına kadar
     slab = compute_element(ElementData(id=2, etype="slab", area=34.98, thickness=0.15), p)
     assert slab.concrete_m3 == pytest.approx(34.98 * 0.15)
     assert slab.formwork_m2 == pytest.approx(34.98)

@@ -61,7 +61,47 @@ def detect_beams(drawing: Drawing, layers: list[str], labels: LabelIndex, params
                 continue
             elements.append(el)
 
-    return dedupe_elements(elements, tol=0.6)
+    elements = dedupe_elements(elements, tol=0.6)
+    _deduct_intersections(elements)
+    return elements
+
+
+def _deduct_intersections(elements: list[DetectedElement]) -> None:
+    """Kesişen kirişlerde ortak hacim iki kez sayılmasın: dar olan kirişin uzunluğundan (kesişim alanı / b) düşülür."""
+    polys = []
+    for e in elements:
+        try:
+            polys.append(Polygon(e.points).buffer(0) if len(e.points) >= 3 else None)
+        except Exception:
+            polys.append(None)
+    from shapely import STRtree
+    valid = [(i, g) for i, g in enumerate(polys) if g is not None and not g.is_empty]
+    if len(valid) < 2:
+        return
+    tree = STRtree([g for _, g in valid])
+    idx = [i for i, _ in valid]
+    cut: dict[int, float] = {}
+    seen: set[tuple[int, int]] = set()
+    for k, (i, gi) in enumerate(valid):
+        for j in tree.query(gi):
+            j = int(j)
+            jj = idx[j]
+            if jj == i or (min(i, jj), max(i, jj)) in seen:
+                continue
+            seen.add((min(i, jj), max(i, jj)))
+            inter = gi.intersection(polys[jj]).area
+            if inter < 1e-4:
+                continue
+            a, b = elements[i], elements[jj]
+            narrow = a if (a.b or 1.0) <= (b.b or 1.0) else b
+            ni = i if narrow is a else jj
+            cut[ni] = cut.get(ni, 0.0) + inter / max(narrow.b or 0.25, 0.05)
+    for i, dl in cut.items():
+        e = elements[i]
+        if dl <= 0 or e.length <= 0:
+            continue
+        e.length = max(e.length - dl, 0.0)
+        e.warnings.append(f"Kesişen kirişlerle ortak {dl:.2f} m düşüldü (beton çift sayılmasın)")
 
 
 def _split_run_by_labels(run: ParallelPair, labels: LabelIndex, params: DetectParams):
@@ -79,7 +119,15 @@ def _split_run_by_labels(run: ParallelPair, labels: LabelIndex, params: DetectPa
     found.sort()
     if not found:
         # adı olmayan ama kesiti olan tek bir "(100/45)" etiketi olabilir
-        lab = labels.find(run.rect, "beam", radius=max(0.05, run.width * 0.25))
+        lab = labels.find(run.rect, "beam", radius=max(0.05, run.width * 0.25), area=None)
+        if lab is None:
+            # etiket kirişin biraz uzağına yazılmış olabilir: daha geniş yarıçap, yalnız kiriş ipuçlu adlı etiket
+            for d, i in labels._candidates(run.rect, radius=max(0.6, run.width)):
+                cand = labels.items[i][1]
+                if cand.type_hint == "beam" and cand.name and cand.has_dims:
+                    labels.claimed.add(i)
+                    lab = cand
+                    break
         return [(run, lab)]
     if len(found) == 1:
         labels.claimed.add(found[0][1])

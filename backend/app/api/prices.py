@@ -23,6 +23,7 @@ class PriceIn(BaseModel):
     hours_per_unit: float | None = None   # adam-saat / birim
     crew_size: float | None = None
     name: str | None = None
+    clear: list[str] | None = None        # bu alanlar "girilmedi"ye döner (genel satır uygulanır)
 
 
 def price_out(p: PriceItem, catalog=None, boq: dict | None = None) -> dict:
@@ -74,14 +75,17 @@ def upsert_prices(project_id: int, body: list[PriceIn], session: Session = Depen
             unit = KIND_META[kind][1] if kind in KIND_META else cat_item.unit
             item = PriceItem(project_id=p.id, key=pi.key, name=pi.name or pi.key, unit=unit)
             existing[pi.key] = item
-        if pi.unit_price is not None:
-            item.unit_price = max(0.0, pi.unit_price)
-        if pi.labor_price is not None:
-            item.labor_price = max(0.0, pi.labor_price)
-        if pi.hours_per_unit is not None:
-            item.hours_per_unit = max(0.0, pi.hours_per_unit)
-        if pi.crew_size is not None:
-            item.crew_size = max(0.0, pi.crew_size)
+        set_fields = set(item.set_fields or [])
+        for f in ("unit_price", "labor_price", "hours_per_unit", "crew_size"):
+            v = getattr(pi, f)
+            if v is not None:
+                setattr(item, f, max(0.0, float(v)))
+                set_fields.add(f)          # 0 da açık bir değerdir (yalnız malzeme, işçilik yok gibi)
+        for f in pi.clear or []:
+            if f in ("unit_price", "labor_price", "hours_per_unit", "crew_size"):
+                setattr(item, f, 0.0)
+                set_fields.discard(f)
+        item.set_fields = sorted(set_fields)
         if pi.brand is not None:
             item.brand = pi.brand.strip()
         if pi.name:

@@ -71,6 +71,9 @@ class CatalogItem:
     example: str = ""         # örnek katman adı
     custom: bool = False      # kullanıcı ekledi
     poz: str = ""             # ÇŞB birim fiyat poz numarası (ör. 15.225.1010); boşsa rules.default_poz denenir
+    # Proje geneli kalem (asansör, kazan, hidrofor, su deposu…): her kat planında görünse de kat sayısıyla çarpılmaz,
+    # paftalar arasında en büyük adet alınır (8 kat planında 2'şer asansör bloğu = 2 asansör, 16 değil).
+    per_project: bool = False
     # Katmanlı sistem: bu kalem ölçüldüğünde (ör. çatı alanı) ayrı iş kalemi olarak yazılacak bileşenler.
     # [{"code": "OSB", "factor": 1.0, "spec": "11"}]: miktar = sistem miktarı × factor; spec varsayılan özellik.
     # Sistem bileşenleri kullanıcıya sorulur (projede yazıyor / yok).
@@ -158,9 +161,9 @@ def normalize_code(code: str) -> str:
     return c
 
 
-def _i(code, disc, name, measure, spec_label="", example="", components=None, unit="", recipe=None, poz=""):
+def _i(code, disc, name, measure, spec_label="", example="", components=None, unit="", recipe=None, poz="", per_project=False):
     return CatalogItem(code, disc, name, measure, unit=unit, spec_label=spec_label, example=example,
-                       components=components or [], recipe=recipe or [], poz=poz)
+                       components=components or [], recipe=recipe or [], poz=poz, per_project=per_project)
 
 
 def _c(code, factor=1.0, spec="", times="", when=""):
@@ -174,8 +177,8 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("DOLGU", "STA", "Dolgu / blokaj", "volume", "kalınlık (cm)", "KSF-STA-DOLGU-30"),
     _i("KAZI", "STA", "Kazı", "volume", "derinlik (cm)", "KSF-STA-KAZI-350"),
     _i("DEMIR", "STA", "Nervürlü demir (kg)", "count", "çap (mm)", "KSF-STA-DEMIR-12", unit="kg", poz="15.160.1003"),
-    _i("KALIP", "STA", "Kalıp", "area", "", "KSF-STA-KALIP", recipe=[_c("KALIP_ISKELESI", 1.0, "", "H")]),
-    _i("KALIP_ISKELESI", "STA", "Kalıp iskelesi (çelik boru)", "volume", "", "KSF-STA-KALIP_ISKELESI", unit="m³", poz="15.185.1006"),
+    _i("KALIP", "STA", "Kalıp", "area", "", "KSF-STA-KALIP"),
+    _i("KALIP_ISKELESI", "STA", "Kalıp iskelesi (çelik boru)", "volume", "", "KSF-STA-KALIP_ISKELESI", unit="m³", poz="15.185.1001"),
     _i("BETON_POMPAJ", "STA", "Beton pompajı / yerleştirme", "volume", "", "KSF-STA-BETON_POMPAJ", unit="m³"),
     _i("CELIK_PROFIL", "STA", "Çelik profil", "length", "profil (HEA200)", "KSF-STA-CELIK_PROFIL-HEA200"),
     _i("HASIR_CELIK", "STA", "Hasır çelik", "area", "tip (Q221)", "KSF-STA-HASIR_CELIK-Q221"),
@@ -248,7 +251,7 @@ DEFAULT_ITEMS: list[CatalogItem] = [
        recipe=[_c("IS_ISKELESI", 1.0), _c("ANKRAJ_BULONU", 1.2, "M12"), _c("VINC", 0.05)]),
     _i("MANTOLAMA", "CEP", "Mantolama", "area", "malzeme + kalınlık (EPS_5)", "KSF-CEP-MANTOLAMA-EPS_5", recipe=[_c("IS_ISKELESI", 1.0)]),
     _i("CEPHE_TASI", "CEP", "Cephe taşı / kaplama", "area", "tip", "KSF-CEP-CEPHE_TASI", recipe=[_c("IS_ISKELESI", 1.0)]),
-    _i("CEPHE_BOYA", "CEP", "Dış cephe boyası", "area", "tip", "KSF-CEP-CEPHE_BOYA", recipe=[_c("IS_ISKELESI", 1.0)]),
+    _i("CEPHE_BOYA", "CEP", "Dış cephe boyası", "area", "tip", "KSF-CEP-CEPHE_BOYA"),   # iskele: cephe sistemi / mantolama kaleminden (çift sayılmasın)
     _i("CEPHE_TASIYICI_PROFIL", "CEP", "Cephe taşıyıcı profil (alt konstrüksiyon)", "length", "malzeme (ALU / GALVANIZ)", "KSF-CEP-CEPHE_TASIYICI_PROFIL-ALU"),
     # CEP — mantolama sistemi bileşenleri
     _i("MANTOLAMA_YAPISTIRICI", "CEP", "Mantolama yapıştırıcısı", "area", "", "KSF-CEP-MANTOLAMA_YAPISTIRICI"),
@@ -337,11 +340,11 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("BORU_IZOLASYON", "MEK", "Boru izolasyonu", "length", "kalınlık (mm)", "KSF-MEK-BORU_IZOLASYON-19"),
     _i("FANCOIL", "MEK", "Fancoil", "count", "kapasite", "KSF-MEK-FANCOIL-4KW"),
     _i("VRF_IC_UNITE", "MEK", "VRF iç ünite", "count", "kapasite", "KSF-MEK-VRF_IC_UNITE-5.6KW"),
-    _i("VRF_DIS_UNITE", "MEK", "VRF dış ünite", "count", "kapasite", "KSF-MEK-VRF_DIS_UNITE-28KW"),
+    _i("VRF_DIS_UNITE", "MEK", "VRF dış ünite", "count", "kapasite", "KSF-MEK-VRF_DIS_UNITE-28KW", per_project=True),
     _i("RADYATOR", "MEK", "Radyatör", "count", "ölçü", "KSF-MEK-RADYATOR-600x1000"),
     _i("VANA", "MEK", "Vana", "count", "çap / tip", "KSF-MEK-VANA-DN50_KURESEL"),
     _i("POMPA", "MEK", "Pompa", "count", "tip", "KSF-MEK-POMPA"),
-    _i("KAZAN", "MEK", "Kazan / chiller / ısı pompası", "count", "kapasite", "KSF-MEK-KAZAN-500KW"),
+    _i("KAZAN", "MEK", "Kazan / chiller / ısı pompası", "count", "kapasite", "KSF-MEK-KAZAN-500KW", per_project=True),
     _i("MEKANIK_CIHAZ", "MEK", "Mekanik cihaz (türü belirsiz)", "count", "tip", "KSF-MEK-MEKANIK_CIHAZ"),
     # HAV
     _i("HAVA_KANAL", "HAV", "Havalandırma kanalı (dikdörtgen)", "length", "en x yükseklik (mm)", "KSF-HAV-HAVA_KANAL-600x400"),
@@ -351,13 +354,13 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("MENFEZ", "HAV", "Menfez / difüzör", "count", "ölçü", "KSF-HAV-MENFEZ-600x600"),
     _i("DAMPER", "HAV", "Damper", "count", "tip / ölçü", "KSF-HAV-DAMPER-YANGIN_400x400"),
     _i("FAN", "HAV", "Fan / aspiratör", "count", "debi (m3/h)", "KSF-HAV-FAN-5000"),
-    _i("KLIMA_SANTRALI", "HAV", "Klima santrali", "count", "debi (m3/h)", "KSF-HAV-KLIMA_SANTRALI-20000"),
+    _i("KLIMA_SANTRALI", "HAV", "Klima santrali", "count", "debi (m3/h)", "KSF-HAV-KLIMA_SANTRALI-20000", per_project=True),
     # YAN
     _i("SPRINKLER", "YAN", "Sprinkler", "count", "tip (K80_UST)", "KSF-YAN-SPRINKLER-K80_UST"),
     _i("YANGIN_BORU", "YAN", "Yangın borusu (çelik)", "length", "çap (DN)", "KSF-YAN-YANGIN_BORU-DN100"),
     _i("YANGIN_DOLABI", "YAN", "Yangın dolabı", "count", "tip", "KSF-YAN-YANGIN_DOLABI"),
     _i("YANGIN_VANA", "YAN", "Yangın vanası / zon vanası", "count", "çap", "KSF-YAN-YANGIN_VANA-DN100"),
-    _i("YANGIN_POMPA", "YAN", "Yangın pompası", "count", "tip", "KSF-YAN-YANGIN_POMPA"),
+    _i("YANGIN_POMPA", "YAN", "Yangın pompası", "count", "tip", "KSF-YAN-YANGIN_POMPA", per_project=True),
     _i("SONDURME_TUPU", "YAN", "Söndürme tüpü", "count", "kg / tip", "KSF-YAN-SONDURME_TUPU-6KG"),
     # SIH
     _i("BORU_PVC", "SIH", "PVC pis su borusu", "length", "çap (mm)", "KSF-SIH-BORU_PVC-100"),
@@ -368,8 +371,8 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("PISUAR", "SIH", "Pisuvar", "count", "tip", "KSF-SIH-PISUAR"),
     _i("BATARYA", "SIH", "Batarya", "count", "tip", "KSF-SIH-BATARYA-LAVABO"),
     _i("YER_SUZGECI", "SIH", "Yer süzgeci", "count", "tip", "KSF-SIH-YER_SUZGECI"),
-    _i("HIDROFOR", "SIH", "Hidrofor", "count", "tip", "KSF-SIH-HIDROFOR"),
-    _i("SU_DEPOSU", "SIH", "Su deposu", "count", "hacim (m3)", "KSF-SIH-SU_DEPOSU-50"),
+    _i("HIDROFOR", "SIH", "Hidrofor", "count", "tip", "KSF-SIH-HIDROFOR", per_project=True),
+    _i("SU_DEPOSU", "SIH", "Su deposu", "count", "hacim (m3)", "KSF-SIH-SU_DEPOSU-50", per_project=True),
     # ALT
     _i("BORU_KORUGE", "ALT", "Koruge boru", "length", "çap (mm)", "KSF-ALT-BORU_KORUGE-300"),
     _i("BORU_BETON", "ALT", "Beton boru", "length", "çap (mm)", "KSF-ALT-BORU_BETON-600"),
@@ -391,8 +394,8 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("BANK", "PEY", "Bank / kent mobilyası", "count", "tip", "KSF-PEY-BANK"),
     _i("PEYZAJ_DOSEME", "PEY", "Peyzaj döşemesi", "area", "tip", "KSF-PEY-PEYZAJ_DOSEME-GRANIT"),
     # ASN
-    _i("ASANSOR", "ASN", "Asansör", "count", "kapasite / durak", "KSF-ASN-ASANSOR-1000KG_5D"),
-    _i("YURUYEN_MERDIVEN", "ASN", "Yürüyen merdiven", "count", "yükseklik (m)", "KSF-ASN-YURUYEN_MERDIVEN-4.5"),
+    _i("ASANSOR", "ASN", "Asansör", "count", "kapasite / durak", "KSF-ASN-ASANSOR-1000KG_5D", per_project=True),
+    _i("YURUYEN_MERDIVEN", "ASN", "Yürüyen merdiven", "count", "yükseklik (m)", "KSF-ASN-YURUYEN_MERDIVEN-4.5", per_project=True),
 ]
 
 
@@ -476,7 +479,7 @@ DEFAULT_RECIPES: dict[str, list[tuple]] = {
     "GROBETON": [("BETON_ISCILIK", 0.8), ("BETON_POMPAJ", 1.0)],
     "DOLGU": [("SIKISTIRMA", 0.3), ("KAMYON", 0.08)],
     "KAZI": [("KAZI_MAKINE", 0.05), ("KAMYON", 0.1)],
-    "KALIP": [("KALIP_ISCILIK", 1.2), ("KALIP_ISKELESI", 1.0, "", "H")],
+    "KALIP": [("KALIP_ISCILIK", 1.2)],
     "CELIK_PROFIL": [("KAYNAK", 0.5), ("ANTIPAS", 0.3), ("CELIK_BOYA", 0.3), ("CELIK_MONTAJ", 0.4), ("ANKRAJ_BULONU", 0.2, "M20")],
     "HASIR_CELIK": [("DEMIR_ISCILIK", 0.05)],
     "DEMIR": [("DEMIR_ISCILIK", 0.02)],
@@ -688,7 +691,7 @@ class Catalog:
         for c in data.get("removed") or []:
             cat.items.pop(c, None)
         for d in data.get("items") or []:
-            d = {k: v for k, v in d.items() if k in {"code", "discipline", "name", "measure", "unit", "spec_label", "example", "custom", "components", "poz", "recipe"}}
+            d = {k: v for k, v in d.items() if k in {"code", "discipline", "name", "measure", "unit", "spec_label", "example", "custom", "components", "poz", "recipe", "per_project"}}
             it = CatalogItem(**d)
             cat.items[it.code] = it
         return cat
@@ -708,7 +711,8 @@ class Catalog:
 
 # ---------------------------------------------------------------- katman adı
 
-LAYER_RE = re.compile(r"^\s*KSF[-_](?P<disc>[A-Za-z]{3})-(?P<code>[A-Za-z0-9_]+?)(?:-(?P<spec>.+))?\s*$", re.IGNORECASE)
+# "PROJE$0$KSF-MIM-DUVAR_YTONG-20" (xref öneki) ve "KSF_HAV_HAVA_KANAL-600x400" (alt çizgili) de tanınır
+LAYER_RE = re.compile(r"^(?:.*\$)?\s*KSF[-_](?P<disc>[A-Za-z]{3})[-_](?P<code>[A-Za-z0-9_]+?)(?:-(?P<spec>.+))?\s*$", re.IGNORECASE)
 
 
 @dataclass

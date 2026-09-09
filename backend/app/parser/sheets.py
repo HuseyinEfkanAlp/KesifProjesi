@@ -502,6 +502,10 @@ def boxes_from_titles(titles: list[tuple[float, float, float, str]], xs: np.ndar
             names.append(t[3])
     if len(xs_t) < 3:
         return []
+    # Kiriş / kolon detay dosyaları: aynı satırda yüzlerce "K1075", "(60/45)" yazısı; bunlar pafta başlığı değildir.
+    # Bant sayısı 30'u aşıyorsa ya da adların yarısından azı PLAN / KESİT / DETAY / GÖRÜNÜŞ içeriyorsa başlık bandı reddedilir.
+    if len(xs_t) > 30 or sum(1 for n in names if TITLE_RE.search(n)) < len(names) / 2:
+        return []
     gaps = np.diff(np.array(xs_t))
     gap = float(np.median(gaps))
     ty = float(np.median([t[1] for t in row]))
@@ -627,7 +631,7 @@ def scan_sheets(path: str | Path) -> SheetScan:
                                 float(ent.get("41", 1.0) or 1.0), float(ent.get("42", 1.0) or 1.0)))
             elif t in ("TEXT", "MTEXT", "ATTRIB"):
                 h = float(ent.get("40", 0.0) or 0.0)
-                txt = _clean_text(ent.get("1", "") + "".join(ent.get("3", [])))
+                txt = _clean_text("".join(ent.get("3", [])) + ent.get("1", ""))   # MTEXT: kod 3 parçaları önce, kod 1 son parça
                 if h > 0 and txt:
                     heights.append(h)
                     if len(txt) <= 120:
@@ -721,7 +725,8 @@ class _Target:
         x0, y0, x1, y1 = bbox
         mx = (x1 - x0) * margin_ratio
         my = (y1 - y0) * margin_ratio
-        self.box = (x0 - mx, y0 - my, x1 + mx, y1 + my)
+        self.core = (x0, y0, x1, y1)                       # paysız çerçeve
+        self.box = (x0 - mx, y0 - my, x1 + mx, y1 + my)    # kırpma kutusu (pay dahil)
         self.dest = dest
         self.doc = ezdxf.new("R2010")
         self.msp = self.doc.modelspace()
@@ -731,6 +736,29 @@ class _Target:
     def inside(self, xs: list[float], ys: list[float]) -> bool:
         x0, y0, x1, y1 = self.box
         return any(x0 <= x <= x1 and y0 <= y <= y1 for x, y in zip(xs, ys))
+
+    def clip_against(self, cores: list[Bbox]) -> None:
+        """Kırpma payı komşu paftanın çerçevesine girmesin: bitişik paftalarda kenardaki yazı / kiriş iki paftaya da
+        yazılıyor, demir ve beton çift sayılıyordu. Pay yalnız komşunun çekirdeğine (paysız çerçevesine) kadar uzanır."""
+        x0, y0, x1, y1 = self.box
+        cx0, cy0, cx1, cy1 = self.core
+        for core in cores:
+            if tuple(core) == tuple(self.core):
+                continue
+            ox0, oy0, ox1, oy1 = core
+            overlap_y = y0 < oy1 and y1 > oy0
+            overlap_x = x0 < ox1 and x1 > ox0
+            if overlap_y:
+                if cx1 <= ox0 < x1:      # komşu sağda
+                    x1 = ox0
+                if x0 < ox1 <= cx0:      # komşu solda
+                    x0 = ox1
+            if overlap_x:
+                if cy1 <= oy0 < y1:      # komşu üstte
+                    y1 = oy0
+                if y0 < oy1 <= cy0:      # komşu altta
+                    y0 = oy1
+        self.box = (x0, y0, x1, y1)
 
 
 def crop_sheet(src: str | Path, bbox: Bbox, dest: str | Path, margin_ratio: float = 0.02) -> int:
@@ -745,13 +773,18 @@ BLOCK_EXPAND_DEPTH = 4
 
 
 def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_ratio: float = 0.02,
-                include_blocks: bool = True) -> list[int]:
+                include_blocks: bool = True, neighbors: list[Bbox] | None = None) -> list[int]:
     """Birden çok paftayı tek geçişte kırpar; her hedef için yazılan nesne sayısını döndürür.
+
+    neighbors: dosyadaki bütün pafta çerçeveleri (kırpılmayanlar dahil); kırpma payı bunların içine taşmaz.
 
     include_blocks: pafta içine düşen blok yerleşimlerinin (INSERT) içeriği de yazılır (bazı ofisler tüm paftayı ya da
     donatı tablosunu blok olarak koyar). Bu ikinci geçiş ezdxf ile yapılır; çok büyük dosyalarda atlanır.
     """
     tg = [_Target(b, Path(d), margin_ratio) for b, d in targets]
+    cores = [g.core for g in tg] + [tuple(b) for b in (neighbors or [])]
+    for g in tg:
+        g.clip_against(cores)
     poly: dict | None = None      # POLYLINE + VERTEX ... SEQEND
     insunits = 0
     inserts_hit = 0
@@ -1032,11 +1065,32 @@ def _add_block_contents(src: str | Path, tg: list["_Target"]) -> None:
                         g.msp.add_lwpolyline(pts, close=True, dxfattribs={"layer": h.dxf.layer}); g.layers.add(h.dxf.layer); g.written += 1
         except Exception:
             continue
-    for ins in msp.query("INSERT"):
+    def _explode(ins, depth: int):
+        """INSERT içeriğini (iç içe bloklar dahil, BLOCK_EXPAND_DEPTH'e kadar) düz nesne listesi olarak verir."""
         try:
             subs = list(ins.virtual_entities())
         except Exception:
-            continue
+            return []
+        out = []
+        for sub in subs:
+            if sub.dxftype() == "INSERT":
+                if depth < BLOCK_EXPAND_DEPTH:
+                    out.extend(_explode(sub, depth + 1))
+                continue
+            out.append(sub)
+        return out
+
+    for ins in msp.query("INSERT"):
+        # blok yerleşimi (adet sayımı: kapı / pencere / armatür / cihaz) — boş blok tanımıyla işaretlenir
+        try:
+            p0 = ins.dxf.insert
+            for g in tg:
+                if g.inside([p0.x], [p0.y]):
+                    _write_insert_marker(g, {"name": ins.dxf.name, "x": p0.x, "y": p0.y, "sx": float(ins.dxf.xscale or 1.0),
+                                             "sy": float(ins.dxf.yscale or 1.0), "rot": float(ins.dxf.rotation or 0.0), "layer": ins.dxf.layer})
+        except Exception:
+            pass
+        subs = _explode(ins, 1)
         if not subs:
             continue
         for sub in subs:

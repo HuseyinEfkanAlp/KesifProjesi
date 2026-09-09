@@ -11,20 +11,27 @@ def _keys(items):
     return {i.key: i for i in items}
 
 
-def test_formwork_scaffold_uses_storey_height():
-    summary = {"groups": [{"key": "kolon", "label": "Kolon", "concrete_m3": 10, "formwork_m2": 80, "rebar_kg": 0, "element_count": 4}],
-               "totals": {"concrete_m3": 10, "formwork_m2": 80, "rebar_kg": 0}, "rebar_by_dia": []}
+def test_formwork_scaffold_from_slab_area():
+    """Kalıp iskelesi reçeteden değil döşeme alanı × (H − d) ile yazılır (ÇŞB 15.185): kolon / kiriş yan kalıbı iskele istemez."""
+    from app.quantity.engine import ElementData, QuantityParams, compute_all
+    from app.quantity.summary import summarize
+    p = QuantityParams(storey_height=3.2, slab_thickness=0.2, storey_count=2)
+    lines = compute_all([ElementData(id=1, etype="slab", area=100.0, thickness=0.2), ElementData(id=2, etype="column", area=0.16, perimeter=1.6)], p)
+    info = {i: {"drawing": "kat", "drawing_id": 1, "kot": None, "area": a, "storey_height": 3.2, "slab_thickness": 0.2} for i, a in ((1, 100.0), (2, 0.16))}
+    summary = summarize(lines, [], info)
+    assert summary["totals"]["scaffold_m3"] == pytest.approx(100.0 * 2 * 3.0)
     cat = Catalog()
     items = expand_recipes(structural_items(summary, {}), cat, storey_height=3.2)
     k = _keys(items)
-    assert k["kalip_iskelesi:*"].quantity == pytest.approx(80 * 3.2)
-    assert k["kalip_iskelesi:*"].detail["recipe"] and k["kalip_iskelesi:*"].detail["parent"] == "kalip:kolon"
-    assert k["kalip_iskelesi:*"].poz == "15.185.1006" and k["kalip_iskelesi:*"].work_group == "KABA"
-    assert k["beton_pompaj:*"].quantity == pytest.approx(10)
-    # kat yüksekliği yoksa iskele yazılmaz, öteki reçeteler yazılır
-    items2 = expand_recipes(structural_items(summary, {}), cat, storey_height=0)
-    assert "kalip_iskelesi:*" not in _keys(items2) and "beton_pompaj:*" in _keys(items2)
-    assert len(expand_recipes(structural_items(summary, {}), cat, storey_height=3.2, off=True)) == len(structural_items(summary, {}))
+    assert k["kalip_iskelesi:*"].quantity == pytest.approx(600.0)
+    assert k["kalip_iskelesi:*"].poz == "15.185.1001" and k["kalip_iskelesi:*"].work_group == "KABA"
+    assert not k["kalip_iskelesi:*"].detail.get("recipe")
+    assert k["beton_pompaj:*"].quantity == pytest.approx(summary["totals"]["concrete_m3"])
+    # kalıp reçetesi artık iskele üretmez
+    summary2 = {"groups": [{"key": "kolon", "label": "Kolon", "concrete_m3": 10, "formwork_m2": 80, "rebar_kg": 0, "element_count": 4}],
+                "totals": {"concrete_m3": 10, "formwork_m2": 80, "rebar_kg": 0}, "rebar_by_dia": []}
+    assert "kalip_iskelesi:*" not in _keys(expand_recipes(structural_items(summary2, {}), cat, storey_height=3.2))
+    assert len(expand_recipes(structural_items(summary2, {}), cat, storey_height=3.2, off=True)) == len(structural_items(summary2, {}))
 
 
 def test_steel_roof_chain():
@@ -131,4 +138,4 @@ def test_grandchildren_not_multiplied_by_parent_count():
     assert k["beton:25"].quantity == pytest.approx(140 * 0.03) and k["demir:12"].quantity == pytest.approx(140 * 3)
     assert k["kalip:*"].quantity == pytest.approx(140 * 0.3)
     assert k["beton_pompaj:*"].quantity == pytest.approx(140 * 0.03)              # torunun torunu da tek kez
-    assert k["kalip_iskelesi:*"].quantity == pytest.approx(140 * 0.3 * 3.0)
+    assert "kalip_iskelesi:*" not in k                                              # lento kalıbı iskele istemez (ÇŞB 15.185)

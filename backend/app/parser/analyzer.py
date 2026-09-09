@@ -169,6 +169,19 @@ def _structural(drawing: Drawing, layers_by_type: dict[str, list[str]], params: 
         result.warnings.append("Temel paftası: kolon/perde izleri metraj dışı bırakıldı (kat kalıp planında sayılırlar).")
     if any(e.subtype == "net" for e in slabs):
         result.warnings.append("Döşemeler kiriş ağından türetildi (kirişler arası net alan); kiriş betonu tam yükseklikle hesaplanır.")
+    # kullanıcıya iş bırakan boşluklar: hiçbir kirişe atanmamış kiriş etiketleri (kiriş kaçmış olabilir)
+    unused_beams = [lab.name for i, (_, lab) in enumerate(labels.items)
+                    if lab.type_hint == "beam" and lab.name and lab.has_dims and i not in labels.claimed]
+    if beams and unused_beams:
+        names = sorted(set(unused_beams))
+        result.warnings.append(f"{len(names)} kiriş etiketi hiçbir kirişe atanmadı (kiriş çizgisi bulunamadı ya da etiket uzak): "
+                               + ", ".join(names[:12]) + ("…" if len(names) > 12 else "") + " — eksikse elle ekleyin")
+    unused_slabs = [lab.name for i, (_, lab) in enumerate(labels.items)
+                    if lab.type_hint == "slab" and lab.name and i not in labels.claimed]
+    if slabs and unused_slabs:
+        names = sorted(set(unused_slabs))
+        result.warnings.append(f"{len(names)} döşeme etiketi kapalı bir hücreye düşmedi (kiriş / perde çizgileri hücreyi kapatmıyor): "
+                               + ", ".join(names[:12]) + ("…" if len(names) > 12 else "") + " — bu döşemeleri elle ekleyin")
     return columns + walls + beams + slabs + founds
 
 
@@ -261,7 +274,7 @@ def analyze_standard(drawing: Drawing, catalog: Catalog, params: DetectParams) -
     return result
 
 
-def analyze_rebar(drawing: Drawing, label: str = "") -> AnalysisResult:
+def analyze_rebar(drawing: Drawing, label: str = "", rebar_target: str | None = None) -> AnalysisResult:
     """Donatı paftası: yalnızca metraj tabloları okunur; her çap bir 'rebar' elemanı (meta: kg, m, hedef eleman, kot)."""
     counts = drawing.layer_counts()
     infos = [LayerInfo(name, counts.get(name, 0), None) for name in drawing.layers]
@@ -274,8 +287,9 @@ def analyze_rebar(drawing: Drawing, label: str = "") -> AnalysisResult:
         if lab is not None:
             tables = [lab]
             source = "REBAR_LABELS"
-    target = target_from_label(label)
+    target = rebar_target or target_from_label(label)
     kot = kot_from_label(label)
+    src_label = "tablo" if source == "REBAR_TABLE" else "poz"
     for ti, t in enumerate(tables):
         for d in sorted(t.columns):
             kg = t.weight.get(d, 0.0)
@@ -289,7 +303,8 @@ def analyze_rebar(drawing: Drawing, label: str = "") -> AnalysisResult:
             el.warnings.extend(t.warnings)
             el.label_raw = (f"tablo {ti + 1}: {kg:.0f} kg" if source == "REBAR_TABLE" else f"poz yazıları: {kg:.0f} kg")
             el.meta = {"dia_mm": d, "weight_kg": round(kg, 1), "length_m": round(t.total_length.get(d, 0.0), 2),
-                       "target": target, "kot": kot, "table": ti + 1}
+                       "target": target, "kot": kot, "table": ti + 1, "source": src_label,
+                       "declared_kg": t.total_kg_declared, "table_kg": round(t.total_kg, 1)}
             result.elements.append(el)
     if not tables:
         result.warnings.append("Donatı metraj tablosu bulunamadı (başlıkta Ø10 / Ø12 … çap sütunları ve AĞIRLIK satırı aranır) "
@@ -298,8 +313,13 @@ def analyze_rebar(drawing: Drawing, label: str = "") -> AnalysisResult:
         from .layer_profile import STRUCTURAL_TYPES
         what = f"{len(tables)} metraj tablosu okundu" if source == "REBAR_TABLE" else "poz yazılarından hesaplandı"
         result.warnings.append(f"{what}, toplam {sum(t.total_kg for t in tables):,.0f} kg; "
-                               f"hedef eleman: {STRUCTURAL_TYPES.get(target, target)} (plan adından; TEMEL / KOLON / KİRİŞ / PERDE yazmıyorsa döşeme)"
+                               f"hedef eleman: {STRUCTURAL_TYPES.get(target, target)} "
+                               + ("(plan tipinden)" if rebar_target else "(plan adından; TEMEL / KOLON / KİRİŞ / PERDE yazmıyorsa döşeme)")
                                + (f", kot {kot}" if kot else ""))
+        for ti, t in enumerate(tables):
+            if t.total_kg_declared and abs(t.total_kg - t.total_kg_declared) / t.total_kg_declared > 0.02:
+                result.warnings.append(f"Tablo {ti + 1}: genel toplam {t.total_kg_declared:,.0f} kg, çap toplamı {t.total_kg:,.0f} kg — "
+                                       "uyuşmuyor, tabloyu kontrol edin")
     return result
 
 
@@ -393,7 +413,7 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
 def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
                     params: DetectParams | None = None, discipline: str = DEFAULT_DISCIPLINE,
                     catalog: Catalog | None = None, label: str = "", defer_on_unit: bool = False,
-                    extra_disciplines: tuple[str, ...] | list[str] = ()) -> AnalysisResult:
+                    extra_disciplines: tuple[str, ...] | list[str] = (), rebar_target: str | None = None) -> AnalysisResult:
     """defer_on_unit: birim yanlış görünüyorsa dedektörleri çalıştırmadan yalnız öneriyi döndür (analyze_file ilk geçişi).
     extra_disciplines: ana disipline ek olarak aynı paftada çalıştırılacak sezgisel disiplinler (mimari + elektrik gibi).
     Her katman ilk tanıyan disipline gider (sıra: ana, sonra ekler). KSF-… katmanları her zaman standart kuralla ölçülür."""
@@ -408,7 +428,7 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
     if discipline == MAPPED_DISCIPLINE:
         return analyze_mapped(drawing, profile, catalog, params, defer_on_unit=defer_on_unit)
     if discipline == REBAR_DISCIPLINE:
-        result = analyze_rebar(drawing, label)
+        result = analyze_rebar(drawing, label, rebar_target)
         result.materials = scan_materials(drawing)
         result.disciplines = [REBAR_DISCIPLINE]
         return result
@@ -556,12 +576,12 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
 def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectParams | None = None,
                  unit_override: str | None = None, auto_unit: bool = True,
                  discipline: str = DEFAULT_DISCIPLINE, catalog: Catalog | None = None, label: str = "",
-                 extra_disciplines: tuple[str, ...] | list[str] = ()) -> AnalysisResult:
+                 extra_disciplines: tuple[str, ...] | list[str] = (), rebar_target: str | None = None) -> AnalysisResult:
     """Dosyayı analiz eder; etiketler birimi yalanlıyorsa (ve kullanıcı birim seçmediyse) doğru birimle yeniden okur."""
     drawing = load_dxf(path, unit_override=unit_override)
     defer = bool(auto_unit and not unit_override)
     result = analyze_drawing(drawing, profile, params, discipline, catalog, label, defer_on_unit=defer,
-                             extra_disciplines=extra_disciplines)
+                             extra_disciplines=extra_disciplines, rebar_target=rebar_target)
     scan = parse_levels([e.text for e in drawing.entities if e.kind == "text" and e.text], label)
     result.levels, result.kot = scan.levels, scan.kot
     if unit_override and result.suggested_unit and result.suggested_unit != drawing.unit:
@@ -572,7 +592,8 @@ def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectP
     if auto_unit and not unit_override and result.suggested_unit and result.suggested_unit != drawing.unit:
         drawing2 = load_dxf(path, unit_override=result.suggested_unit)
         warn = [w for w in result.warnings if "kolon etiketleri" in w or "yazı yükseklikleri" in w]
-        result = analyze_drawing(drawing2, profile, params, discipline, catalog, label, extra_disciplines=extra_disciplines)
+        result = analyze_drawing(drawing2, profile, params, discipline, catalog, label, extra_disciplines=extra_disciplines,
+                                 rebar_target=rebar_target)
         result.levels, result.kot = scan.levels, scan.kot
         result.unit_detected = False
         result.unit_verdict = drawing2.unit

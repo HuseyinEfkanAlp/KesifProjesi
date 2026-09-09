@@ -23,7 +23,7 @@ def detect_columns(drawing: Drawing, layers: list[str], labels: LabelIndex, para
             el.confidence = 0.3
         else:
             el.confidence = 0.7
-        lab = labels.find(ent.points, "column")
+        lab = labels.find(ent.points, "column", area=area)   # alanla tutarlı kesit etiketi öncelikli
         if lab:
             el.label_raw = lab.raw
             el.name = lab.name

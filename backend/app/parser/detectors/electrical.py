@@ -71,15 +71,22 @@ def _chain(entities: list[Entity], tol: float) -> list[list[Entity]]:
             i = parent[i]
         return i
 
+    # dallanma noktası (bir noktada ≥ 3 parça ucu): zincir orada kesilir, her dal ayrı hat (farklı kesit / iniş payı)
+    touching: list[set[int]] = []
     for k, pt in enumerate(ends):
         i = k // 2
-        for j in tree.query(pt.buffer(tol)):
-            j = int(j)
-            other = j // 2
-            if other != i and pt.distance(ends[j]) <= tol:
-                ri, rj = find(i), find(other)
-                if ri != rj:
-                    parent[ri] = rj
+        touching.append({int(j) // 2 for j in tree.query(pt.buffer(tol)) if int(j) // 2 != i and pt.distance(ends[int(j)]) <= tol})
+    for k, pt in enumerate(ends):
+        i = k // 2
+        if len(touching[k]) >= 2:
+            continue
+        for other in touching[k]:
+            # karşı ucun da dallanma noktası olmaması gerekir
+            if any(len(touching[m]) >= 2 for m in (2 * other, 2 * other + 1) if pt.distance(ends[m]) <= tol):
+                continue
+            ri, rj = find(i), find(other)
+            if ri != rj:
+                parent[ri] = rj
     groups: dict[int, list[Entity]] = {}
     for i, e in enumerate(entities):
         groups.setdefault(find(i), []).append(e)

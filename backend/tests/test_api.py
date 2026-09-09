@@ -308,3 +308,42 @@ def test_drawing_boq_endpoint(client, standard_dxf):
     tot = {t["kind"]: t for t in b["kind_totals"]}
     assert tot["duvar_ytong"]["unit"] == "m²" and tot["duvar_ytong"]["quantity"] == pytest.approx(36.0)
     assert not any(i["kind"] in ("plywood", "bag_teli") or i["group"] == "fire" or i["notes"] and "Reçete" in i["notes"][0] for i in b["items"])
+
+
+def test_reanalyze_keeps_edited_and_excluded_elements(client, storey_dxf):
+    """Elle düzeltilen kolon yeniden analizde ikiye katlanmaz; metraj dışı bırakılan kolon dışarıda kalır."""
+    pid = client.post("/api/projects", json={"name": "yeniden", "storey_height": 3.0, "slab_thickness": 0.15}).json()["id"]
+    with open(storey_dxf, "rb") as f:
+        d = client.post(f"/api/projects/{pid}/drawings", files={"file": ("kat.dxf", f, "application/dxf")},
+                        data={"discipline": "structural"}).json()
+    did = d["id"]
+    els = client.get(f"/api/drawings/{did}/elements").json()
+    cols = [e for e in els if e["etype"] == "column"]
+    n_before = len(els)
+    assert len(cols) >= 2
+    client.patch(f"/api/elements/{cols[0]['id']}", json={"b": 0.5})
+    client.patch(f"/api/elements/{cols[1]['id']}", json={"included": False})
+    client.post(f"/api/drawings/{did}/reanalyze")
+    els2 = client.get(f"/api/drawings/{did}/elements").json()
+    assert len(els2) == n_before
+    cols2 = [e for e in els2 if e["etype"] == "column"]
+    edited = [e for e in cols2 if e["handle"] == cols[0]["handle"]]
+    assert len(edited) == 1 and edited[0]["b"] == 0.5 and edited[0]["manual"]
+    excluded = [e for e in cols2 if e["handle"] == cols[1]["handle"]]
+    assert len(excluded) == 1 and excluded[0]["included"] is False
+
+
+def test_price_explicit_zero_is_special(client, storey_dxf):
+    """Özel satırda işçilik 0 girilince genel satırın işçiliği uygulanmaz; boş bırakılınca (clear) uygulanır."""
+    pid = client.post("/api/projects", json={"name": "fiyat0", "storey_height": 3.0, "slab_thickness": 0.15}).json()["id"]
+    with open(storey_dxf, "rb") as f:
+        client.post(f"/api/projects/{pid}/drawings", files={"file": ("kat.dxf", f, "application/dxf")}, data={"discipline": "structural"})
+    client.put(f"/api/projects/{pid}/prices", json=[{"key": "beton:*", "unit_price": 3000, "labor_price": 400},
+                                                     {"key": "beton:column", "unit_price": 3500, "labor_price": 0}])
+    cost = client.get(f"/api/projects/{pid}/cost").json()["cost"]
+    line = next(l for l in cost["lines"] if l["key"] == "beton:column")
+    assert line["labor_price"] == 0 and line["unit_price"] == 3500
+    client.put(f"/api/projects/{pid}/prices", json=[{"key": "beton:column", "clear": ["labor_price"]}])
+    cost = client.get(f"/api/projects/{pid}/cost").json()["cost"]
+    line = next(l for l in cost["lines"] if l["key"] == "beton:column")
+    assert line["labor_price"] == 400

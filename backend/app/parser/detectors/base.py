@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from shapely import STRtree
 from shapely.geometry import LineString, Point as SPoint, Polygon
+import shapely
 from shapely.ops import polygonize, unary_union
 
 from ..geometry import Point
@@ -135,15 +136,21 @@ class LabelIndex:
         return n
 
     def find(self, polygon: list[Point], etype: str, radius: float | None = None,
-             claim: bool = True, require_hint: bool = False) -> Label | None:
-        """Çokgenin içindeki ya da en yakınındaki, tipe uygun etiketleri (ad + kesit/kalınlık) birleştirir."""
+             claim: bool = True, require_hint: bool = False, area: float | None = None) -> Label | None:
+        """Çokgenin içindeki ya da en yakınındaki, tipe uygun etiketleri (ad + kesit/kalınlık) birleştirir.
+
+        area: elemanın çizimdeki alanı (m²) verilirse kesit etiketleri arasında alanla tutarlı olan (|b·h − alan| / alan < 0,15)
+        öncelik alır: "Parapet (20/82)" ya da komşu kirişin "(100/45)" yazısı 100×100 kolona yapışmaz."""
         radius = self.params.label_search_radius if radius is None else radius
         cands = self._candidates(polygon, radius)
         if not cands:
             return None
 
         def score(d: float, lab: Label) -> float:
-            return d - (0.5 if lab.type_hint == etype else 0.0) - (0.25 if d == 0 else 0.0)
+            sc = d - (0.5 if lab.type_hint == etype else 0.0) - (0.25 if d == 0 else 0.0)
+            if area and lab.has_dims and lab.b and lab.h:
+                sc += 0.0 if abs(lab.b * lab.h - area) / area < 0.15 else 1.0   # alanla uyuşmayan kesit geriye düşer
+            return sc
 
         name_i = dims_i = thick_i = None
         best_name = best_dims = best_thick = None
@@ -267,7 +274,7 @@ def polygons_on_layers(drawing: Drawing, layers: list[str], close_open: bool = F
             for i in range(len(e.points) - 1):
                 segs.append(LineString([e.points[i], e.points[i + 1]]))
         try:
-            merged = unary_union(segs + _bridge_gaps(segs, snap_tol))
+            merged = shapely.set_precision(unary_union(segs + _bridge_gaps(segs, snap_tol)), 0.001)   # 1 mm ızgara: 1e-13 uç farkları düğümlenir
             for poly in polygonize(merged):
                 if poly.area < max(min_area, 1e-9):
                     continue
@@ -432,15 +439,27 @@ def find_parallel_pairs(segs: list[Segment], width_range: tuple[float, float],
             ca = (si.a[0] + ux * lo + nx * off, si.a[1] + uy * lo + ny * off)
             cb = (si.a[0] + ux * hi + nx * off, si.a[1] + uy * hi + ny * off)
             pair = ParallelPair(ca, cb, dist, si.layer, _rect_from_centerline(ca, cb, dist), (si.handle, sj.handle))
-            cands.append((dist, -overlap, i, j, pair))
+            # j üzerindeki örtüşme aralığı: si'nin eksen parametresi lo..hi, sj'nin kendi parametresine izdüşümü
+            ujx = (sj.b[0] - sj.a[0]) / sj.length
+            ujy = (sj.b[1] - sj.a[1]) / sj.length
+            pj = sorted([(si.a[0] + ux * lo - sj.a[0]) * ujx + (si.a[1] + uy * lo - sj.a[1]) * ujy,
+                         (si.a[0] + ux * hi - sj.a[0]) * ujx + (si.a[1] + uy * hi - sj.a[1]) * ujy])
+            cands.append((dist, -overlap, i, j, pair, (lo, hi), (pj[0], pj[1])))
     cands.sort(key=lambda c: (c[0], c[1]))
-    used: set[int] = set()
+    # Bir çizgi birden çok eşle eşleşebilir, yeter ki aynı aralığı iki kez vermesin: dış yüzü sürekli (0–10 m), iç yüzü
+    # kapı boşluğuyla iki parça (0–4, 6–10) çizilmiş duvar iki çift (4 m + 4 m) olur; eskiden tek çift (4 m) kalıyordu.
+    used: dict[int, list[tuple[float, float]]] = {}
+
+    def free(k: int, lo: float, hi: float) -> bool:
+        tol = min_length * 0.5
+        return all(hi <= a + tol or lo >= b - tol for a, b in used.get(k, []))
+
     out: list[ParallelPair] = []
-    for _, _, i, j, pair in cands:
-        if i in used or j in used:
+    for _, _, i, j, pair, (li, hi_i), (lj, hj) in cands:
+        if not (free(i, li, hi_i) and free(j, lj, hj)):
             continue
-        used.add(i)
-        used.add(j)
+        used.setdefault(i, []).append((li, hi_i))
+        used.setdefault(j, []).append((lj, hj))
         out.append(pair)
     return out
 
@@ -512,7 +531,9 @@ def faces_from_network(segs: list[Segment], polygons: list[list[Point]], snap: f
     if not geoms:
         return []
     try:
-        merged = unary_union(geoms)
+        # Kiriş çizgi uçları çoğu çizimde 1e-13 m farkla "çakışmaz"; unary_union düğüm üretmez, hücre kapanmaz.
+        # 1 mm hassasiyet ızgarası uçları düğümler (A4-A5 +15.65: 66 döşeme etiketinin hepsi kapalı hücreye girdi).
+        merged = shapely.set_precision(unary_union(geoms), 0.001)
         return list(polygonize(merged))
     except Exception:
         return []

@@ -18,7 +18,7 @@ from typing import Any
 
 from ..parser.labels_ext import FIXTURE_CATEGORIES, WALL_MATERIALS
 from ..parser.layer_profile import DISCIPLINES, ELEMENT_TYPES
-from ..standard.catalog import Catalog, parse_layer, spec_numbers
+from ..standard.catalog import ParsedLayer, Catalog, parse_layer, spec_numbers
 from ..standard.rules import RULES, WORK_GROUPS, WORK_GROUP_ORDER, deductible_opening, default_poz, work_group_of
 
 # tür -> (görünen ad, birim, disiplin)
@@ -52,7 +52,7 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "work_hours_per_day": 8.0,    # süre hesabı: günlük çalışma saati
     # sarf / fire (statik)
     "concrete_waste_pct": 3.0,    # beton fire %
-    "rebar_waste_pct": 5.0,       # demir fire % (bindirme + kesim)
+    "rebar_waste_pct": 3.0,       # demir fire % (yalnız kesim artığı; bindirme poz boylarında zaten var)
     "tie_wire_kg_per_t": 8.0,     # bağ teli: kg / ton demir
     "plywood_sheet_m2": 3.125,    # 125 x 250 cm levha
     "formwork_reuse": 5.0,        # bir levhanın kullanım sayısı
@@ -173,23 +173,36 @@ def structural_items(summary: dict, params: dict[str, Any] | None = None) -> lis
         if g.get("formwork_m2", 0) > 0:
             acc.add("kalip", g["key"], f"Kalıp - {g['label']}", g["formwork_m2"], count=g.get("element_count", 0),
                     note=RULES["formwork"].text)
-        if g.get("rebar_kg", 0) > 0 and g.get("rebar_source", "oran") == "oran":
-            acc.add("demir", g["key"], f"Demir - {g['label']} (oranla)", g["rebar_kg"], count=g.get("element_count", 0),
-                    note="Beton × kg/m³ oranı; donatı paftası yüklenince tablodan alınır")
+        ratio_kg = float(g.get("rebar_ratio_kg") or (g.get("rebar_kg", 0) if g.get("rebar_source", "oran") == "oran" else 0.0))
+        if ratio_kg > 0:
+            kots = g.get("rebar_kots_ratio") or []
+            acc.add("demir", g["key"], f"Demir - {g['label']} (oranla)", ratio_kg, count=g.get("element_count", 0),
+                    note="Beton × kg/m³ oranı (düşük güven); donatı paftası yüklenince tablodan alınır"
+                         + (f" — donatı paftası olmayan kotlar: {', '.join(kots)}" if kots else ""))
+    _SRC = {"tablo": "donatı tablosundan", "poz": "adetli poz yazılarından (kanca / bindirme yazıda yoksa eksik)", "elle": "elle girildi"}
     for d in summary.get("rebar_by_dia", []):
         tg = ", ".join(f"{ELEMENT_TYPES.get(k, k)} {v/1000:.1f} t" for k, v in d["targets"].items())
+        src = "; ".join(f"{_SRC.get(k, k)} {v/1000:.1f} t" for k, v in (d.get("sources") or {"tablo": d["weight_kg"]}).items())
         acc.add("demir", f"o{d['dia_mm']}", f"Demir Ø{d['dia_mm']}", d["weight_kg"], count=0,
-                note=f"Donatı tablosundan; {tg}", length_m=d["length_m"])
+                note=f"Kaynak: {src}; {tg}", length_m=d["length_m"])
     tot = summary.get("totals", {})
     conc = float(tot.get("concrete_m3") or 0.0)
     form = float(tot.get("formwork_m2") or 0.0)
     rebar = float(tot.get("rebar_kg") or 0.0)
+    scaf = float(tot.get("scaffold_m3") or 0.0)
+    if scaf > 0:
+        acc.add("kalip_iskelesi", "*", "Kalıp iskelesi (çelik boru)", scaf, count=0,
+                meta=("Kalıp iskelesi (çelik boru)", "m³", "ksf:STA", "Statik"), poz="15.185.1001",
+                note="Döşeme alanı × serbest yükseklik (H − d) × kat sayısı; ÇŞB 15.185 ölçüsü (kolon / perde / kiriş yan kalıbı iskele istemez; "
+                     "boşluk içindeki kiriş ve kolon hacmi düşülmez)")
     cw = float(params.get("concrete_waste_pct") or 0.0)
     rw = float(params.get("rebar_waste_pct") or 0.0)
     if conc > 0 and cw > 0:
         acc.add("beton", "fire", f"Beton fire (%{cw:g})", conc * cw / 100.0, note="Toplam beton × fire yüzdesi")
     if rebar > 0 and rw > 0:
-        acc.add("demir", "fire", f"Demir fire / bindirme (%{rw:g})", rebar * rw / 100.0, note="Toplam demir × fire yüzdesi")
+        acc.add("demir", "fire", f"Demir fire (kesim / artık, %{rw:g})", rebar * rw / 100.0,
+                note="Toplam demir × fire yüzdesi. Bindirme ve kanca poz boylarında (tablo / poz yazısı) zaten vardır, "
+                     "ÇŞB 15.160 ölçüsü de bindirmeyi ayrıca yazmaz; bu kalem yalnız kesim artığıdır")
     if rebar > 0:
         tw = float(params.get("tie_wire_kg_per_t") or 0.0)
         if tw > 0:
@@ -337,9 +350,15 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
     """Standart çizim elemanları: katman adından kalem + özellik, katalogdan ölçüm kuralı.
     Disiplin anahtarı 'ksf:<KOD>' (ör. ksf:HAV) — sezgisel disiplinlerle çakışmaz."""
     acc = _Acc()
+    per_project: dict[str, dict] = {}     # proje geneli kalemler (asansör, kazan…): paftalar arası en büyük adet, kat çarpanı yok
+    ps, bs = float(params.get("plaster_sides") or 0), float(params.get("paint_sides") or 0)
     for d in drawings:
         mult = int(d.get("storey_count") or 1)
         wall_h_default = params.get("wall_height") or max((d.get("storey_height") or 3.0) - (d.get("slab_thickness") or 0.0), 0.0)
+        pending_walls: list[dict] = []      # bu paftanın KSF duvarları: boşluklar düşüldükten sonra yazılır
+        open_ded = 0.0                      # ≥ 0,10 m² boşluklar (duvardan düşülür, ÇŞB 15.225)
+        open_all = 0.0                      # tüm boşluklar (sıva / boyadan düşülür)
+        small_openings = 0
         for e in d["elements"]:
             p = parse_layer(_g(e, "layer") or "", catalog)
             meta = _g(e, "meta") or {}
@@ -405,12 +424,62 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
                                  size=f"{_fmt_cm(b)}x{_fmt_cm(h)}")
                     if kind == "dograma":
                         note = f"{_fmt_cm(b)}×{_fmt_cm(h)} cm ({'kapı' if okind == 'door' else 'pencere / vitrin'}); ölçü görünüş / doğrama paftasından"
+                    # KSF duvarlarından düşülecek boşluk (kat çarpanı duvarla birlikte uygulanır)
+                    open_all += b * h * n
+                    if deductible_opening(b * h):
+                        open_ded += b * h * n
+                    else:
+                        small_openings += n
+            if item is not None and item.per_project and measure in ("count", "label_count"):
+                key = f"{kind}:{group}"
+                rec = per_project.setdefault(key, {"kind": kind, "group": group, "label": label, "meta": (kname, unit, disc_key, catalog.discipline_name(p.discipline)),
+                                                   "poz": item.poz, "per_drawing": {}})
+                dl = str(d.get("label", ""))
+                rec["per_drawing"][dl] = rec["per_drawing"].get(dl, 0) + n     # pafta içinde toplanır, paftalar arasında en büyük alınır
+                continue
+            if measure == "wall_area":
+                pending_walls.append({"kind": kind, "group": group, "label": label, "gross": qty, "n": n, "note": note,
+                                      "meta": (kname, unit, disc_key, catalog.discipline_name(p.discipline)), "poz": (item.poz if item else ""),
+                                      "extra": extra, "plaster": "ALCIPAN" not in kind.upper()})
+                continue
             acc.add(kind, group, label, qty * mult, count=n * mult, note=note,
                     meta=(kname, unit, disc_key, catalog.discipline_name(p.discipline)), poz=(item.poz if item else ""), **extra)
-            if kind == "dograma" and b and h and meta.get("opening_kind", "window") == "window":
+            if b and h and ((kind == "dograma" and meta.get("opening_kind", "window") == "window") or kind == "pencere"):
                 acc.add("cam", slug(f"{_fmt_cm(b)}x{_fmt_cm(h)}"), f"Cam {_fmt_cm(b)}×{_fmt_cm(h)} cm ({spec})", b * h * n * mult, count=n * mult,
-                        note="Poz adedi × doğrama ölçüsü (genişlik × yükseklik); kapı pozları hariç, doğrama payı düşülmedi",
+                        note="Adet × doğrama ölçüsü (genişlik × yükseklik); kapı pozları hariç, doğrama payı düşülmedi",
                         size=f"{_fmt_cm(b)}x{_fmt_cm(h)}")
+        # KSF duvarları: boşluklar alanla orantılı düşülür (ÇŞB 15.225: 0,10 m² altı düşülmez); sıva / boya tüm boşluk düşülerek
+        gross = sum(w["gross"] for w in pending_walls)
+        finish_gross = sum(w["gross"] for w in pending_walls if w["plaster"])
+        for w in pending_walls:
+            share = open_ded * (w["gross"] / gross) if gross > 0 else 0.0
+            net = max(w["gross"] - share, 0.0) * mult
+            it = acc.add(w["kind"], w["group"], w["label"], net, count=w["n"] * mult, note=w["note"], meta=w["meta"], poz=w["poz"],
+                         gross_m2=w["gross"] * mult, openings_m2=share * mult, **w["extra"])
+            it.detail.setdefault("by_drawing", []).append(
+                {"drawing": d.get("label", ""), "gross_m2": round(w["gross"] * mult, 2), "openings_m2": round(share * mult, 2), "net_m2": round(net, 2)})
+            rule = RULES["wall_opening"].text
+            if rule not in it.notes:
+                it.notes.append(rule)
+            if small_openings:
+                it.detail["small_openings"] = it.detail.get("small_openings", 0) + small_openings
+        if gross > 0 and not params.get("ksf_no_finish"):
+            # KSF duvarlarında sıva / boya çizilmez; ölçülen KSF siva / boya kalemi yoksa duvar alanından türetilir (alçıpan sıvanmaz)
+            has_ksf_siva = any(_g(e, "etype") == "siva" or (parse_layer(_g(e, "layer") or "", catalog) or ParsedLayer("", "", None, None, "")).code == "SIVA"
+                               for e in d["elements"])
+            has_ksf_boya = any((parse_layer(_g(e, "layer") or "", catalog) or ParsedLayer("", "", None, None, "")).code == "BOYA" for e in d["elements"])
+            share_all = open_all * (finish_gross / gross) if gross > 0 else 0.0
+            finish_net = max(finish_gross - share_all, 0.0) * mult
+            if ps > 0 and finish_net > 0 and not has_ksf_siva:
+                acc.add("siva", "*", f"Sıva ({ps:g} yüz)", finish_net * ps, note=RULES["plaster_openings"].text + "; × yüz sayısı; KSF duvar alanından (alçıpan hariç)")
+            if bs > 0 and finish_net > 0 and not has_ksf_boya:
+                paint_net = max(gross - open_all, 0.0) * mult
+                acc.add("boya", "*", f"Boya ({bs:g} yüz)", paint_net * bs, note=RULES["paint_openings"].text + "; × yüz sayısı; KSF duvar alanından")
+    for rec in per_project.values():
+        n_max = max(rec["per_drawing"].values()) if rec["per_drawing"] else 0
+        acc.add(rec["kind"], rec["group"], rec["label"], n_max, count=n_max, meta=rec["meta"], poz=rec["poz"],
+                note="Proje geneli kalem: kat sayısıyla çarpılmaz, paftalar arasında en büyük adet alındı ("
+                     + "; ".join(f"{k}: {v}" for k, v in list(rec["per_drawing"].items())[:6]) + ")")
     return list(acc.items.values())
 
 
