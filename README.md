@@ -8,8 +8,9 @@ AutoCAD planlarını (DXF) okuyup üç disiplinde keşif çıkarır:
 | **Mimari** | kat planı | duvar (malzeme + kalınlık), kapı, pencere | duvar m² (Ytong / tuğla / bims / alçıpan…), sıva m², boya m², kapı adet, pencere adet, cam m² |
 | **Elektrik** | tava / aydınlatma / kuvvet planı | kablo tavası, kablo, boru, armatür / priz / anahtar | tava m (boyut bazında), kablo m (kesit bazında), boru m, armatür adet (kategori) |
 
-Girdiğiniz **malzeme** ve **işçilik** birim fiyatları, tercih ettiğiniz **marka** ve **adam-saat / birim** değerleriyle
-maliyet tablosu (malzeme + işçilik, KDV) ve **süre tahmini** (gün) üretir; Excel raporu indirir.
+**Malzeme** birim fiyatı ürüne (C30/37 hazır beton, Ø12 nervürlü demir, Ytong 20 cm), **işçilik** birim fiyatı ile
+adam-saat / birim kaleme girilir; program maliyet tablosu (malzeme + işçilik, KDV) ve **süre tahmini** (gün) üretir,
+Excel raporu indirir.
 
 ### Keşif Çizim Standardı (KÇS) — bütün disiplinler
 
@@ -94,9 +95,16 @@ Tarayıcı: http://127.0.0.1:5173  (API dokümantasyonu: http://127.0.0.1:8000/d
    - Tabloda b/h/kalınlık/uzunluk/adet ve alt tip (duvar malzemesi, kablo kesiti, tava boyutu, armatür kategorisi) düzenlenebilir,
      eleman silinebilir, parser'ın kaçırdığı eleman elle eklenebilir.
 4. **Metraj**: disiplin bazlı **keşif listesi** (kalem, birim, miktar) + statik grup özeti ve eleman bazlı liste.
-5. **Birim Fiyatlar**: her kalem için marka, malzeme ₺/birim, işçilik ₺/birim, adam-saat/birim, ekip. Türün "genel" satırı
-   özel değer girilmeyen kalemlere uygulanır.
-6. **Maliyet**: malzeme + işçilik kalem tablosu, disiplin bazlı toplamlar, KDV, **süre** (disiplinler paralel / işler ardışık), Excel indir.
+5. **Birim Fiyatlar** — iki ayrı sekme:
+   - **Malzeme (ürün)**: fiyat eleman türüne değil **ürüne** girilir. Kolon, perde, kiriş ve döşeme betonu aynı
+     "Hazır beton C30/37" satırından fiyatlanır; Ø12 demir hangi elemanda geçerse geçsin tek satırdır. Sayfadaki
+     **ürün seçimi** hangi elemanın hangi ürünü kullandığını belirler: genel beton sınıfı, temel / kolon / perde /
+     kiriş / döşeme için ayrı sınıf, grobeton sınıfı, donatı sınıfı (B420C), kalıp malzemesi. Duvar, kablo, tava,
+     kapı gibi kalemler zaten ürün bazında gruplanır (Ytong 20 cm, NYY 4x16, 200x60 tava).
+   - **İşçilik**: kalem (poz) bazında işçilik ₺/birim, adam-saat/birim, ekip. Türün "genel" satırı özel değer
+     girilmeyen kalemlere uygulanır. Birimi *saat* olan kalemler (kalıp / demir işçiliği, montaj) salt işçiliktir.
+6. **Maliyet**: ürün bazında malzeme tablosu + kalem tablosu (hangi kalem hangi üründen fiyatlandı), disiplin ve iş
+   grubu toplamları, KDV, **süre** (disiplinler paralel / işler ardışık), Excel indir.
 
 `samples/` klasöründe sentetik örnek çizimler var: `ornek_kat_plani.dxf`, `ornek_temel_plani.dxf` (statik),
 `ornek_mimari_plani.dxf` (Ytong 20 + tuğla 10 duvarlar, 2 kapı, 3 pencere), `ornek_elektrik_plani.dxf` (2 tava, 3 kablo hattı, boru, 9 armatür/priz/anahtar),

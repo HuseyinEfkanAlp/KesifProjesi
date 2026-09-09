@@ -1,7 +1,12 @@
 """Keşif kalemi × (malzeme + işçilik birim fiyatı) = maliyet; × adam-saat/birim = süre.
 
-Fiyat kalemi anahtarı: "<tür>:<grup>" (bkz. quantity.boq). "<tür>:*" o türün genel fiyatıdır; kaleme özel
-fiyat girilmemişse genel fiyat kullanılır. Marka bilgi amaçlıdır (raporda görünür).
+**Malzeme** fiyatı ürüne girilir (C30/37 beton, Ø12 demir, Ytong 20 cm): kalemin ürünü cost.materials.material_of
+ile bulunur, fiyatı ürün listesinden okunur. Aynı ürünü kullanan bütün kalemler tek fiyattan hesaplanır.
+**İşçilik** fiyatı ve adam-saat keşif kalemine girilir; anahtarı "<tür>:<grup>" (bkz. quantity.boq), "<tür>:*"
+o türün genel satırıdır ve kaleme özel değer girilmemişse uygulanır. Marka üründen gelir (raporda görünür).
+
+Ürün fiyatı girilmemişse eski (ürün öncesi) kalem malzeme fiyatına düşülür; böylece eski projelerin girilmiş
+fiyatları kaybolmaz.
 
 Süre: kalem saati = miktar × adam-saat/birim; kalem günü = saat / (ekip × günlük saat).
   - "ardışık" toplam: tüm kalem günlerinin toplamı (tek ekip her işi sırayla yapar)
@@ -12,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..quantity.boq import KIND_META, BoqItem
+from .materials import MaterialData, material_of
 
 # Geriye uyumluluk (eski içe aktarmalar)
 QUANTITY_KINDS: dict[str, tuple[str, str]] = {k: (v[0], v[1]) for k, v in KIND_META.items()}
@@ -47,8 +53,11 @@ def default_price_items(items: list[BoqItem]) -> list[PriceItem]:
 
 
 def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float = 0.0,
-                 hours_per_day: float = 8.0) -> dict:
+                 hours_per_day: float = 8.0, materials: list[MaterialData] | None = None,
+                 params: dict | None = None) -> dict:
     price_map = {p.key: p for p in prices}
+    mat_map = {m.key: m for m in (materials or [])}
+    params = params or {}
     hours_per_day = hours_per_day if hours_per_day and hours_per_day > 0 else 8.0
     lines = []
     for it in items:
@@ -69,11 +78,18 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
                 return g, "genel"
             return default, "girilmedi"
 
-        mat, mat_src = pick("unit_price")
         lab, lab_src = pick("labor_price")
         hpu, _ = pick("hours_per_unit")
         crew, _ = pick("crew_size", 1.0)
         brand, _ = pick("brand", "")
+        # malzeme: kalemin ürünü (C30/37 beton, Ø12 demir…) — fiyat ürün listesinden gelir
+        m = material_of(it, params)
+        mkey, mname = m if m else ("", "")
+        mrec = mat_map.get(mkey) if mkey else None
+        mat = float(mrec.unit_price or 0.0) if mrec else 0.0
+        mat_src = "ürün" if mat > 0 else ("malzemesiz" if not mkey else "fiyat girilmedi")
+        if mrec and mrec.brand:
+            brand = mrec.brand
         hours = it.quantity * float(hpu)
         days = hours / (max(float(crew), 0.01) * hours_per_day) if hours > 0 else 0.0
         mat_total = round(it.quantity * float(mat), 2)
@@ -86,9 +102,10 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
             "work_group": it.work_group, "work_group_label": it.to_dict()["work_group_label"], "poz": it.poz,
             "recipe": bool(it.detail.get("recipe")),
             "brand": brand or "",
+            "material_key": mkey, "material_name": mname,
             "unit_price": float(mat), "labor_price": float(lab),
             "material_total": mat_total, "labor_total": lab_total, "total": round(mat_total + lab_total, 2),
-            "price_source": mat_src if mat else "fiyat girilmedi",
+            "price_source": mat_src,
             "labor_source": lab_src if lab else "işçilik girilmedi",
             "hours_per_unit": float(hpu), "crew_size": float(crew),
             "hours": round(hours, 1), "days": round(days, 2),
@@ -100,7 +117,15 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
     by_kind: dict[str, float] = {}
     by_disc: dict[str, dict] = {}
     by_group: dict[str, dict] = {}
+    by_mat: dict[str, dict] = {}
     for l in lines:
+        if l["material_key"]:
+            m = by_mat.setdefault(l["material_key"], {"key": l["material_key"], "name": l["material_name"],
+                                                      "unit": l["unit"], "brand": l["brand"], "unit_price": l["unit_price"],
+                                                      "quantity": 0.0, "total": 0.0, "lines": 0})
+            m["quantity"] = round(m["quantity"] + l["quantity"], 3)
+            m["total"] = round(m["total"] + l["material_total"], 2)
+            m["lines"] += 1
         by_kind[l["kind"]] = round(by_kind.get(l["kind"], 0.0) + l["total"], 2)
         g = by_group.setdefault(l["work_group"], {"group": l["work_group"], "label": l["work_group_label"],
                                                   "material": 0.0, "labor": 0.0, "total": 0.0, "hours": 0.0, "days": 0.0, "lines": 0})
@@ -126,9 +151,11 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
         "subtotal": subtotal, "vat_rate": vat_rate, "vat": vat,
         "grand_total": round(subtotal + vat, 2),
         "by_kind": by_kind,
+        "by_material": sorted(by_mat.values(), key=lambda m: -m["total"]),
         "by_discipline": list(by_disc.values()),
         "by_group": list(by_group.values()),
-        "missing_prices": [l["key"] for l in lines if l["unit_price"] <= 0],
+        "missing_prices": [l["key"] for l in lines if l["unit_price"] <= 0 and l["material_key"]],
+        "missing_materials": sorted({l["material_key"] for l in lines if l["unit_price"] <= 0 and l["material_key"]}),
         "missing_labor": [l["key"] for l in lines if l["labor_price"] <= 0],
         "duration": {
             "hours_per_day": hours_per_day,

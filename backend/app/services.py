@@ -6,8 +6,9 @@ from datetime import datetime
 
 from sqlmodel import Session, select
 
+from .cost.materials import MaterialData, material_lines
 from .cost.pricing import PriceItem as PriceData, compute_cost, default_price_items
-from .models import Drawing, Element, PriceItem, Project
+from .models import Drawing, Element, MaterialPrice, PriceItem, Project
 from .parser.analyzer import analyze_file
 from .parser.detectors.base import DetectParams
 from .db import DATA_DIR
@@ -998,6 +999,56 @@ def ensure_price_items(project: Project, items: list[BoqItem], session: Session)
     return sorted(existing.values(), key=lambda p: (order.get(p.key.split(":")[0], 99), "*" not in p.key, p.name))
 
 
+def ensure_material_prices(project: Project, items: list[BoqItem], session: Session) -> list[MaterialPrice]:
+    """Keşifteki her ürün için (C30/37 beton, Ø12 demir, Ytong 20 cm…) fiyat satırı; kullanıcı doldurur.
+
+    Ürün adı parametreye bağlıdır (beton sınıfı değişince ad da değişir): var olan satırın adı güncellenir.
+    Ürün fiyatı boşsa, ürünü kullanan kalemlerin **ürün öncesi** malzeme fiyatı (PriceItem.unit_price) devralınır;
+    böylece eski projelerde girilmiş fiyatlar kaybolmaz."""
+    params = project_params(project)
+    existing = {m.key: m for m in session.exec(select(MaterialPrice).where(MaterialPrice.project_id == project.id))}
+    old = {p.key: p for p in session.exec(select(PriceItem).where(PriceItem.project_id == project.id))}
+    lines = material_lines(items, params)
+    changed = False
+
+    def inherited(ln) -> tuple[float, str]:
+        """Ürünü kullanan kalemlerin eski malzeme fiyatı (kaleme özel > türün genel satırı)."""
+        for it in ln.items:
+            o = old.get(it["key"])
+            if o and (o.unit_price or 0) > 0:
+                return float(o.unit_price), (o.brand or "")
+        for it in ln.items:
+            o = old.get(f"{it['key'].split(':')[0]}:*")
+            if o and (o.unit_price or 0) > 0:
+                return float(o.unit_price), (o.brand or "")
+        return 0.0, ""
+
+    for ln in lines:
+        m = existing.get(ln.key)
+        if m is None:
+            m = MaterialPrice(project_id=project.id, key=ln.key, name=ln.name, unit=ln.unit)
+            existing[ln.key] = m
+            changed = True
+        elif m.name != ln.name or m.unit != ln.unit:
+            m.name, m.unit = ln.name, ln.unit
+            changed = True
+        if not (m.unit_price or 0) > 0:
+            price, brand = inherited(ln)
+            if price > 0:
+                m.unit_price = price
+                m.brand = m.brand or brand
+                changed = True
+        session.add(m)
+    if changed:
+        session.commit()
+    order = {ln.key: i for i, ln in enumerate(lines)}
+    return sorted(existing.values(), key=lambda m: (order.get(m.key, 9999), m.name))
+
+
+def to_material_data(m: MaterialPrice) -> MaterialData:
+    return MaterialData(m.key, m.name, m.unit, m.unit_price or 0.0, m.brand or "")
+
+
 def to_price_data(p: PriceItem) -> PriceData:
     return PriceData(p.key, p.name, p.unit, p.unit_price or 0.0, p.labor_price or 0.0, p.brand or "",
                      p.hours_per_unit or 0.0, p.crew_size or 0.0, tuple(p.set_fields or []))
@@ -1007,8 +1058,11 @@ def project_cost(project: Project, session: Session) -> tuple[list[QuantityLine]
     lines, summary, info = project_quantities(project, session)
     items = project_boq(project, session, summary)
     prices = ensure_price_items(project, items, session)
+    materials = ensure_material_prices(project, items, session)
+    params = project_params(project)
     cost = compute_cost(items, [to_price_data(p) for p in prices], project.vat_rate,
-                        hours_per_day=float(project_params(project).get("work_hours_per_day") or 8.0))
+                        hours_per_day=float(params.get("work_hours_per_day") or 8.0),
+                        materials=[to_material_data(m) for m in materials], params=params)
     return lines, summary, info, items, cost
 
 

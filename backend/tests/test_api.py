@@ -187,7 +187,9 @@ def test_multi_discipline_flow(client, storey_dxf, arch_dxf, elec_dxf):
 
     c = client.get(f"/api/projects/{pid}/cost").json()["cost"]
     wall = next(l for l in c["lines"] if l["key"] == "duvar:ytong:20")
-    assert wall["brand"] == "Ytong" and wall["labor_price"] == 250 and wall["price_source"] == "genel"
+    # malzeme fiyatı ürüne taşındı (eski kalem fiyatından devralınır), işçilik kalemin genel satırından
+    assert wall["brand"] == "Ytong" and wall["labor_price"] == 250 and wall["price_source"] == "ürün"
+    assert wall["unit_price"] == 450 and wall["material_key"] == "duvar:ytong:20"
     assert wall["days"] == pytest.approx(wall["quantity"] * 0.8 / (3 * 9), abs=0.01)
     assert c["material_subtotal"] > 0 and c["labor_subtotal"] > 0
     assert c["duration"]["hours_per_day"] == 9 and c["duration"]["parallel_days"] <= c["duration"]["sequential_days"]
@@ -347,3 +349,45 @@ def test_price_explicit_zero_is_special(client, storey_dxf):
     cost = client.get(f"/api/projects/{pid}/cost").json()["cost"]
     line = next(l for l in cost["lines"] if l["key"] == "beton:column")
     assert line["labor_price"] == 400
+
+
+def test_material_prices_by_product(client, storey_dxf):
+    """Malzeme fiyatı eleman türüne değil ürüne girilir: kolon ve döşeme betonu aynı C30/37 satırından fiyatlanır,
+    perdeye ayrı sınıf atanınca kendi ürünü olur. İşçilik kalemin kendi satırında kalır."""
+    pid = client.post("/api/projects", json={"name": "ürün", "storey_height": 3.0, "slab_thickness": 0.15}).json()["id"]
+    with open(storey_dxf, "rb") as f:
+        client.post(f"/api/projects/{pid}/drawings", files={"file": ("kat.dxf", f, "application/dxf")},
+                    data={"discipline": "structural"})
+
+    mats = client.get(f"/api/projects/{pid}/materials").json()
+    keys = {m["key"] for m in mats}
+    assert {"beton:c30_37", "kalip:plywood"} <= keys
+    assert not any(k.startswith("beton:column") or k.startswith("beton:slab") for k in keys)   # eleman bazlı beton yok
+    c30 = next(m for m in mats if m["key"] == "beton:c30_37")
+    assert c30["unit"] == "m³" and c30["quantity"] > 0 and c30["name"] == "Hazır beton C30/37"
+    assert {i["key"] for i in c30["items"]} >= {"beton:column", "beton:slab", "beton:shear_wall"}
+
+    r = client.put(f"/api/projects/{pid}/materials", json=[{"key": "beton:c30_37", "unit_price": 4200, "brand": "Akçansa"},
+                                                           {"key": "kalip:plywood", "unit_price": 120}])
+    assert r.status_code == 200
+    assert client.put(f"/api/projects/{pid}/materials", json=[{"key": "beton:yok", "unit_price": 5}]).status_code == 400
+
+    cost = client.get(f"/api/projects/{pid}/cost").json()["cost"]
+    col = next(l for l in cost["lines"] if l["key"] == "beton:column")
+    slab = next(l for l in cost["lines"] if l["key"] == "beton:slab")
+    assert col["unit_price"] == slab["unit_price"] == 4200 and col["brand"] == "Akçansa"
+    assert col["material_key"] == slab["material_key"] == "beton:c30_37"
+    assert next(m for m in cost["by_material"] if m["key"] == "beton:c30_37")["total"] > 0
+
+    # perde C40/50: ayrı ürün, fiyatı henüz girilmedi
+    client.patch(f"/api/projects/{pid}", json={"params": {"concrete_class_shear_wall": "C40/50"}})
+    mats2 = client.get(f"/api/projects/{pid}/materials").json()
+    assert "beton:c40_50" in {m["key"] for m in mats2}
+    cost2 = client.get(f"/api/projects/{pid}/cost").json()["cost"]
+    wall = next(l for l in cost2["lines"] if l["key"] == "beton:shear_wall")
+    assert wall["material_key"] == "beton:c40_50" and wall["unit_price"] == 0
+    assert "beton:c40_50" in cost2["missing_materials"]
+    assert next(l for l in cost2["lines"] if l["key"] == "beton:column")["unit_price"] == 4200
+
+    opts = client.get(f"/api/projects/{pid}/material-options").json()
+    assert "C40/50" in opts["concrete_classes"] and "shear_wall" in opts["concrete_types"]

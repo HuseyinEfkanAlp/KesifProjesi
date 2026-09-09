@@ -96,3 +96,18 @@ class PriceItem(SQLModel, table=True):
     hours_per_unit: float = 0.0     # işçilik süresi: adam-saat / birim
     crew_size: float = 0.0          # bu kalemde aynı anda çalışan kişi sayısı (0 = genel satırdan / 1)
     set_fields: list[str] = Field(default_factory=list, sa_column=Column(JSON))   # kullanıcının açıkça girdiği alanlar (0 dahil)
+
+
+class MaterialPrice(SQLModel, table=True):
+    """Ürün (malzeme) birim fiyatı: C30/37 hazır beton, Ø12 nervürlü demir, Ytong 20 cm…
+
+    Anahtar cost.materials.material_of ile üretilir; aynı ürünü kullanan bütün keşif kalemleri bu fiyattan
+    hesaplanır. İşçilik fiyatı kalemin kendi satırındadır (PriceItem)."""
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    key: str                        # ürün anahtarı (beton:c30_37, demir:o12, duvar:ytong:20…)
+    name: str
+    unit: str
+    unit_price: float = 0.0         # ₺ / birim (KDV hariç)
+    brand: str = ""                 # tercih edilen marka / tedarikçi
+    note: str = ""

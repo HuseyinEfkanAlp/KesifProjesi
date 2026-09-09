@@ -50,6 +50,16 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "cable_waste_pct": 5.0,       # kablo fire %
     "tray_waste_pct": 5.0,
     "work_hours_per_day": 8.0,    # süre hesabı: günlük çalışma saati
+    # malzeme (ürün) seçimi — malzeme fiyatı ürüne girilir (bkz. cost/materials.py)
+    "concrete_class": "C30/37",       # projenin genel beton sınıfı
+    "concrete_class_foundation": "",  # eleman tipine özel sınıf (boş -> genel sınıf)
+    "concrete_class_column": "",
+    "concrete_class_shear_wall": "",
+    "concrete_class_beam": "",
+    "concrete_class_slab": "",
+    "lean_concrete_class": "C16/20",  # grobeton sınıfı
+    "rebar_grade": "B420C",           # donatı çeliği sınıfı (ürün adında görünür)
+    "formwork_material": "plywood",   # kalıp malzemesi: plywood / ahsap / celik / tunel
     # sarf / fire (statik)
     "concrete_waste_pct": 3.0,    # beton fire %
     "rebar_waste_pct": 3.0,       # demir fire % (yalnız kesim artığı; bindirme poz boylarında zaten var)

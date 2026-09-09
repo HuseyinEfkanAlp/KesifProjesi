@@ -1,4 +1,4 @@
-import type { Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, LayerCheck, PlanCheck, PlanLevel, PlanType, PriceIn, PriceItem, Project, ProjectSystems, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
+import type { Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, LayerCheck, MaterialIn, MaterialOptions, MaterialPrice, PlanCheck, PlanLevel, PlanType, PriceIn, PriceItem, Project, ProjectSystems, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
@@ -103,6 +103,12 @@ export const Api = {
     list: (pid: number) => request<PriceItem[]>(`/api/projects/${pid}/prices`),
     save: (pid: number, items: PriceIn[]) =>
       request<PriceItem[]>(`/api/projects/${pid}/prices`, { method: 'PUT', body: json(items) }),
+  },
+  materials: {
+    list: (pid: number) => request<MaterialPrice[]>(`/api/projects/${pid}/materials`),
+    save: (pid: number, items: MaterialIn[]) =>
+      request<MaterialPrice[]>(`/api/projects/${pid}/materials`, { method: 'PUT', body: json(items) }),
+    options: (pid: number) => request<MaterialOptions>(`/api/projects/${pid}/material-options`),
   },
   cost: {
     get: (pid: number) => request<{ summary: QuantitySummary; boq: Boq; cost: CostResult }>(`/api/projects/${pid}/cost`),

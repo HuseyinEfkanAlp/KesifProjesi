@@ -29,6 +29,11 @@ const SARF_FIELDS: Array<{ key: keyof ProjectParams; label: string; step: string
   { key: 'nails_kg_per_m2', label: 'Çivi / aksesuar (kg / m²)', step: '0.01', hint: '' },
 ]
 
+/** Sayıya çevrilmeyen (metin) proje parametreleri; ürün seçimi Birim Fiyatlar sayfasından yapılır */
+const STRING_PARAMS = ['facade_system', 'roof_system', 'derived_off', 'finish_rooms', 'concrete_class', 'lean_concrete_class',
+  'rebar_grade', 'formwork_material', 'concrete_class_foundation', 'concrete_class_column', 'concrete_class_shear_wall',
+  'concrete_class_beam', 'concrete_class_slab']
+
 export default function ProjectDetail() {
   const id = Number(useParams().id)
   const [project, setProject] = useState<Project | null>(null)
@@ -70,7 +75,7 @@ export default function ProjectDetail() {
     setBusy(true); setError('')
     try {
       const cleaned: Record<string, number | null> = {}
-      for (const [k, v] of Object.entries(dparams)) cleaned[k] = v === '' ? null : (['facade_system', 'roof_system', 'derived_off', 'finish_rooms'].includes(k) ? (v as unknown as number) : +v)
+      for (const [k, v] of Object.entries(dparams)) cleaned[k] = v === '' ? null : (STRING_PARAMS.includes(k) ? (v as unknown as number) : +v)
       await Api.projects.patch(id, { ...params, rebar_ratios: ratios, params: cleaned as unknown as ProjectParams })
       await load()
     } catch (err) { setError((err as Error).message) } finally { setBusy(false) }

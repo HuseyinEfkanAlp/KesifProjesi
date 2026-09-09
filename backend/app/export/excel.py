@@ -126,19 +126,37 @@ def build_workbook(project: dict, lines: list[QuantityLine], summary: dict, cost
         _autosize(ws2)
 
     # ---- Birim fiyatlar: malzeme ve işçilik ayrı sayfalarda ----
+    # ürün bazında: C30/37 beton, Ø12 demir, Ytong 20 cm… (aynı ürünü kullanan kalemler tek satırda)
     wsm = wb.create_sheet("Malzeme Fiyatları")
-    _header(wsm, 1, ["İş Grubu", "Poz", "Tür", "Kalem", "Birim", "Miktar", "Marka", "Malzeme (₺/birim)", "Malzeme Tutarı (₺)", "Kaynak"])
+    _header(wsm, 1, ["Ürün", "Birim", "Miktar", "Marka", "Birim Fiyat (₺)", "Tutar (₺)", "Kalem Sayısı", "Kullanan Kalemler"])
+    used: dict[str, list[str]] = {}
     for l in cost["lines"]:
-        wsm.append([l.get("work_group_label", ""), l.get("poz", ""), l["kind_label"], l["group_label"], l["unit"], l["quantity"],
-                    l.get("brand", ""), l["unit_price"], l.get("material_total", 0.0), l["price_source"]])
+        if l.get("material_key"):
+            used.setdefault(l["material_key"], []).append(l["group_label"])
+    for m in cost.get("by_material", []):
+        names = used.get(m["key"], [])
+        wsm.append([m["name"], m["unit"], m["quantity"], m.get("brand", ""), m["unit_price"], m["total"], m["lines"],
+                    "; ".join(names[:12]) + (f" (+{len(names) - 12})" if len(names) > 12 else "")])
     wsm.append([])
-    wsm.cell(row=wsm.max_row + 1, column=8, value="Malzeme ara toplam").font = BOLD
-    wsm.cell(row=wsm.max_row, column=9, value=cost.get("material_subtotal", 0.0)).font = BOLD
-    for row in wsm.iter_rows(min_row=2, min_col=8, max_col=9):
+    wsm.cell(row=wsm.max_row + 1, column=5, value="Malzeme ara toplam").font = BOLD
+    wsm.cell(row=wsm.max_row, column=6, value=cost.get("material_subtotal", 0.0)).font = BOLD
+    for row in wsm.iter_rows(min_row=2, min_col=5, max_col=6):
         for c in row:
             if isinstance(c.value, (int, float)):
                 c.number_format = MONEY
     _autosize(wsm)
+
+    # kalem bazında malzeme dökümü (hangi kalem hangi üründen fiyatlandı)
+    wsd = wb.create_sheet("Malzeme Dökümü")
+    _header(wsd, 1, ["İş Grubu", "Poz", "Tür", "Kalem", "Birim", "Miktar", "Ürün", "Marka", "Birim Fiyat (₺)", "Tutar (₺)", "Kaynak"])
+    for l in cost["lines"]:
+        wsd.append([l.get("work_group_label", ""), l.get("poz", ""), l["kind_label"], l["group_label"], l["unit"], l["quantity"],
+                    l.get("material_name", ""), l.get("brand", ""), l["unit_price"], l.get("material_total", 0.0), l["price_source"]])
+    for row in wsd.iter_rows(min_row=2, min_col=9, max_col=10):
+        for c in row:
+            if isinstance(c.value, (int, float)):
+                c.number_format = MONEY
+    _autosize(wsd)
 
     wsl = wb.create_sheet("İşçilik Fiyatları")
     _header(wsl, 1, ["İş Grubu", "Poz", "Tür", "Kalem", "Birim", "Miktar", "İşçilik (₺/birim)", "İşçilik Tutarı (₺)",
@@ -158,11 +176,11 @@ def build_workbook(project: dict, lines: list[QuantityLine], summary: dict, cost
 
     # ---- Maliyet ve Süre ----
     ws3 = wb.create_sheet("Maliyet")
-    _header(ws3, 1, ["Disiplin", "Tür", "Kalem", "Marka", "Birim", "Miktar", "Malzeme (₺/birim)", "İşçilik (₺/birim)",
+    _header(ws3, 1, ["Disiplin", "Tür", "Kalem", "Ürün", "Birim", "Miktar", "Malzeme (₺/birim)", "İşçilik (₺/birim)",
                      "Malzeme Tutarı (₺)", "İşçilik Tutarı (₺)", "Toplam (₺)", "Adam-saat/birim", "Ekip", "Süre (gün)",
                      "Fiyat Kaynağı"])
     for l in cost["lines"]:
-        ws3.append([l["discipline_label"], l["kind_label"], l["group_label"], l.get("brand", ""), l["unit"], l["quantity"],
+        ws3.append([l["discipline_label"], l["kind_label"], l["group_label"], l.get("material_name", ""), l["unit"], l["quantity"],
                     l["unit_price"], l.get("labor_price", 0.0), l.get("material_total", 0.0), l.get("labor_total", 0.0),
                     l["total"], l.get("hours_per_unit", 0.0), l.get("crew_size", 1.0), l.get("days", 0.0),
                     l["price_source"]])

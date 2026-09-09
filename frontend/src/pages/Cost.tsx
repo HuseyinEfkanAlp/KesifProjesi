@@ -20,6 +20,8 @@ export default function Cost() {
   if (!project || !cost) return <Loading error={error} />
   const money = (v: number) => fmt(v) + ' ₺'
   const dur = cost.duration
+  const priced = cost.by_material.filter((m) => m.unit_price > 0)
+  const unpriced = cost.by_material.filter((m) => m.unit_price <= 0)
 
   return (
     <>
@@ -37,7 +39,7 @@ export default function Cost() {
       </div>
       {(cost.missing_prices.length > 0 || dur.missing_rates.length > 0) && (
         <div className="warn">
-          {cost.missing_prices.length > 0 && <div>Malzeme fiyatı girilmemiş {cost.missing_prices.length} kalem toplama 0 olarak girdi. </div>}
+          {cost.missing_materials.length > 0 && <div>Fiyatı girilmemiş {cost.missing_materials.length} ürün var; bunları kullanan {cost.missing_prices.length} kalem toplama 0 olarak girdi. </div>}
           {cost.missing_labor.length > 0 && <div>İşçilik fiyatı girilmemiş {cost.missing_labor.length} kalem var. </div>}
           {dur.missing_rates.length > 0 && <div>Adam-saat girilmemiş {dur.missing_rates.length} kalem süreye katılmadı. </div>}
           <Link to={`/projects/${pid}/prices`}>Birim fiyatlara git</Link>
@@ -78,6 +80,42 @@ export default function Cost() {
       </div>
 
       <div className="panel">
+        <h3>Malzeme (ürün bazında)</h3>
+        <table>
+          <thead><tr><th>Ürün</th><th>Marka</th><th className="num">Miktar</th><th>Birim</th><th className="num">₺ / birim</th><th className="num">Tutar</th><th className="num">Kalem</th></tr></thead>
+          <tbody>
+            {priced.map((m) => (
+              <tr key={m.key}>
+                <td>{m.name}</td><td className="muted">{m.brand || '-'}</td>
+                <td className="num">{fmt(m.quantity, m.unit === 'adet' || m.unit === 'kg' ? 0 : 2)}</td><td>{m.unit}</td>
+                <td className="num">{fmt(m.unit_price)}</td>
+                <td className="num"><b>{money(m.total)}</b></td><td className="num muted">{m.lines}</td>
+              </tr>
+            ))}
+            {priced.length === 0 && <tr><td colSpan={7} className="muted">Henüz ürün fiyatı girilmedi.</td></tr>}
+            <tr className="total"><td colSpan={5}>MALZEME TOPLAM</td><td className="num">{money(cost.material_subtotal)}</td><td></td></tr>
+          </tbody>
+        </table>
+        {unpriced.length > 0 && (
+          <details style={{ marginTop: 8 }}>
+            <summary className="error">Fiyatı girilmemiş {unpriced.length} ürün (toplama 0 girdi)</summary>
+            <table style={{ marginTop: 8 }}>
+              <thead><tr><th>Ürün</th><th className="num">Miktar</th><th>Birim</th><th className="num">Kalem</th></tr></thead>
+              <tbody>
+                {unpriced.map((m) => (
+                  <tr key={m.key}>
+                    <td>{m.name}</td><td className="num">{fmt(m.quantity, m.unit === 'adet' || m.unit === 'kg' ? 0 : 2)}</td>
+                    <td>{m.unit}</td><td className="num muted">{m.lines}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        )}
+        <p className="muted">Aynı ürünü kullanan bütün kalemler tek fiyattan hesaplanır. Ürün seçimi ve fiyatlar Birim Fiyatlar sayfasında.</p>
+      </div>
+
+      <div className="panel">
         <div className="row between">
           <h3>Maliyet kalemleri</h3>
           <a className="btn" href={Api.cost.excelUrl(pid)}>Excel indir (keşif + maliyet)</a>
@@ -86,7 +124,7 @@ export default function Cost() {
           <table>
             <thead>
               <tr>
-                <th>İş grubu</th><th>Poz</th><th>Tür</th><th>Kalem</th><th>Marka</th><th className="num">Miktar</th><th>Birim</th>
+                <th>İş grubu</th><th>Poz</th><th>Tür</th><th>Kalem</th><th>Ürün (malzeme)</th><th className="num">Miktar</th><th>Birim</th>
                 <th className="num">Malzeme ₺/birim</th><th className="num">İşçilik ₺/birim</th>
                 <th className="num">Malzeme</th><th className="num">İşçilik</th><th className="num">Toplam</th>
                 <th className="num">Süre (gün)</th><th>Kaynak</th>
@@ -97,7 +135,8 @@ export default function Cost() {
                 <tr key={l.key}>
                   <td>{l.work_group_label}{l.recipe ? <span className="badge recipe" style={{ marginLeft: 6 }}>reçete</span> : null}</td>
                   <td className="mono">{l.poz || <span className="muted">-</span>}</td>
-                  <td>{l.kind_label}</td><td>{l.group_label}</td><td className="muted">{l.brand || '-'}</td>
+                  <td>{l.kind_label}</td><td>{l.group_label}</td>
+                  <td className="muted">{l.material_name || '-'}{l.brand ? ` · ${l.brand}` : ''}</td>
                   <td className="num">{fmt(l.quantity, l.unit === 'kg' || l.unit === 'adet' ? 0 : 2)}</td><td>{l.unit}</td>
                   <td className="num">{fmt(l.unit_price)}</td><td className="num">{fmt(l.labor_price)}</td>
                   <td className="num">{money(l.material_total)}</td><td className="num">{money(l.labor_total)}</td>

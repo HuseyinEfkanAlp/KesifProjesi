@@ -2,6 +2,7 @@ import pytest
 from openpyxl import load_workbook
 from io import BytesIO
 
+from app.cost.materials import MaterialData, material_lines
 from app.cost.pricing import PriceItem, compute_cost, default_price_items
 from app.export.excel import build_workbook
 from app.parser.analyzer import analyze_file
@@ -67,19 +68,33 @@ def test_end_to_end_storey(storey_dxf):
     items = structural_items(s)
     prices = default_price_items(items)
     assert any(pi.key == "beton:column" for pi in prices)
-    cost = compute_cost(items, [PriceItem("beton:*", "Beton", "m³", 4000), PriceItem("beton:column", "Beton kolon", "m³", 4500),
-                                PriceItem("demir:*", "Demir", "kg", 30)], vat_rate=0.2)
+
+    # malzeme fiyatı ürüne girilir: perde C40/50, geri kalan C30/37 — kolon ve döşeme aynı üründen fiyatlanır
+    params = {"concrete_class": "C30/37", "concrete_class_shear_wall": "C40/50"}
+    mats = {ln.key: ln for ln in material_lines(items, params)}
+    assert {"beton:c30_37", "beton:c40_50", "demir:karisik", "kalip:plywood"} <= set(mats)
+    assert {i["key"] for i in mats["beton:c30_37"].items} >= {"beton:column", "beton:slab", "beton:beam"}
+    assert [i["key"] for i in mats["beton:c40_50"].items] == ["beton:shear_wall"]
+    cost = compute_cost(items, [], vat_rate=0.2, params=params, materials=[
+        MaterialData("beton:c30_37", "Hazır beton C30/37", "m³", 4000),
+        MaterialData("beton:c40_50", "Hazır beton C40/50", "m³", 4500, brand="Akçansa"),
+        MaterialData("demir:karisik", "Nervürlü inşaat demiri", "kg", 30)])
     col_line = next(l for l in cost["lines"] if l["key"] == "beton:column")
-    assert col_line["unit_price"] == 4500 and col_line["price_source"] == "özel"
+    assert col_line["unit_price"] == 4000 and col_line["price_source"] == "ürün" and col_line["material_key"] == "beton:c30_37"
     slab_line = next(l for l in cost["lines"] if l["key"] == "beton:slab")
-    assert slab_line["unit_price"] == 4000 and slab_line["price_source"] == "genel"
-    assert all(l["unit_price"] == 0 for l in cost["lines"] if l["kind"] == "kalip")
+    assert slab_line["unit_price"] == 4000 and slab_line["material_key"] == "beton:c30_37"
+    wall_line = next(l for l in cost["lines"] if l["key"] == "beton:shear_wall")
+    assert wall_line["unit_price"] == 4500 and wall_line["brand"] == "Akçansa"
+    assert all(l["unit_price"] == 0 for l in cost["lines"] if l["kind"] == "kalip")   # kalıp malzemesi fiyatlanmadı
+    c30 = next(m for m in cost["by_material"] if m["key"] == "beton:c30_37")
+    same = [l["quantity"] for l in cost["lines"] if l["material_key"] == "beton:c30_37"]
+    assert len(same) >= 4 and c30["quantity"] == pytest.approx(sum(same), abs=0.01)   # kolon + kiriş + döşeme + fire
     assert cost["grand_total"] == pytest.approx(cost["subtotal"] * 1.2, abs=0.05)
 
     xlsx = build_workbook({"name": "Test", "storey_height": 3.0, "slab_thickness": 0.15}, lines, s, cost,
                           boq=[i.to_dict() for i in items])
     wb = load_workbook(BytesIO(xlsx))
-    assert wb.sheetnames == ["Keşif", "Statik Özet", "Kat Bazında", "Eleman Metrajı", "Malzeme Fiyatları", "İşçilik Fiyatları", "Maliyet"]
+    assert wb.sheetnames == ["Keşif", "Statik Özet", "Kat Bazında", "Eleman Metrajı", "Malzeme Fiyatları", "Malzeme Dökümü", "İşçilik Fiyatları", "Maliyet"]
     assert wb["Eleman Metrajı"].max_row == 1 + len(lines)
     assert wb["Keşif"].max_row >= 4 + len(items) + 3      # kalemler + tür toplamları bloğu
     assert any(c.value == "TÜR TOPLAMLARI" for row in wb["Keşif"].iter_rows(min_col=1, max_col=1) for c in row)

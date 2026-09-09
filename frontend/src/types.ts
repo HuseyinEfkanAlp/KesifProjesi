@@ -108,6 +108,20 @@ export interface ProjectParams {
   lean_concrete_cm: number
   /** kapatılan türetme kuralları (virgülle) */
   derived_off: string
+  /** projenin genel beton sınıfı (C30/37); malzeme fiyatı bu ürüne girilir */
+  concrete_class: string
+  /** eleman tipine özel beton sınıfı (boş: genel sınıf) */
+  concrete_class_foundation: string
+  concrete_class_column: string
+  concrete_class_shear_wall: string
+  concrete_class_beam: string
+  concrete_class_slab: string
+  /** grobeton sınıfı (C16/20) */
+  lean_concrete_class: string
+  /** donatı çeliği sınıfı (B420C) */
+  rebar_grade: string
+  /** kalıp malzemesi: plywood / ahsap / celik / tunel */
+  formwork_material: string
 }
 
 export interface Project {
@@ -562,6 +576,9 @@ export interface CostLine {
   unit: string
   quantity: number
   brand: string
+  /** kalemin kullandığı ürün (malzeme fiyatı buradan gelir); boş: salt işçilik kalemi */
+  material_key: string
+  material_name: string
   unit_price: number
   labor_price: number
   material_total: number
@@ -575,6 +592,40 @@ export interface CostLine {
   days: number
 }
 
+/** Ürün (malzeme) fiyat satırı: malzeme fiyatı eleman türüne değil ürüne girilir (C30/37 beton, Ø12 demir…) */
+export interface MaterialPrice {
+  id: number
+  key: string
+  name: string
+  unit: string
+  unit_price: number
+  brand: string
+  note: string
+  kind: string
+  kind_label: string
+  work_group: string
+  work_group_label: string
+  quantity: number
+  /** bu ürünü kullanan keşif kalemleri */
+  items: { key: string; label: string; quantity: number }[]
+  in_boq: boolean
+}
+
+export interface MaterialIn {
+  key: string
+  unit_price?: number
+  brand?: string
+  note?: string
+}
+
+/** Malzeme seçim listeleri (beton sınıfı, donatı sınıfı, kalıp malzemesi) */
+export interface MaterialOptions {
+  concrete_classes: string[]
+  concrete_types: Record<string, string>
+  rebar_grades: string[]
+  formwork_materials: Record<string, string>
+}
+
 export interface CostResult {
   lines: CostLine[]
   material_subtotal: number
@@ -584,10 +635,14 @@ export interface CostResult {
   vat: number
   grand_total: number
   by_kind: Record<string, number>
+  /** ürün bazında malzeme toplamı */
+  by_material: { key: string; name: string; unit: string; brand: string; unit_price: number; quantity: number; total: number; lines: number }[]
   by_discipline: { discipline: string; label: string; material: number; labor: number; total: number; hours: number; days: number }[]
   /** İş grubu bazında (kaba yapı, ince işler, mekanik, elektrik, altyapı) */
   by_group: { group: string; label: string; material: number; labor: number; total: number; hours: number; days: number; lines: number }[]
   missing_prices: string[]
+  /** fiyatı girilmemiş ürün anahtarları */
+  missing_materials: string[]
   missing_labor: string[]
   duration: { hours_per_day: number; total_hours: number; sequential_days: number; parallel_days: number; missing_rates: string[] }
 }
