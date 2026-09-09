@@ -1,34 +1,6 @@
 import os
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlmodel import SQLModel, create_engine
-from sqlmodel.pool import StaticPool
-
-
-@pytest.fixture()
-def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("KESIF_DATA_DIR", str(tmp_path / "data"))
-    import importlib
-
-    from app import db as dbmod
-    importlib.reload(dbmod)
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    dbmod.engine = engine
-    from app import main as mainmod
-    importlib.reload(mainmod)
-    from app import models  # noqa: F401
-    SQLModel.metadata.create_all(engine)
-
-    from sqlmodel import Session
-
-    def _get_session():
-        with Session(engine) as s:
-            yield s
-
-    mainmod.app.dependency_overrides[dbmod.get_session] = _get_session
-    with TestClient(mainmod.app) as c:
-        yield c
 
 
 def test_full_flow(client, storey_dxf, foundation_dxf):

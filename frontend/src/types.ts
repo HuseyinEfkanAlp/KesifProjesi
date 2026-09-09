@@ -626,6 +626,85 @@ export interface MaterialOptions {
   formwork_materials: Record<string, string>
 }
 
+/** Tedarikçi / taşeron (fiyat bankası) */
+export interface Supplier {
+  id: number
+  name: string
+  contact: string
+  phone: string
+  email: string
+  note: string
+  created_at: string
+  price_count?: number
+}
+
+/** Fiyat bankasında bir ürünün bir tedarikçideki fiyat satırı */
+export interface PriceBookRow {
+  id: number
+  scope: 'material' | 'labor'
+  key: string
+  name: string
+  unit: string
+  supplier_id: number | null
+  supplier_name: string
+  unit_price: number
+  labor_price: number
+  hours_per_unit: number
+  crew_size: number
+  brand: string
+  note: string
+  preferred: boolean
+  updated_at: string
+}
+
+/** Fiyat girilebilecek ürün (ya da işçilik kalem türü) ve teklifleri */
+export interface PriceBookProduct {
+  key: string
+  name: string
+  unit: string
+  discipline: string
+  discipline_label: string
+  work_group: string
+  work_group_label: string
+  rows: PriceBookRow[]
+  /** geçerli fiyat: seçili satır, yoksa en düşük */
+  price: number
+  brand: string
+  supplier_name: string
+  hours_per_unit: number
+  crew_size: number
+  /** bu ürün projelerde geçiyor mu */
+  in_projects: boolean
+}
+
+export interface PriceBook {
+  scope: 'material' | 'labor'
+  products: PriceBookProduct[]
+  suppliers: Supplier[]
+}
+
+export interface PriceBookIn {
+  key: string
+  scope?: 'material' | 'labor'
+  id?: number
+  supplier_id?: number | null
+  unit_price?: number
+  labor_price?: number
+  hours_per_unit?: number
+  crew_size?: number
+  brand?: string
+  note?: string
+  preferred?: boolean
+}
+
+export interface SupplierIn {
+  name: string
+  contact?: string
+  phone?: string
+  email?: string
+  note?: string
+}
+
 export interface CostResult {
   lines: CostLine[]
   material_subtotal: number

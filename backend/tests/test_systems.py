@@ -6,7 +6,6 @@ from app.parser.detectors.standard import suggest_item
 from app.parser.layer_profile import LayerProfile
 from app.parser.materials import merge_materials, scan_texts
 from app.standard.catalog import Catalog, normalize_components
-from tests.test_api import client  # noqa: F401
 
 
 def test_catalog_components():

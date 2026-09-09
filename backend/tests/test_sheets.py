@@ -7,7 +7,6 @@ import pytest
 from app.parser.analyzer import analyze_file
 from app.parser.sheets import crop_sheets, scan_sheets
 from tests.fixtures.make_dxf import _rect
-from tests.test_api import client  # noqa: F401  (API test istemcisi fikstürü)
 
 FRAME_W, FRAME_H = 2000, 1400          # pafta çerçevesi (cm)
 

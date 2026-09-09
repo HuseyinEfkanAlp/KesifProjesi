@@ -7,7 +7,6 @@ from app.parser.levels import floor_rank
 from app.parser.sheets import scan_sheets
 from app.planset import classify_title, resolve_plan
 from app.standard.catalog import Catalog
-from tests.test_api import client  # noqa: F401
 
 
 def _ksf_sta_dxf(path):

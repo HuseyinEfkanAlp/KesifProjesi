@@ -11,7 +11,9 @@ from ..models import MaterialPrice, PriceItem
 from ..parser.layer_profile import DISCIPLINES
 from ..quantity.boq import KIND_META, WORK_GROUPS
 from ..standard.rules import work_group_of
-from ..services import ensure_material_prices, ensure_price_items, load_catalog, project_boq, project_params
+from ..cost.pricebook import lookup as book_lookup
+from ..services import (ensure_material_prices, ensure_price_items, load_catalog, price_book, project_boq,
+                        project_params)
 from .projects import get_project
 
 router = APIRouter(prefix="/api/projects", tags=["prices"])
@@ -164,3 +166,38 @@ def material_options(project_id: int, session: Session = Depends(get_session)):
     get_project(project_id, session)
     return {"concrete_classes": CONCRETE_CLASSES, "concrete_types": CONCRETE_TYPES,
             "rebar_grades": REBAR_GRADES, "formwork_materials": FORMWORK_MATERIALS}
+
+
+@router.post("/{project_id}/apply-pricebook")
+def apply_pricebook(project_id: int, overwrite: bool = False, session: Session = Depends(get_session)):
+    """Fiyat bankasındaki güncel fiyatları bu projeye uygular.
+
+    overwrite=false: yalnız boş (0) satırlar doldurulur. overwrite=true: girilmiş fiyatların üzerine de yazılır."""
+    p = get_project(project_id, session)
+    items = project_boq(p, session)
+    mat_book, lab_book = price_book(session, "material"), price_book(session, "labor")
+    n_mat = n_lab = 0
+    for m in ensure_material_prices(p, items, session):
+        row = book_lookup(mat_book, m.key)
+        if row is None or not (row.unit_price or 0) > 0:
+            continue
+        if overwrite or not (m.unit_price or 0) > 0:
+            m.unit_price = float(row.unit_price)
+            m.brand = row.brand or m.brand
+            session.add(m)
+            n_mat += 1
+    for it in ensure_price_items(p, items, session):
+        row = book_lookup(lab_book, it.key) if it.key.endswith(":*") else None    # yalnız türün genel satırı
+        if row is None:
+            continue
+        touched = False
+        for f in ("labor_price", "hours_per_unit", "crew_size"):
+            v = float(getattr(row, f) or 0.0)
+            if v > 0 and (overwrite or not (getattr(it, f) or 0) > 0):
+                setattr(it, f, v)
+                touched = True
+        if touched:
+            session.add(it)
+            n_lab += 1
+    session.commit()
+    return {"materials": n_mat, "labor": n_lab, "overwrite": overwrite}

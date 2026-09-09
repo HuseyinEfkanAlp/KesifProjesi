@@ -5,7 +5,6 @@ import ezdxf
 import pytest
 
 from app.parser.analyzer import analyze_file
-from tests.test_api import client  # noqa: F401  (API istemcisi fikstürü)
 from app.quantity.boq import architectural_items, boq_summary, structural_items
 from app.standard.catalog import Catalog
 from app.standard.rules import WALL_OPENING_MIN_M2, default_poz, work_group_of

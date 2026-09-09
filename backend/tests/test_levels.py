@@ -2,7 +2,6 @@
 import pytest
 
 from app.parser.levels import floor_levels, floor_rank, kot_from_label, parse_levels
-from tests.test_api import client  # noqa: F401
 
 
 def test_parse_levels_two_systems():

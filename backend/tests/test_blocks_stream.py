@@ -9,7 +9,6 @@ from app.parser.analyzer import analyze_file
 from app.parser.schedules import parse_schedule, parse_schedule_text
 from app.parser.sheets import crop_sheets, scan_sheets
 from tests.fixtures.make_dxf import make_block_plan_dxf
-from tests.test_api import client  # noqa: F401
 
 
 @pytest.fixture(scope="module")

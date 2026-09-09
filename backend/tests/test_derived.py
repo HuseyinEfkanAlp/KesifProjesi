@@ -7,7 +7,6 @@ import pytest
 
 from app.parser.sheets import boxes_from_titles, scan_sheets
 from tests.fixtures.make_dxf import _rect
-from tests.test_api import client  # noqa: F401
 
 
 def test_boxes_from_titles(tmp_path):

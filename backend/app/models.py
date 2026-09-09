@@ -111,3 +111,35 @@ class MaterialPrice(SQLModel, table=True):
     unit_price: float = 0.0         # ₺ / birim (KDV hariç)
     brand: str = ""                 # tercih edilen marka / tedarikçi
     note: str = ""
+
+
+class Supplier(SQLModel, table=True):
+    """Tedarikçi / taşeron: fiyat bankasındaki satırlar buna bağlanır."""
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    contact: str = ""               # yetkili kişi
+    phone: str = ""
+    email: str = ""
+    note: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PriceBookItem(SQLModel, table=True):
+    """Proje bağımsız fiyat bankası satırı: bir ürünün (ya da işçilik kaleminin) bir tedarikçideki fiyatı.
+
+    Aynı ürün için birden çok tedarikçi satırı olabilir; geçerli fiyat `preferred` işaretli satır, yoksa en
+    düşük pozitif fiyattır. Yeni projede ürün ve işçilik satırları bu bankadan doldurulur."""
+    id: int | None = Field(default=None, primary_key=True)
+    scope: str = "material"         # material (ürün fiyatı) | labor (işçilik fiyatı, anahtar "<tür>:*")
+    key: str = Field(index=True)    # ürün anahtarı: beton:c30_37, demir:o12, duvar_ytong:*
+    name: str = ""
+    unit: str = ""
+    supplier_id: int | None = Field(default=None, foreign_key="supplier.id", index=True)
+    unit_price: float = 0.0         # malzeme ₺/birim (KDV hariç)
+    labor_price: float = 0.0        # işçilik ₺/birim
+    hours_per_unit: float = 0.0     # adam-saat / birim
+    crew_size: float = 0.0
+    brand: str = ""
+    note: str = ""
+    preferred: bool = False         # aynı anahtarın satırları arasında seçili olan
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

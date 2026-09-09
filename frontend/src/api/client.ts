@@ -1,4 +1,4 @@
-import type { Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, LayerCheck, MaterialIn, MaterialOptions, MaterialPrice, PlanCheck, PlanLevel, PlanType, PriceIn, PriceItem, Project, ProjectSystems, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
+import type { Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, LayerCheck, MaterialIn, MaterialOptions, MaterialPrice, PlanCheck, PlanLevel, PlanType, PriceBook, PriceBookIn, PriceIn, PriceItem, Project, ProjectSystems, Supplier, SupplierIn, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
@@ -109,6 +109,20 @@ export const Api = {
     save: (pid: number, items: MaterialIn[]) =>
       request<MaterialPrice[]>(`/api/projects/${pid}/materials`, { method: 'PUT', body: json(items) }),
     options: (pid: number) => request<MaterialOptions>(`/api/projects/${pid}/material-options`),
+  },
+  pricebook: {
+    get: (scope: 'material' | 'labor' = 'material') => request<PriceBook>(`/api/pricebook?scope=${scope}`),
+    save: (rows: PriceBookIn[]) => request<PriceBook>('/api/pricebook', { method: 'PUT', body: json(rows) }),
+    remove: (rowId: number) => request<void>(`/api/pricebook/${rowId}`, { method: 'DELETE' }),
+    /** bankadaki güncel fiyatları bir projeye uygula */
+    applyTo: (pid: number, overwrite = false) =>
+      request<{ materials: number; labor: number }>(`/api/projects/${pid}/apply-pricebook?overwrite=${overwrite}`, { method: 'POST' }),
+  },
+  suppliers: {
+    list: () => request<Supplier[]>('/api/suppliers'),
+    create: (body: SupplierIn) => request<Supplier>('/api/suppliers', { method: 'POST', body: json(body) }),
+    update: (id: number, body: SupplierIn) => request<Supplier>(`/api/suppliers/${id}`, { method: 'PATCH', body: json(body) }),
+    remove: (id: number) => request<void>(`/api/suppliers/${id}`, { method: 'DELETE' }),
   },
   cost: {
     get: (pid: number) => request<{ summary: QuantitySummary; boq: Boq; cost: CostResult }>(`/api/projects/${pid}/cost`),

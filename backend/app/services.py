@@ -7,8 +7,9 @@ from datetime import datetime
 from sqlmodel import Session, select
 
 from .cost.materials import MaterialData, material_lines
+from .cost.pricebook import lookup as book_lookup
 from .cost.pricing import PriceItem as PriceData, compute_cost, default_price_items
-from .models import Drawing, Element, MaterialPrice, PriceItem, Project
+from .models import Drawing, Element, MaterialPrice, PriceBookItem, PriceItem, Project
 from .parser.analyzer import analyze_file
 from .parser.detectors.base import DetectParams
 from .db import DATA_DIR
@@ -987,14 +988,38 @@ def project_systems(project: Project, session: Session, catalog: Catalog | None 
             "checklist": checklist}
 
 
+def price_book(session: Session, scope: str) -> dict[str, list[PriceBookItem]]:
+    """Fiyat bankası satırları anahtara göre (proje bağımsız; bkz. cost/pricebook.py)."""
+    out: dict[str, list[PriceBookItem]] = {}
+    for r in session.exec(select(PriceBookItem).where(PriceBookItem.scope == scope)).all():
+        out.setdefault(r.key, []).append(r)
+    return out
+
+
 def ensure_price_items(project: Project, items: list[BoqItem], session: Session) -> list[PriceItem]:
+    """Keşifteki her kalem için işçilik satırı; girilmemiş değerler fiyat bankasından doldurulur."""
     existing = {p.key: p for p in session.exec(select(PriceItem).where(PriceItem.project_id == project.id))}
+    book = price_book(session, "labor")
+    changed = False
     for d in default_price_items(items):
-        if d.key not in existing:
+        item = existing.get(d.key)
+        if item is None:
             item = PriceItem(project_id=project.id, key=d.key, name=d.name, unit=d.unit)
-            session.add(item)
             existing[d.key] = item
-    session.commit()
+            changed = True
+        # banka değerleri türün genel satırına yazılır; kaleme özel satırlar boş kalıp genel satırdan devralır
+        row = book_lookup(book, d.key) if d.key.endswith(":*") else None
+        if row is None:
+            session.add(item)
+            continue
+        for f in ("labor_price", "hours_per_unit", "crew_size"):
+            # kullanıcının açıkça girdiği (0 dahil) değere dokunulmaz; boş kalanlar bankadan gelir
+            if not (getattr(item, f) or 0) > 0 and f not in (item.set_fields or []) and (getattr(row, f) or 0) > 0:
+                setattr(item, f, float(getattr(row, f)))
+                changed = True
+        session.add(item)
+    if changed:
+        session.commit()
     order = {k: i for i, k in enumerate(KIND_ORDER)}
     return sorted(existing.values(), key=lambda p: (order.get(p.key.split(":")[0], 99), "*" not in p.key, p.name))
 
@@ -1008,6 +1033,7 @@ def ensure_material_prices(project: Project, items: list[BoqItem], session: Sess
     params = project_params(project)
     existing = {m.key: m for m in session.exec(select(MaterialPrice).where(MaterialPrice.project_id == project.id))}
     old = {p.key: p for p in session.exec(select(PriceItem).where(PriceItem.project_id == project.id))}
+    book = price_book(session, "material")
     lines = material_lines(items, params)
     changed = False
 
@@ -1034,6 +1060,10 @@ def ensure_material_prices(project: Project, items: list[BoqItem], session: Sess
             changed = True
         if not (m.unit_price or 0) > 0:
             price, brand = inherited(ln)
+            if price <= 0:
+                row = book_lookup(book, ln.key)      # fiyat bankası (proje bağımsız ürün fiyatları)
+                if row is not None and (row.unit_price or 0) > 0:
+                    price, brand = float(row.unit_price), (row.brand or "")
             if price > 0:
                 m.unit_price = price
                 m.brand = m.brand or brand

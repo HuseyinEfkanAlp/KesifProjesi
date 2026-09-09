@@ -8,7 +8,6 @@ from app.parser.detectors.standard import _label_text, suggest_item
 from app.parser.layer_profile import LayerProfile
 from app.quantity.boq import effective_params, standard_items
 from app.standard.catalog import Catalog
-from tests.test_api import client  # noqa: F401
 
 
 def test_label_text():

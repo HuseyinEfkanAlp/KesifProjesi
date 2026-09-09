@@ -106,6 +106,22 @@ Tarayıcı: http://127.0.0.1:5173  (API dokümantasyonu: http://127.0.0.1:8000/d
 6. **Maliyet**: ürün bazında malzeme tablosu + kalem tablosu (hangi kalem hangi üründen fiyatlandı), disiplin ve iş
    grubu toplamları, KDV, **süre** (disiplinler paralel / işler ardışık), Excel indir.
 
+### Fiyatlar ve tedarikçiler (bütün projeler için)
+
+Sol menüdeki **Fiyatlar ve tedarikçiler** sayfası proje bağımsız fiyat bankasıdır: bütün ürünlerin fiyatı bir kez
+buraya girilir, açılan her yeni projede ürün ve işçilik fiyatları kendiliğinden dolar.
+
+- **Malzeme (ürün)**: beton sınıfları, donatı çapları, kalıp malzemeleri, tür genel satırları ve katalogdaki
+  ~120 kalem hazır listelenir (iş grubuna göre katlanır, arama var). Bir ürüne **birden çok tedarikçi fiyatı**
+  girilebilir; geçerli fiyat seçtiğiniz ("bunu kullan") satır, seçim yoksa en düşük olandır.
+- **İşçilik**: kalem türü bazında ₺/birim, adam-saat/birim, ekip. Projede türün genel satırına uygulanır.
+- **Tedarikçiler**: firma, yetkili, telefon, e-posta, not. Tedarikçi silinince fiyat satırları kalır, bağlantısı boşalır.
+
+Devralma sırası: projede elle girilmiş değer > fiyat bankası. Banka güncellenince boş kalan proje satırları
+kendiliğinden yenilenir; girilmiş fiyatların üzerine yazmak için proje Birim Fiyatlar sayfasındaki **Bankadaki
+fiyatlarla güncelle** düğmesi kullanılır (`POST /api/projects/{id}/apply-pricebook?overwrite=true`).
+API: `GET/PUT /api/pricebook`, `DELETE /api/pricebook/{row}`, `GET/POST/PATCH/DELETE /api/suppliers`.
+
 `samples/` klasöründe sentetik örnek çizimler var: `ornek_kat_plani.dxf`, `ornek_temel_plani.dxf` (statik),
 `ornek_mimari_plani.dxf` (Ytong 20 + tuğla 10 duvarlar, 2 kapı, 3 pencere), `ornek_elektrik_plani.dxf` (2 tava, 3 kablo hattı, boru, 9 armatür/priz/anahtar),
 `ornek_ksf_plani.dxf` (KÇS standardı: havalandırma kanalı, PPRC boru, sprinkler, kompozit cephe, XPS, Ytong duvar, dolgu, ağaç).

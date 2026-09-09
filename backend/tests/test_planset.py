@@ -4,7 +4,6 @@ from __future__ import annotations
 import pytest
 
 from app.planset import PLAN_TYPES, classify_title, discipline_for, plan_check
-from tests.test_api import client  # noqa: F401
 from tests.test_sheets import multi_dxf  # noqa: F401
 
 

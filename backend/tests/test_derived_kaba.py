@@ -3,7 +3,6 @@ import ezdxf
 import pytest
 
 from app.parser.analyzer import analyze_file
-from tests.test_api import client  # noqa: F401
 from app.parser.layer_profile import LayerProfile
 from app.quantity.boq import architectural_items
 from app.quantity.recipes import expand_recipes

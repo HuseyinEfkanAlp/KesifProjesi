@@ -64,3 +64,31 @@ def roof_dxf(tmp_path_factory):
 def precast_dxf(tmp_path_factory):
     from tests.fixtures.make_dxf import make_precast_dxf
     return make_precast_dxf(tmp_path_factory.mktemp("dxf") / "prekast.dxf")
+
+
+@pytest.fixture()
+def client(tmp_path, monkeypatch):
+    """Boş bir veritabanı ve geçici veri dizini ile API istemcisi."""
+    monkeypatch.setenv("KESIF_DATA_DIR", str(tmp_path / "data"))
+    import importlib
+
+    from fastapi.testclient import TestClient
+    from sqlmodel import SQLModel, Session, create_engine
+    from sqlmodel.pool import StaticPool
+
+    from app import db as dbmod
+    importlib.reload(dbmod)
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    dbmod.engine = engine
+    from app import main as mainmod
+    importlib.reload(mainmod)
+    from app import models  # noqa: F401
+    SQLModel.metadata.create_all(engine)
+
+    def _get_session():
+        with Session(engine) as s:
+            yield s
+
+    mainmod.app.dependency_overrides[dbmod.get_session] = _get_session
+    with TestClient(mainmod.app) as c:
+        yield c

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import Loading from '../components/Loading'
 import { useParams } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
 import type { MaterialIn, MaterialOptions, MaterialPrice, PriceIn, PriceItem, Project, ProjectParams } from '../types'
 import ProjectNav from './ProjectNav'
@@ -94,6 +95,15 @@ export default function Prices() {
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
 
+  const applyBook = async (overwrite: boolean) => {
+    setError(''); setBusy(true)
+    try {
+      const r = await Api.pricebook.applyTo(pid, overwrite)
+      await load()
+      setError(r.materials + r.labor === 0 ? 'Fiyat bankasında bu projeye uyan fiyat bulunamadı.' : '')
+    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
+
   const applyChoice = async () => {
     setError(''); setBusy(true)
     try {
@@ -179,6 +189,12 @@ export default function Prices() {
               {dirty > 0 && <span className="muted">{dirty} satır değişti</span>}
               <button onClick={save} disabled={dirty === 0 || busy}>Fiyatları kaydet</button>
             </div>
+          </div>
+
+          <div className="row" style={{ gap: 8, margin: '0 0 8px' }}>
+            <button className="secondary" onClick={() => applyBook(false)} disabled={busy} title="Boş satırları genel fiyat listesinden doldur">Fiyat bankasından doldur</button>
+            <button className="secondary" onClick={() => { if (confirm('Bu projedeki fiyatların üzerine fiyat bankasındaki güncel fiyatlar yazılsın mı?')) applyBook(true) }} disabled={busy}>Bankadaki fiyatlarla güncelle</button>
+            <Link className="btn secondary-link" to="/pricebook">Fiyatlar ve tedarikçiler sayfası</Link>
           </div>
 
           <p className="muted hint">
