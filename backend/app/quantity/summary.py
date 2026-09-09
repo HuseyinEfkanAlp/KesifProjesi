@@ -91,6 +91,12 @@ def summarize(lines: list[QuantityLine], rebar_tables: list[dict] | None = None,
     for g in groups.values():
         if g["rebar_source"] == "oran":
             g["rebar_ratio_kg"] = g["rebar_kg"]
+    if rebar_tables:
+        # donatı paftaları var ama bu eleman tipi için hiç tablo / poz grubu yok: açıkça söylenir (sessizce oranla kalmasın)
+        for g in groups.values():
+            if g["rebar_source"] == "oran" and g["concrete_m3"] > 0:
+                warnings.append(f"{g['label']} donatısı bulunamadı: yüklü donatı paftalarında bu elemana ait tablo / poz grubu yok "
+                                f"({g['concrete_m3']:,.0f} m³ beton × kg/m³ oranıyla, düşük güven). Donatı paftasını yükleyin ya da demiri elle girin.")
 
     # kesit bazında: aynı tip ve aynı kesit / kalınlıktaki elemanlar tek satır (98 kiriş 30x60 -> "Kiriş 30x60: 98 adet, 392 m, 70,6 m³")
     sections: dict[str, dict] = {}

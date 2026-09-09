@@ -172,3 +172,35 @@ def test_table_ton_unit_and_declared_tolerance(tmp_path):
     assert tb.weight[10] == pytest.approx(185.0) and tb.weight[12] == pytest.approx(178.0)
     assert tb.total_kg_declared == pytest.approx(400.0)
     assert any("uyuşmuyor" in w for w in tb.warnings)
+
+
+def test_column_sheet_wall_rebar_split_and_missing_wall_warning(tmp_path):
+    """Kolon detay paftasında perde açılımı ('PB0922 (25/300)' başlığı altındaki poz yazıları) perdeye, kolonunki kolona
+    yazılır; kiriş açılımının ucundaki küçük mesnet adı ('S1094') ayırıcı değildir. Perde donatısı hiç yoksa özet uyarır."""
+    import ezdxf
+    from app.parser.rebar_tables import parse_rebar_label_groups
+    doc = ezdxf.new("R2010"); doc.header["$INSUNITS"] = 5
+    msp = doc.modelspace()
+    def T(x, y, t, h=8):
+        msp.add_text(t, dxfattribs={"height": h}).set_placement((x, y))
+    T(100, 1500, "S1094 (100/100)", 14); T(150, 1400, "P01 8Ø16 l=350"); T(150, 1300, "P02 20Ø8/10 etr. l=380")
+    T(900, 1500, "PB0922 (25/300)", 14); T(950, 1400, "P10 12Ø14 l=350"); T(950, 1300, "P11 30Ø8/15 etr. l=640")
+    T(1700, 1500, "S1094", 6); T(1750, 1400, "P20 4Ø14 l=525")        # mesnet adı: küçük, kesitsiz -> ayırmaz
+    path = tmp_path / "kolon.dxf"; doc.saveas(path)
+    groups = {g.target: g for g in parse_rebar_label_groups(load_dxf(str(path)))}
+    assert set(groups) == {"column", "shear_wall", None}
+    assert groups["shear_wall"].total_length[14] == pytest.approx(12 * 3.5) and groups["column"].total_length[16] == pytest.approx(8 * 3.5)
+    assert groups[None].total_length[14] == pytest.approx(4 * 5.25)
+    r = analyze_file(str(path), discipline="rebar", label="KOLON DETAYLARI", unit_override="cm")
+    tg = {}
+    for e in r.by_type("rebar"):
+        tg[e.meta["target"]] = tg.get(e.meta["target"], 0.0) + e.meta["weight_kg"]
+    assert set(tg) == {"column", "shear_wall"} and any("Perde" in w and "Kolon" in w for w in r.warnings)
+    # özet: perde donatısı yoksa açık uyarı
+    p = QuantityParams(storey_height=3.0, slab_thickness=0.15)
+    lines = compute_all([ElementData(id=1, etype="column", area=0.16, perimeter=1.6), ElementData(id=2, etype="shear_wall", area=0.5, length=2.5)], p)
+    rows = [{"drawing": "K", "drawing_id": 1, "kot": None, "target": "column", "dia_mm": 16, "weight_kg": 100.0, "length_m": 60.0, "source": "poz"}]
+    s = summarize(lines, rows, {1: {"drawing": "kat"}, 2: {"drawing": "kat"}})
+    assert any("Perde donatısı bulunamadı" in w for w in s["warnings"])
+    rows.append({"drawing": "K", "drawing_id": 1, "kot": None, "target": "shear_wall", "dia_mm": 14, "weight_kg": 50.0, "length_m": 40.0, "source": "poz"})
+    assert not any("Perde donatısı" in w for w in summarize(lines, rows, {1: {"drawing": "kat"}, 2: {"drawing": "kat"}})["warnings"])

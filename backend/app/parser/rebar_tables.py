@@ -62,6 +62,7 @@ class RebarTable:
     total_kg_declared: float | None = None
     anchor: tuple[float, float] = (0.0, 0.0)
     warnings: list[str] = field(default_factory=list)
+    target: str | None = None        # tablonun / poz grubunun ait olduğu eleman (başlık ya da yakın eleman adından); None: pafta hedefi
 
     def finalize(self) -> None:
         for d in self.columns:
@@ -209,13 +210,82 @@ def parse_rebar_tables(drawing: Drawing) -> list[RebarTable]:
     for t in open_tables:
         t.finalize()
         tables.append(t)
-    return [t for t in tables if t.total_kg > 0]
+    tables = [t for t in tables if t.total_kg > 0]
+    # tablonun ait olduğu eleman: başlık satırının üstündeki / yanındaki eleman adı ya da "PERDE / KOLON … METRAJI" başlığı
+    index = element_name_index(drawing)
+    if index:
+        for t in tables:
+            width = (max(t.columns.values()) - min(t.columns.values())) if len(t.columns) > 1 else default_tol
+            radius = max(width, default_tol * 2, med_h * 15)
+            x, y = t.anchor
+            # yalnız tablonun üstündeki (y ≥ anchor − biraz) ve yakınındaki adaylar
+            cands = [c for c in index if c[1] >= y - med_h * 2 and abs(c[0] - x) <= radius and abs(c[1] - y) <= radius]
+            tgt, txt = nearest_target(x, y, cands, radius)
+            if tgt:
+                t.target = tgt
+                t.warnings.append(f"Tablo hedefi yakın başlıktan: '{txt}' → {tgt}")
+    return tables
 
 
 def _col_gap(t: RebarTable) -> float:
     xs = sorted(t.columns.values())
     gaps = [b - a for a, b in zip(xs, xs[1:]) if b - a > 1e-6]
     return min(gaps) if gaps else 1.0
+
+
+_ELEMENT_HINTS = {"column", "shear_wall", "beam", "foundation", "slab"}
+_HEADING_WORDS = [
+    ("shear_wall", re.compile(r"\bPERDE|SHEAR\s*WALL", re.IGNORECASE)),
+    ("column", re.compile(r"\bKOLON|COLUMN", re.IGNORECASE)),
+    ("beam", re.compile(r"\bK[Iİ]R[Iİ][SŞ]|\bBEAM", re.IGNORECASE)),
+    ("foundation", re.compile(r"\bTEMEL|RADYE|\bRAFT|FOUND", re.IGNORECASE)),
+    ("stair", re.compile(r"MERD[Iİ]VEN|STAIR", re.IGNORECASE)),
+]
+
+
+def element_name_index(drawing: Drawing) -> list[tuple[float, float, str, str, bool, float, bool]]:
+    """Paftadaki eleman adı / başlık yazıları: (x, y, hedef tip, yazı, başlık mı, yazı yüksekliği, kesitli mi).
+    'S1094 (100/100)' → column, 'PB0922 (25/300)' → shear_wall, 'PERDE DONATI METRAJI' → shear_wall (başlık).
+    Aynı kolon paftasındaki perde tabloları / poz yazıları bununla ayrılır. Kiriş açılımının uçlarındaki kolon adları
+    ("S1094", mesnet yazısı: kesitsiz ve küçük) ayırıcı sayılmaz — yalnız kesitli adlar ve başlıklar (bkz. nearest_target)."""
+    from .text_parser import parse_label
+    out: list[tuple[float, float, str, str, bool, float, bool]] = []
+    dia_mark = re.compile(DIA_SYM)
+    for e in drawing.texts():
+        t = e.text.strip()
+        # poz yazıları ("P45 4Ø14 l=160") eleman adı değildir: çap simgesi geçen ya da poz biçimli yazılar atlanır
+        if not t or POZ_LINE.match(t) or POZ_LINE_NOCOUNT.match(t) or DIA_HEADER.match(t) or dia_mark.search(t):
+            continue
+        x, y = e.points[0]
+        for tgt, rx in _HEADING_WORDS:
+            if rx.search(t):
+                out.append((x, y, tgt, t[:40], True, float(e.height or 0.0), False))
+                break
+        else:
+            try:
+                lab = parse_label(t)
+            except Exception:
+                continue
+            if lab.name and lab.type_hint in _ELEMENT_HINTS:
+                out.append((x, y, lab.type_hint, lab.name, False, float(e.height or 0.0), bool(lab.has_dims)))
+    return out
+
+
+def nearest_target(x: float, y: float, index: list[tuple], radius: float, default: str | None = None,
+                   min_height: float = 0.0, titles_only: bool = True) -> tuple[str | None, str | None]:
+    """(x, y) noktasına radius içindeki en yakın eleman adı / başlığın hedefi; yoksa default. Döndürür (hedef, yazı).
+    titles_only: yalnız başlık sözcüklü yazılar ya da kesitli adlar ("PB0922 (25/300)": detay başlığı) sayılır;
+    min_height: bundan küçük yazılar (mesnet adı gibi) sayılmaz."""
+    best, best_d, best_txt = default, None, None
+    for ex, ey, tgt, txt, is_heading, h, has_dims in index:
+        if titles_only and not (is_heading or has_dims):
+            continue
+        if h < min_height:
+            continue
+        d = ((ex - x) ** 2 + (ey - y) ** 2) ** 0.5
+        if d <= radius and (best_d is None or d < best_d):
+            best, best_d, best_txt = tgt, d, txt
+    return best, best_txt
 
 
 TARGET_WORDS = [
@@ -272,14 +342,22 @@ def _poz_length_m(raw: str) -> float:
     return total
 
 
-def parse_rebar_labels(drawing: Drawing) -> RebarTable | None:
-    """Adetli poz yazılarını toplar; RebarTable biçiminde tek 'tablo' döndürür (kaynak: yazılar)."""
-    per: dict[int, float] = {}
-    lengths: dict[int, float] = {}
-    n_lines = 0
+def parse_rebar_labels(drawing: Drawing, split_by_element: bool = True) -> RebarTable | None:
+    """Adetli poz yazılarını toplar; RebarTable biçiminde tek 'tablo' döndürür (kaynak: yazılar).
+    split_by_element=True ise parse_rebar_label_groups ile aynı; yalnız toplam istenirse False."""
+    groups = parse_rebar_label_groups(drawing, split_by_element=False)
+    return groups[0] if groups else None
+
+
+def parse_rebar_label_groups(drawing: Drawing, split_by_element: bool = True) -> list[RebarTable]:
+    """Adetli poz yazıları; split_by_element=True ise her yazı en yakın eleman adına (S… kolon, P… perde, K… kiriş) göre
+    gruplanır — kolon detay paftasındaki perde açılımları perdeye yazılır. Ad bulunamayan yazılar target=None kalır."""
+    heights = [e.height for e in drawing.texts() if e.height > 0]
+    med_h = sorted(heights)[len(heights) // 2] if heights else 0.08
+    index = element_name_index(drawing) if split_by_element else []
+    radius = max(2.0, med_h * 40)
+    groups: dict[str | None, dict] = {}
     n_orphan = 0
-    n_mult = 0
-    types: dict[str, int] = {}
     for e in drawing.texts():
         txt = e.text.strip()
         m = POZ_LINE.match(txt)
@@ -298,24 +376,33 @@ def parse_rebar_labels(drawing: Drawing) -> RebarTable | None:
         mm = POZ_MULT.search(m.group("rest") or "")
         if mm:
             mult = int(mm.group("a") or mm.group("b") or mm.group("c") or 1)
-            if mult > 1:
-                n_mult += 1
-        per[d] = per.get(d, 0.0) + n * mult * L * unit_weight(d)
-        lengths[d] = lengths.get(d, 0.0) + n * mult * L
-        n_lines += 1
+        tgt = None
+        if index:
+            x, y = e.points[0]
+            tgt, _ = nearest_target(x, y, index, radius, min_height=float(e.height or 0.0) * 1.2)   # başlık / kesitli ad, poz yazısından büyük
+        g = groups.setdefault(tgt, {"per": {}, "len": {}, "n": 0, "mult": 0, "types": {}})
+        g["per"][d] = g["per"].get(d, 0.0) + n * mult * L * unit_weight(d)
+        g["len"][d] = g["len"].get(d, 0.0) + n * mult * L
+        g["n"] += 1
+        if mult > 1:
+            g["mult"] += 1
         tip = (m.group("tip") or "duz").lower()[:3]
-        types[tip] = types.get(tip, 0) + 1
-    if not per:
-        return None
-    t = RebarTable(columns={d: 0.0 for d in per}, total_length=lengths, weight=per, pos_count=n_lines)
-    t.warnings.append(f"Metraj tablosu yok; {n_lines} adetli poz yazısından hesaplandı "
-                      f"({', '.join(f'{POZ_TYPES.get(k, k)} {v}' for k, v in sorted(types.items()))}). "
-                      "Boylar yazıdaki değerdir; kanca / bindirme payı yazıda yoksa eksik olabilir"
-                      + (f"; {n_mult} satırda adet çarpanı uygulandı" if n_mult else ""))
-    if n_orphan:
-        t.warnings.append(f"{n_orphan} poz yazısı adetsiz ('P02 Ø10 l=256' biçiminde), kesit tekrarı sayılıp metraja alınmadı; "
-                          "gerçek poz ise adetini yazıya ekleyin ya da demiri elle girin")
-    return t
+        g["types"][tip] = g["types"].get(tip, 0) + 1
+    out: list[RebarTable] = []
+    for tgt, g in groups.items():
+        if not g["per"]:
+            continue
+        t = RebarTable(columns={d: 0.0 for d in g["per"]}, total_length=g["len"], weight=g["per"], pos_count=g["n"], target=tgt)
+        t.warnings.append(f"Metraj tablosu yok; {g['n']} adetli poz yazısından hesaplandı "
+                          f"({', '.join(f'{POZ_TYPES.get(k, k)} {v}' for k, v in sorted(g['types'].items()))})"
+                          + (f"; hedef en yakın eleman adından: {tgt}" if tgt else "")
+                          + ". Boylar yazıdaki değerdir; kanca / bindirme payı yazıda yoksa eksik olabilir"
+                          + (f"; {g['mult']} satırda adet çarpanı uygulandı" if g["mult"] else ""))
+        if n_orphan and not out:
+            t.warnings.append(f"{n_orphan} poz yazısı adetsiz ('P02 Ø10 l=256' biçiminde), kesit tekrarı sayılıp metraja alınmadı; "
+                              "gerçek poz ise adetini yazıya ekleyin ya da demiri elle girin")
+        out.append(t)
+    return out
 
 
 REBAR_TARGET_BY_PLAN: dict[str, str] = {

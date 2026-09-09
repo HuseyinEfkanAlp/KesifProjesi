@@ -26,7 +26,7 @@ from .geometry import polygon_area
 from .layer_profile import (ALL_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, MAPPED_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE,
                             STRUCTURAL_TYPES, LayerProfile, ksf_spec_dims, ksf_structural_type, types_for)
 from .levels import parse_levels
-from .rebar_tables import kot_from_label, parse_rebar_labels, parse_rebar_tables, target_from_label
+from .rebar_tables import kot_from_label, parse_rebar_label_groups, parse_rebar_labels, parse_rebar_tables, target_from_label
 from .loader import UNIT_SCALE, Drawing, load_dxf
 from .materials import scan_materials
 from .schedules import parse_rooms, parse_schedule
@@ -285,14 +285,16 @@ def analyze_rebar(drawing: Drawing, label: str = "", rebar_target: str | None = 
     tables = parse_rebar_tables(drawing)
     source = "REBAR_TABLE"
     if not tables:
-        lab = parse_rebar_labels(drawing)
-        if lab is not None:
-            tables = [lab]
+        tables = parse_rebar_label_groups(drawing)
+        if tables:
             source = "REBAR_LABELS"
-    target = rebar_target or target_from_label(label)
+    default_target = rebar_target or target_from_label(label)
     kot = kot_from_label(label)
     src_label = "tablo" if source == "REBAR_TABLE" else "poz"
+    by_target: dict[str, float] = {}
     for ti, t in enumerate(tables):
+        target = t.target or default_target
+        by_target[target] = by_target.get(target, 0.0) + t.total_kg
         for d in sorted(t.columns):
             kg = t.weight.get(d, 0.0)
             if kg <= 0:
@@ -314,9 +316,11 @@ def analyze_rebar(drawing: Drawing, label: str = "", rebar_target: str | None = 
     else:
         from .layer_profile import STRUCTURAL_TYPES
         what = f"{len(tables)} metraj tablosu okundu" if source == "REBAR_TABLE" else "poz yazılarından hesaplandı"
-        result.warnings.append(f"{what}, toplam {sum(t.total_kg for t in tables):,.0f} kg; "
-                               f"hedef eleman: {STRUCTURAL_TYPES.get(target, target)} "
+        split = "; ".join(f"{STRUCTURAL_TYPES.get(k, k)} {v:,.0f} kg" for k, v in sorted(by_target.items(), key=lambda kv: -kv[1]))
+        result.warnings.append(f"{what}, toplam {sum(t.total_kg for t in tables):,.0f} kg → {split}. Pafta hedefi "
+                               f"{STRUCTURAL_TYPES.get(default_target, default_target)} "
                                + ("(plan tipinden)" if rebar_target else "(plan adından; TEMEL / KOLON / KİRİŞ / PERDE yazmıyorsa döşeme)")
+                               + "; tablo / poz grubu yakınındaki eleman adına (S… kolon, P… perde) göre ayrıldı"
                                + (f", kot {kot}" if kot else ""))
         for ti, t in enumerate(tables):
             if t.total_kg_declared and abs(t.total_kg - t.total_kg_declared) / t.total_kg_declared > 0.02:
