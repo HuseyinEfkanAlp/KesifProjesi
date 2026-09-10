@@ -127,7 +127,9 @@ export interface ProjectParams {
 }
 
 export interface Project {
-  blocks?: string[]                // yapı blokları: ["C1","C2"]; boş = tek yapı
+  blocks?: string[]                // kullanıcı düzeltmesi; boş = çizimden okunan liste geçerli
+  /** Çizimden okunan blok bilgisi: kapsam, vaziyette görülenler, planı yüklenmemişler */
+  blocks_detected?: { blocks: string[]; site: string[]; missing: string[]; source: 'cizim' | 'elle' }
   id: number
   name: string
   description: string
@@ -177,7 +179,7 @@ export interface PlanCheck extends PlanCheckSummary {
   /** Projedeki bloklar (tanımlı + çizimlerden tanınan) */
   blocks?: string[]
   /** Çizimde geçen ama proje bloklarına eklenmemiş adlar */
-  undeclared_blocks?: string[]
+  site_missing?: string[]
   project_blocks?: string[]
   /** Tipi yüklü ama bazı bloklarda eksik olan plan sayısı */
   partial?: number

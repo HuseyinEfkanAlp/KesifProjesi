@@ -38,8 +38,8 @@ def _d(i, plan_type, block="", label=""):
 def test_plan_check_warns_for_the_block_whose_drawing_is_missing():
     """Mimari blok blok geliyorsa eksik bir bloğun dosyası sessizce geçmemeli.
 
-    C3'ün hiç dosyası yüklenmediyse çizimlere bakarak C3'ün varlığı anlaşılamaz: proje blokları
-    (Project.blocks) tanımlı olmalıdır."""
+    Blok listesi kullanıcıdan sorulmaz, çizimden çıkar (services.project_blocks): burada statik ruhsat
+    dosyasında C3'ün de paftası olduğu için C3 bilinir, eksik olan yalnız mimarisidir."""
     BLOKLAR = ["C1", "C2", "C3", "C4"]
     ds = [_d(1, "sta_kat_kalip"),                        # ortak: statik ruhsat dosyası
           _d(2, "mim_kat_plani", "C1"), _d(3, "mim_kat_plani", "C2"), _d(4, "mim_kat_plani", "C4")]   # C3 unutuldu
@@ -55,11 +55,42 @@ def test_plan_check_warns_for_the_block_whose_drawing_is_missing():
     assert not any("C3" in w for w in ok["warnings"])
 
 
-def test_block_seen_in_drawings_but_not_declared_is_reported():
-    """Çizimden tanınan ama proje bloklarına eklenmemiş ad ayrıca bildirilir (yazım farkı / yeni blok)."""
-    ds = [_d(1, "mim_kat_plani", "C1"), _d(2, "mim_kat_plani", "C5")]
-    r = plan_check(ds, None, ["C1", "C2"])
-    assert r["undeclared_blocks"] == ["C5"] and set(r["blocks"]) == {"C1", "C2", "C5"}
+def test_site_plan_blocks_are_a_reminder_not_a_missing_plan():
+    """Vaziyet planı sitenin tamamını gösterir; keşif birkaç bloğu kapsayabilir — eksik sayılmaz, hatırlatılır."""
+    ds = [_d(1, "mim_kat_plani", "C1"), _d(2, "mim_kat_plani", "C2")]
+    r = plan_check(ds, None, ["C1", "C2"], site_missing=["C3", "N", "T"])
+    assert r["site_missing"] == ["C3", "N", "T"]
+    assert any("Vaziyet planında" in w and "C3" in w for w in r["warnings"])
+    mim = next(t for g in r["groups"] for t in g["types"] if t["code"] == "mim_kat_plani")
+    assert mim["status"] == "present" and mim["missing_blocks"] == []   # kapsam dışı blok eksik saymaz
+
+
+def test_project_blocks_come_from_the_drawings():
+    """Blok listesi çizimden çıkar: paftaların kendi bloğu kapsamı, vaziyet planı siteyi verir."""
+    from app.models import Drawing, Project
+    from app.services import project_blocks
+    p = Project(name="t")
+    ds = [Drawing(project_id=1, filename="statik.dxf", stored_path="", block="C1",
+                  blocks_seen={"C1": 2, "C2": 1, "C3": 1, "C4": 1, "N": 3}),   # vaziyet paftası siteyi görüyor
+          Drawing(project_id=1, filename="C2 mimari.dxf", stored_path="", block="C2"),
+          Drawing(project_id=1, filename="zemin kalip.dxf", stored_path="", block="")]   # ortak
+    r = project_blocks(p, ds)
+    assert r["blocks"] == ["C1", "C2"] and r["source"] == "cizim"
+    assert r["missing"] == ["C3", "C4", "N"]        # vaziyette var, planı yok -> hatırlatma
+    # kullanıcı düzeltirse onun listesi geçerli
+    p.blocks = ["C1", "C2", "C3", "C4"]
+    assert project_blocks(p, ds)["blocks"] == ["C1", "C2", "C3", "C4"]
+
+
+def test_single_block_building_has_no_blocks():
+    """Tek bloklu yapıda hiçbir yerde "BLOK" geçmez: liste boş, program tek yapı gibi çalışır."""
+    from app.models import Drawing, Project
+    from app.services import project_blocks
+    ds = [Drawing(project_id=1, filename="zemin kalip.dxf", stored_path="", block=""),
+          Drawing(project_id=1, filename="mimari kat.dxf", stored_path="", block="")]
+    r = project_blocks(Project(name="t"), ds)
+    assert r["blocks"] == [] and r["missing"] == []
+    assert plan_check([_d(1, "sta_kat_kalip"), _d(2, "mim_kat_plani")], None, r["blocks"])["partial"] == 0
 
 
 def test_plan_check_does_not_demand_common_plans_per_block():
@@ -75,3 +106,23 @@ def test_plan_check_without_blocks_behaves_as_before():
     r = plan_check(ds, None)
     assert r["blocks"] == [] and r["partial"] == 0
     assert all(t["missing_blocks"] == [] for g in r["groups"] for t in g["types"])
+
+
+def test_compound_block_covers_its_parts():
+    """Tek çizim iki bloğu birlikte veriyorsa ("A4-A5 BLOK") vaziyetteki A4 / A5 eksik sayılmaz."""
+    from app.models import Drawing, Project
+    from app.parser.blocks import covered_by
+    from app.services import project_blocks
+    assert covered_by(["A4-A5"]) == {"A4-A5", "A4", "A5"}
+    ds = [Drawing(project_id=1, filename="A4-A5 BLOK KALIP.dxf", stored_path="", block="A4-A5",
+                  blocks_seen={"A4": 1, "A5": 1, "A4-A5": 1, "B1": 1, "C3": 1})]
+    r = project_blocks(Project(name="t"), ds)
+    assert r["blocks"] == ["A4-A5"] and r["missing"] == ["B1", "C3"]
+
+
+def test_site_reminder_is_shortened_when_long():
+    """Vaziyet planı bütün siteyi gösterir: uyarı ilk birkaç adı yazar, sayıyı verir."""
+    many = [f"B{i}" for i in range(1, 13)]
+    w = plan_check([_d(1, "mim_kat_plani", "C1")], None, ["C1"], site_missing=many)["warnings"]
+    line = next(x for x in w if "Vaziyet" in x)
+    assert "12 blok daha" in line and "+4" in line

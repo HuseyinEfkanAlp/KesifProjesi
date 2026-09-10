@@ -52,6 +52,7 @@ _ADDED_COLUMNS = [
     ("drawing", "rebar_mix", "JSON"),
     ("drawing", "rebar_layers", "JSON"),
     ("drawing", "block", "VARCHAR DEFAULT ''"),
+    ("drawing", "blocks_seen", "JSON"),
     ("drawing", "rooms", "JSON"),
     ("drawing", "poz", "JSON"),
     ("drawing", "unit_verdict", "VARCHAR"),

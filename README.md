@@ -88,11 +88,22 @@ Tarayıcı: http://127.0.0.1:5173  (API dokümantasyonu: http://127.0.0.1:8000/d
      katlar birleşiktir (ortada koridor, tek yapı), üst katlar C1 / C2 / C3 / C4 diye ayrılır; statik tek ruhsat
      dosyası, mimari blok blok ayrı dosyalar gelir. Blok adı dosya adından tanınır (`… A4-A5 BLOK KALIP PLANLARI.dwg`,
      `C1 BLOK MİMARİ.dwg`, `BLOK: C4 kuvvet.dwg`; "BLOKAJ" blok sayılmaz) ve çizim listesindeki **Blok** sütunundan
-     değiştirilir. Boş = **ortak / tüm bina** (bodrum, zemin, vaziyet, altyapı). Blok bilinci üç yeri düzeltir:
+     değiştirilir. Boş = **ortak / tüm bina** (bodrum, zemin, vaziyet, altyapı).
+
+     **Projenin kaç bloğu olduğu sorulmaz, çizimden çıkar** (`services.project_blocks`). İki ayrı kanıt:
+     - **pafta başlığı** — paftadaki en iri "… BLOK" yazısı o paftanın bloğudur (`Başlık_Yazı` katmanında
+       `A4-A5 BLOK`). Keşfin kapsamı = planı yüklenmiş blokların birleşimi.
+     - **vaziyet planı** — sitenin bütün bloklarını yazar (gerçek dosyada `A1 BLOK` … `C4 BLOK`, `N BLOK`, 22 ad).
+       Vaziyet genelde keşiften geniştir, bu yüzden eksik saymaz: planı yüklenmemişler tek satırlık hatırlatma
+       olur ("Vaziyet planında 12 blok daha var, hiç planı yüklenmedi"). Birleşik ad kendi parçalarını kapsar:
+       `A4-A5` varken vaziyetteki `A4` ve `A5` eksik sayılmaz.
+
+     Tek bloklu yapıda hiçbir yerde "BLOK" geçmez; liste boş kalır ve program tek yapı gibi çalışır.
+     `Project.blocks` yalnız kullanıcı düzeltmesidir (`PUT /api/projects/{id}/blocks`); boşsa çizimden okunan
+     liste geçerlidir. Blok bilinci üç yeri düzeltir:
      - plan seti kontrolü blok başına yapılır: bir tipin çizimlerinden en az biri bir bloğa aitse o tip her blokta
        aranır ("Mimari: Mimari kat planları şu bloklarda yok: C3"). Yalnız ortak çizilen tipler (temel, vaziyet)
-       blok başına aranmaz. **Hiç dosyası yüklenmemiş** blok ancak proje bloklarında yazıyorsa bilinir — bu yüzden
-       proje sayfasında blok listesi girilir (`PUT /api/projects/{id}/blocks`).
+       blok başına aranmaz.
      - aynı kat eşleştirmesi blok içinde kalır: C1'in +6.00 kalıp planı, C2'nin +6.00 mimari planını elemez
        (`services._plan_footprints`) — yoksa cephe alanı eksik çıkardı.
      - çatı alanı blok başına hesaplanır. Podyum varsa (ortak kat + üstünde kuleler) toplam çatı = birleşik kat

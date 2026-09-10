@@ -283,7 +283,8 @@ class PlanStatus:
                 "via": self.via, "missing_blocks": self.missing_blocks}
 
 
-def plan_check(drawings: list, plan_set: dict | None, blocks: list[str] | None = None) -> dict:
+def plan_check(drawings: list, plan_set: dict | None, blocks: list[str] | None = None,
+               site_missing: list[str] | None = None) -> dict:
     """Projenin çizimlerine göre plan seti durumu.
 
     drawings: plan_type / id / label / block alanları olan nesneler (Drawing modeli ya da sözlük).
@@ -293,14 +294,16 @@ def plan_check(drawings: list, plan_set: dict | None, blocks: list[str] | None =
     bloğa aitse o tip "blok başına" sayılır: projedeki her blokta olmalıdır, olmayan bloklar uyarı verir.
     Yalnız ortak çizimi olan tipler (vaziyet, altyapı, temel) blok başına aranmaz.
 
-    blocks: projede tanımlı blok adları (Project.blocks). Hiç çizimi yüklenmemiş bir blok ancak buradan
-    bilinir — C3'ün dosyası hiç yüklenmediyse çizimlere bakarak C3'ün varlığı anlaşılamaz.
+    blocks: projenin blokları — kullanıcıdan sorulmaz, çizimden çıkar (services.project_blocks):
+    her paftanın kendi bloğu dosya adından / pafta başlığından ("A4-A5 BLOK") okunur.
+
+    site_missing: vaziyet planında adı geçen ama hiç planı yüklenmemiş bloklar. Vaziyet genelde keşiften
+    geniştir (site 22 blok, keşif 2 blok), bu yüzden eksik sayılmaz; ayrı bir hatırlatma satırı olur.
     """
     levels = effective_levels(plan_set)
     statuses = {p.code: PlanStatus(p, levels[p.code]) for p in PLAN_TYPES}
     unknown: list[dict] = []
     blocks: set[str] = {b.strip() for b in (blocks or []) if b and b.strip()}
-    declared = set(blocks)
     by_code_blocks: dict[str, set[str]] = {}
     for d in drawings:
         get = (lambda k: d.get(k)) if isinstance(d, dict) else (lambda k: getattr(d, k, None))
@@ -339,11 +342,17 @@ def plan_check(drawings: list, plan_set: dict | None, blocks: list[str] | None =
                  for st in partial]
     if unknown:
         warnings.append(f"{len(unknown)} çizimin plan tipi tanınamadı; çizim listesinden plan tipini seçin")
+    site_missing = sorted({b for b in (site_missing or []) if b})
+    if site_missing:
+        # vaziyet planı sitenin tamamını gösterir; liste uzun olabilir, uyarıda ilk birkaçı yazılır
+        shown = ", ".join(site_missing[:8]) + (f" +{len(site_missing) - 8}" if len(site_missing) > 8 else "")
+        warnings.append(f"Vaziyet planında {len(site_missing)} blok daha var, hiç planı yüklenmedi ({shown}) "
+                        "— keşfe dahil değilse yok sayın")
     return {
         "groups": groups,
         "warnings": warnings,
         "blocks": sorted(blocks),
-        "undeclared_blocks": sorted(blocks - declared),   # çizimden tanınmış ama projeye eklenmemiş
+        "site_missing": site_missing,       # vaziyette görünen, planı yüklenmemiş bloklar (hatırlatma)
         "missing_required": len(missing),
         "partial": len(partial),
         "present": sum(1 for st in statuses.values() if st.status == "present"),

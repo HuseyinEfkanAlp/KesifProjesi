@@ -17,6 +17,7 @@ from .parser.layer_profile import (DEFAULT_DISCIPLINE, MAPPED_DISCIPLINE, REBAR_
                                    TYPE_DISCIPLINE, LayerProfile)
 from .parser.rebar_tables import REBAR_TARGET_BY_PLAN, TARGET_WORDS, kot_from_label, rebar_target_for
 from .parser.materials import merge_materials
+from .parser.blocks import covered_by as block_parts
 from .parser.rebar_mix import layer_verdict as rebar_layer_verdict
 from .parser.rebar_mix import scan_texts as scan_rebar_texts
 from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary, effective_params, electrical_items,
@@ -164,6 +165,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
             points=[[round(x, 4), round(y, 4)] for x, y in det.points],
             included=(det.confidence >= MIN_INCLUDED_CONFIDENCE) and excl is None, meta=det.meta or {},
         ))
+    first_analysis = drawing.analyzed_at is None
     drawing.unit = result.unit
     drawing.unit_detected = result.unit_detected
     drawing.layers = [l.to_dict() for l in result.layers]
@@ -171,6 +173,9 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.materials = result.materials or {}
     drawing.rebar_mix = {str(k): float(v) for k, v in (result.rebar_mix or {}).items()}
     drawing.rebar_layers = {str(k): float(v) for k, v in (result.rebar_layers or {}).items()}
+    drawing.blocks_seen = {str(k): int(v) for k, v in (result.blocks_seen or {}).items()}
+    if not drawing.block and first_analysis and result.own_block:
+        drawing.block = result.own_block   # pafta başlığındaki "A4-A5 BLOK"; kullanıcı sonradan değiştirirse korunur
     drawing.rooms = result.rooms or []
     drawing.poz = result.poz or {}
     drawing.unit_verdict = result.unit_verdict
@@ -513,6 +518,31 @@ def project_rebar_layers(project: Project, drawings: list[Drawing]) -> dict[str,
             for k, v in t.items():
                 acc[k] = acc.get(k, 0.0) + v
     return {et: v for et, t in tags.items() if (v := rebar_layer_verdict(t))}
+
+
+def project_blocks(project: Project, drawings: list[Drawing]) -> dict:
+    """Projenin blokları — kullanıcıdan sorulmaz, çizimden çıkar.
+
+    İki ayrı kanıt: paftanın **kendi bloğu** (dosya adı / pafta başlığındaki "A4-A5 BLOK") keşfin kapsamını
+    verir; **vaziyet planındaki** blok adları sitenin tamamını verir. Vaziyet genelde keşiften geniştir
+    (site 22 blok, keşif 2 blok), bu yüzden kapsam = planı yüklenmiş bloklar; vaziyette görünüp planı
+    olmayanlar yalnız hatırlatılır ("vaziyet planında C3 BLOK da var, planı yüklenmedi").
+
+    Tek bloklu yapıda hiçbir yerde "BLOK" geçmez: liste boş kalır ve program tek yapı gibi çalışır.
+    Project.blocks doluysa (kullanıcı düzeltmesi) kapsam odur.
+
+    Döndürür: {"blocks": kapsam, "site": vaziyette görülen, "missing": vaziyette olup planı olmayan,
+               "source": "cizim" | "elle"}"""
+    own = {(d.block or "").strip() for d in drawings} - {""}
+    site: dict[str, int] = {}
+    for d in drawings:
+        for name, n in (d.blocks_seen or {}).items():
+            site[name] = site.get(name, 0) + int(n)
+    forced = [b for b in (project.blocks or []) if b]
+    blocks = sorted(forced) if forced else sorted(own)
+    covered = block_parts(blocks) | block_parts(own)   # "A4-A5" kapsamı A4 ve A5'i de içerir
+    return {"blocks": blocks, "site": sorted(site), "missing": sorted(set(site) - covered),
+            "source": "elle" if forced else "cizim"}
 
 
 def rebar_mix_target(d: Drawing) -> str:

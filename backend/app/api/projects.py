@@ -69,7 +69,9 @@ def get_project(project_id: int, session: Session) -> Project:
 def project_out(p: Project, session: Session) -> dict:
     n = len(session.exec(select(Drawing.id).where(Drawing.project_id == p.id)).all())
     ds = session.exec(select(Drawing).where(Drawing.project_id == p.id)).all()
-    check = plan_check(ds, p.plan_set, p.blocks)
+    from ..services import project_blocks
+    pb = project_blocks(p, ds)
+    check = plan_check(ds, p.plan_set, pb["blocks"], pb["missing"])
     from ..services import storey_heights
     sh = storey_heights(p, ds)
     return {**p.model_dump(), "drawing_count": n,
@@ -77,6 +79,7 @@ def project_out(p: Project, session: Session) -> dict:
                        "per_drawing": {str(k): v for k, v in sh["per_drawing"].items()}},
             "rebar_ratios": {**DEFAULT_REBAR_RATIOS, **(p.rebar_ratios or {})},
             "params": project_params(p),
+            "blocks_detected": pb,
             "plan_check": {"missing_required": check["missing_required"], "present": check["present"],
                            "total_required": check["total_required"], "complete": check["complete"],
                            "warnings": check["warnings"]}}
@@ -211,8 +214,10 @@ def read_plan_check(project_id: int, session: Session = Depends(get_session)):
     """Plan seti kontrolü: hangi plan tipleri yüklü, hangileri eksik (uyarı), hangileri bu projede yok sayıldı."""
     p = get_project(project_id, session)
     ds = session.exec(select(Drawing).where(Drawing.project_id == p.id)).all()
-    return {**plan_check(ds, p.plan_set, p.blocks), "plan_set": effective_levels(p.plan_set),
-            "levels": list(LEVELS), "project_blocks": list(p.blocks or [])}
+    from ..services import project_blocks
+    pb = project_blocks(p, ds)
+    return {**plan_check(ds, p.plan_set, pb["blocks"], pb["missing"]), "plan_set": effective_levels(p.plan_set),
+            "levels": list(LEVELS), "project_blocks": list(p.blocks or []), "blocks_detected": pb}
 
 
 @router.put("/{project_id}/blocks")

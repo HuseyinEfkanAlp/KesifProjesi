@@ -60,6 +60,8 @@ class Drawing(SQLModel, table=True):
     rebar_mix: dict[str, float] = Field(default_factory=dict, sa_column=Column(JSON))
     # Alt / üst donatı kanıt sayısı: {"alt": 558, "ust": 869} -> çift kat (parser/rebar_mix.py: layer_verdict)
     rebar_layers: dict[str, float] = Field(default_factory=dict, sa_column=Column(JSON))
+    # Yazılarda geçen blok adları: {"A1": 1, "C2": 1} — vaziyet planında sitenin bütün blokları çıkar (parser/blocks.py)
+    blocks_seen: dict[str, int] = Field(default_factory=dict, sa_column=Column(JSON))
     # Mahal alanı yazıları: [{"name": "LOBİ", "area_m2": 45.2}] (parser/schedules.py: parse_rooms)
     rooms: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
     # Doğrama pozları: {"sizes": {"EMP1": [1.9, 1.4]}, "kinds": {"EMP3": "door"}} (detectors/openings.py: poz_catalog)

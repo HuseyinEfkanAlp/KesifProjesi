@@ -54,9 +54,9 @@ export default function PlanChecklist({ projectId, refreshKey, onLoaded }: Props
       {check.warnings.length > 0 && open && (
         <div className="warn">
           <b>Eksik planlar var.</b> Yüklemediğiniz planların keşfi çıkmaz. Projede gerçekten yoksa satırında <i>Bu projede yok</i> seçin.
-          {(check.undeclared_blocks ?? []).length > 0 && (
-            <div style={{ marginTop: 6 }}>Çizimlerde geçen ama proje bloklarına eklenmemiş ad:{' '}
-              <b>{(check.undeclared_blocks ?? []).join(', ')}</b> — yazım farkıysa çizimin blok sütununu düzeltin.</div>
+          {(check.site_missing ?? []).length > 0 && (
+            <div style={{ marginTop: 6 }}>Vaziyet planında şu bloklar da var, hiç planı yüklenmedi:{' '}
+              <b>{(check.site_missing ?? []).join(', ')}</b> — keşfe dahil değillerse yok sayın.</div>
           )}
           <ul>{check.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
         </div>

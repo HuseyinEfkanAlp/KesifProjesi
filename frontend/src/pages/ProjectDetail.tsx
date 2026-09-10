@@ -54,6 +54,8 @@ export default function ProjectDetail() {
 
   // parametre formu
   const [blocks, setBlocks] = useState<string[]>([])
+  // Blok listesi çizimden okunur (pafta başlığı / dosya adı); `blocks` yalnız kullanıcı düzeltmesidir.
+  const det = project?.blocks_detected ?? { blocks: [], site: [], missing: [], source: 'cizim' }
   const [params, setParams] = useState({ storey_height: 3, slab_thickness: 0.15, vat_rate: 0 })
   const [ratios, setRatios] = useState<Record<string, number>>({})
   const [dparams, setDparams] = useState<Record<string, string>>({})
@@ -278,24 +280,36 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      <div className="panel">
-        <h3>Yapı blokları</h3>
-        <p className="muted">Bodrum ve zemin katlar birleşikse onların planları <b>ortak</b> kalır; üst katlar blok blok
-          çizildiyse blokları buraya yazın (virgülle: <code>C1, C2, C3, C4</code>). Blok adı yüklenen dosya adından da
-          tanınır — ama <b>hiç dosyası yüklenmemiş</b> bir blok ancak burada yazıyorsa eksik olduğu anlaşılır.</p>
-        <div className="row">
-          <label className="field" style={{ flex: 1 }}>Projedeki bloklar
-            <input className="wide" defaultValue={blocks.join(', ')} placeholder="C1, C2, C3, C4  (boş: tek yapı)"
-              onBlur={async (e) => {
-                const next = e.target.value.split(',').map((x) => x.trim()).filter(Boolean)
-                if (next.join('|') === blocks.join('|')) return
-                setBusy(true)
-                try { await Api.projects.setBlocks(id, next); setBlocks(next); setRefresh((r) => r + 1); await load() }
-                catch (err) { setError((err as Error).message) } finally { setBusy(false) }
-              }} />
-          </label>
-        </div>
-      </div>
+      {(det.blocks.length > 0 || det.missing.length > 0) && (
+        <details className="section">
+          <summary>Yapı blokları
+            <span className="muted">
+              {det.blocks.length > 0 ? `${det.blocks.length} blok: ${det.blocks.join(', ')}` : 'tek yapı'}
+              {det.source === 'elle' ? ' (elle düzeltildi)' : ' (çizimden okundu)'}
+            </span>
+          </summary>
+          <div className="panel">
+            <p className="muted">Blok adı pafta başlığından ve dosya adından okunur (<code>A4-A5 BLOK</code>,
+              <code> C1 BLOK MİMARİ.dwg</code>). Bodrum ve zemin gibi birleşik katların planları <b>Ortak</b> kalır.
+              Yanlışsa çizim listesindeki <b>Blok</b> sütunundan düzeltin.</p>
+            {det.missing.length > 0 && (
+              <p className="warn" style={{ margin: '6px 0' }}>Vaziyet planında şu bloklar da görünüyor ama hiç planı
+                yüklenmedi: <b>{det.missing.join(', ')}</b>. Keşfe dahillerse planlarını yükleyin; değillerse yok sayın.</p>
+            )}
+            <label className="field" style={{ maxWidth: 420 }}>Blok listesini elle düzelt
+              <input className="wide" defaultValue={blocks.join(', ')} placeholder={det.blocks.join(', ') || 'boş: tek yapı'}
+                title="Boş bırakılırsa çizimden okunan liste geçerlidir"
+                onBlur={async (e) => {
+                  const next = e.target.value.split(',').map((x) => x.trim()).filter(Boolean)
+                  if (next.join('|') === blocks.join('|')) return
+                  setBusy(true)
+                  try { await Api.projects.setBlocks(id, next); setBlocks(next); setRefresh((r) => r + 1); await load() }
+                  catch (err) { setError((err as Error).message) } finally { setBusy(false) }
+                }} />
+            </label>
+          </div>
+        </details>
+      )}
 
       <div className="panel">
         <h3>Çizimler</h3>
@@ -315,8 +329,8 @@ export default function ProjectDetail() {
                         title="Boş = ortak / tüm bina. Bodrum ve zemin birleşikse ortak bırakın; blok başına çizilen katlarda bloğu seçin."
                         onChange={(e) => patchDrawing(d, { block: e.target.value })}>
                         <option value="">Ortak</option>
-                        {blocks.map((b) => <option key={b} value={b}>{b}</option>)}
-                        {d.block && !blocks.includes(d.block) && <option value={d.block}>{d.block}</option>}
+                        {det.blocks.map((b) => <option key={b} value={b}>{b}</option>)}
+                        {d.block && !det.blocks.includes(d.block) && <option value={d.block}>{d.block}</option>}
                       </select>
                     </td>
                     <td>

@@ -73,5 +73,71 @@ def detect_with_known(text: str, known: list[str]) -> str:
     return ""
 
 
+def parts_of(name: str) -> set[str]:
+    """Birleşik blok adının kapsadığı adlar: "A4-A5" -> {"A4-A5", "A4", "A5"}.
+
+    Tek çizimde iki blok birlikte veriliyorsa ("A4-A5 BLOK KALIP PLANI") vaziyet planındaki ayrı "A4 BLOK"
+    ve "A5 BLOK" yazıları eksik blok sayılmamalıdır."""
+    n = normalize(name)
+    return {n} | {p for p in n.split("-") if p} if n else set()
+
+
+def covered_by(names) -> set[str]:
+    """Bir blok listesinin kapsadığı bütün adlar (birleşik adlar parçalarıyla birlikte)."""
+    out: set[str] = set()
+    for n in names or []:
+        out |= parts_of(n)
+    return out
+
+
 def block_label(name: str) -> str:
     return f"{name} bloğu" if name else ORTAK_LABEL
+
+
+# ---------------------------------------------------------------- çizimden blok listesi
+#
+# Bir projenin kaç bloğu olduğu kullanıcıdan sorulmaz, çizimden okunur. İki ayrı kanıt vardır:
+#
+#   pafta başlığı   "A4-A5 BLOK"                 -> bu paftanın ait olduğu blok (keşfin kapsamı)
+#   vaziyet planı   "A1 BLOK", "C2 BLOK", "N BLOK", ...  -> sitedeki bütün bloklar (aday liste)
+#
+# Vaziyet planı genelde bütün siteyi gösterir; keşif yalnız birkaç bloğu kapsayabilir. Bu yüzden **keşif
+# kapsamı** = planı yüklenmiş bloklar; vaziyette görünüp planı olmayanlar yalnız hatırlatma olarak bildirilir
+# ("vaziyet planında C3 BLOK da var, planı yüklenmedi").
+#
+# Tek bloklu yapıda hiçbir yerde "BLOK" geçmeyebilir: liste boş kalır, program tek yapı gibi çalışır.
+_COUNT_MAX_LEN = 60
+
+
+def scan_texts(texts) -> dict[str, int]:
+    """Yazılardan blok adı sayımı: {"A1": 1, "C2": 1, "N": 3}. Yazı listesi ya da (yazı, yükseklik) çiftleri."""
+    out: dict[str, int] = {}
+    for row in texts or []:
+        t = row[0] if isinstance(row, (tuple, list)) else row
+        if not t or len(str(t)) > _COUNT_MAX_LEN:
+            continue
+        if n := detect_block(str(t)):
+            out[n] = out.get(n, 0) + 1
+    return out
+
+
+def own_block(texts) -> str:
+    """Paftanın kendi bloğu: blok adı geçen yazıların **en büyüğü** (pafta başlığı en iri yazıdır).
+
+    texts: (yazı, yükseklik) çiftleri. Yükseklik yoksa ilk eşleşen alınır."""
+    best, best_h = "", -1.0
+    for row in texts or []:
+        t, h = (row[0], float(row[1] or 0.0)) if isinstance(row, (tuple, list)) else (row, 0.0)
+        if not t or len(str(t)) > _COUNT_MAX_LEN:
+            continue
+        if (n := detect_block(str(t))) and h > best_h:
+            best, best_h = n, h
+    return best
+
+
+def scan_drawing(drawing) -> dict[str, int]:
+    return scan_texts([(e.text, e.height) for e in drawing.entities if e.kind == "text" and e.text])
+
+
+def own_block_of_drawing(drawing) -> str:
+    return own_block([(e.text, e.height) for e in drawing.entities if e.kind == "text" and e.text])

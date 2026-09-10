@@ -29,6 +29,7 @@ from .levels import parse_levels
 from .rebar_tables import kot_from_label, parse_rebar_label_groups, parse_rebar_labels, parse_rebar_tables, target_from_label
 from .loader import UNIT_SCALE, Drawing, load_dxf
 from .materials import scan_materials
+from .blocks import own_block_of_drawing, scan_drawing as scan_blocks
 from .rebar_mix import scan_drawing as scan_rebar_mix
 from .rebar_mix import scan_drawing_layers as scan_rebar_layers
 from .schedules import parse_rooms, parse_schedule
@@ -68,6 +69,8 @@ class AnalysisResult:
     materials: dict = field(default_factory=dict)   # yazılardan tanınan malzeme / sistem kanıtı (parser/materials.py)
     rebar_mix: dict = field(default_factory=dict)   # donatı yazılarından çap payları (parser/rebar_mix.py)
     rebar_layers: dict = field(default_factory=dict)  # alt / üst donatı kanıt sayısı (çift kat mı; parser/rebar_mix.py)
+    blocks_seen: dict = field(default_factory=dict)  # yazılarda geçen blok adları: {"A1": 1, "C2": 1} (parser/blocks.py)
+    own_block: str = ""                              # paftanın kendi bloğu (en iri "… BLOK" yazısı = pafta başlığı)
     rooms: list[dict] = field(default_factory=list)  # mahal alanı yazıları (parser/schedules.py: parse_rooms)
     poz: dict = field(default_factory=dict)          # doğrama pozları: sizes / kinds / prefixes (detectors/openings.py: poz_catalog)
     unit_verdict: str | None = None       # yazı yükseklikleri / etiketlerin desteklediği birim (yeterli kanıt yoksa None)
@@ -87,6 +90,7 @@ class AnalysisResult:
             "layers": [l.to_dict() for l in self.layers],
             "warnings": self.warnings, "suggested_unit": self.suggested_unit, "materials": self.materials,
             "rebar_mix": self.rebar_mix, "rebar_layers": self.rebar_layers,
+            "blocks_seen": self.blocks_seen, "own_block": self.own_block,
             "poz": self.poz, "unit_verdict": self.unit_verdict,
             "disciplines": self.disciplines, "discipline_hints": self.discipline_hints,
             "levels": self.levels, "kot": self.kot,
@@ -412,6 +416,7 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
     result.materials = materials
     result.rebar_mix = scan_rebar_mix(drawing)
     result.rebar_layers = scan_rebar_layers(drawing)
+    result.blocks_seen, result.own_block = scan_blocks(drawing), own_block_of_drawing(drawing)
     result.rooms = room_rows(drawing)
     if suggested and suggested != drawing.unit:
         result.suggested_unit = suggested
@@ -438,6 +443,7 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
         result.materials = scan_materials(drawing)
         result.rebar_mix = scan_rebar_mix(drawing)
         result.rebar_layers = scan_rebar_layers(drawing)
+        result.blocks_seen, result.own_block = scan_blocks(drawing), own_block_of_drawing(drawing)
         result.disciplines = [STANDARD_DISCIPLINE]
         return result
     if discipline == MAPPED_DISCIPLINE:
@@ -447,6 +453,7 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
         result.materials = scan_materials(drawing)
         result.rebar_mix = scan_rebar_mix(drawing)
         result.rebar_layers = scan_rebar_layers(drawing)
+        result.blocks_seen, result.own_block = scan_blocks(drawing), own_block_of_drawing(drawing)
         result.disciplines = [REBAR_DISCIPLINE]
         return result
     is_std = discipline == STANDARD_DISCIPLINE
@@ -496,7 +503,8 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
     result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
                             discipline=discipline, layers=layer_infos, warnings=list(drawing.warnings),
                             materials=scan_materials(drawing), rebar_mix=scan_rebar_mix(drawing),
-                            rebar_layers=scan_rebar_layers(drawing), disciplines=list(discs))
+                            rebar_layers=scan_rebar_layers(drawing), blocks_seen=scan_blocks(drawing),
+                            own_block=own_block_of_drawing(drawing), disciplines=list(discs))
     result._catalog = catalog   # mekanik dedektörü kalem kodlarını katalogdan doğrular
 
     if discipline == "structural" or (is_std and ksf_struct):
