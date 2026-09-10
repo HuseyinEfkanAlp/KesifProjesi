@@ -249,7 +249,8 @@ export interface SheetInfo {
   entity_count: number
   text_count: number
   titled: boolean
-  source: 'frame' | 'cluster' | 'title'
+  /** Paftanın nasıl bulunduğu; "+split": kutu, içindeki pafta başlıklarına göre bölündü */
+  source: string
   /** Paftadaki diğer başlık adayları (ana başlık yanlış yazılmışsa kalıp planını bunlardan tanırız) */
   titles: string[]
   /** Başlıktan tanınan plan tipi ve disiplin önerisi ("" = tanınamadı) */
@@ -271,6 +272,10 @@ export interface SourceInfo {
   /** Başlıktaki ($INSUNITS) birim ve yazı yüksekliğinden önerilen birim (bilgi) */
   unit?: string
   suggested_unit?: string
+  /** Pafta sayılmayıp listeden çıkarılan artık küme sayısı (üç çizgilik parçalar, yalnız yazı taşıyan köşeler) */
+  dropped?: number
+  /** Pafta düzeninin dışına kaçmış, sınır kutusunu şişiren nesne sayısı */
+  strays?: number
 }
 
 /** Yükleme yanıtı: dosya çok paftalıysa önce pafta seçilir */

@@ -177,6 +177,12 @@ export default function PlanIntake({ projectId, storeyHeight, onChanged, compact
             Her pafta başlığından plan tipi ve analiz disiplini tanındı; tanınanlar işaretli. Yanlışsa plan tipini değiştirin, tanınmayanı seçin.
             Kesit ve detay paftaları metraja girmediği için işaretlenmez. Kat kalıp planlarında "kaç kat temsil ediyor" ve kat yüksekliğini girin.
           </p>
+          {((picker.source.dropped ?? 0) > 0 || (picker.source.strays ?? 0) > 0) && (
+            <p className="muted hint">
+              {(picker.source.dropped ?? 0) > 0 && <>Pafta sayılmayan {picker.source.dropped} artık küme listelenmedi (aks balonu, ölçü çizgisi, yalnız yazı taşıyan köşeler). </>}
+              {(picker.source.strays ?? 0) > 0 && <>Çizim düzeninin dışına kaçmış {picker.source.strays} nesne pafta tespitine katılmadı.</>}
+            </p>
+          )}
           <div className="row" style={{ marginBottom: 8 }}>
             <button className="secondary small" onClick={() => setShowAll(!showAll)}>
               {showAll ? 'Yalnızca tanınan paftaları göster' : `Tüm paftaları göster (${picker.sheets.length})`}

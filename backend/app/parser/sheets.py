@@ -29,10 +29,19 @@ import numpy as np
 
 # Pafta başlığı sayılan yazılar
 TITLE_RE = re.compile(r"PLAN|KES[İI]T|DETAY|APL[İI]KASYON|G[ÖO]R[ÜU]N[ÜU]Ş|Ç[İI]Z[İI]M|CIZIM", re.IGNORECASE)
+# "A-A KESİTİ", "K1-K1 KESITI": paftanın **içindeki** kesit işareti; pafta başlığı değildir. Kiriş detay
+# paftalarında bir paftada onlarca tanesi olur, bunlara bölünürse tek pafta yüzlerce parçaya ayrılır.
+SECTION_RE = re.compile(r"^\s*[A-ZÇĞİÖŞÜ]{1,2}\d{0,2}\s*[-–]\s*[A-ZÇĞİÖŞÜ]{1,2}\d{0,2}\s+KES[İI]T", re.IGNORECASE)
 CODEPAGES = {"ANSI_1254": "cp1254", "ANSI_1252": "cp1252", "ANSI_1250": "cp1250", "ANSI_1251": "cp1251"}
 # Bu boyutun üstündeki dosyalar ezdxf ile hiç açılmaz; pafta seçimi zorunludur
 BIG_FILE_BYTES = 40 * 1024 * 1024
+# Pafta tespiti değiştikçe artar: eski .sheets.json önbellekleri yok sayılır (yoksa kullanıcı eski, bozuk
+# pafta listesini görmeye devam eder).
+SCAN_VERSION = 2
 MIN_SHEET_ENTITIES = 5
+# Başlıksız bir kutu ancak paftaların ortalamasının bu kadarını taşıyorsa gerçek paftadır; altındakiler
+# "sadece yazı olan pafta", "üç çizgilik artık" gibi seçilebilir çöp satırlarıdır.
+JUNK_SHARE = 0.02
 FRAME_COVERAGE_MIN = 0.5   # çerçevelerin içine düşen nesne oranı bunun altındaysa "çerçeve" sanılanlar çerçeve değildir
 # Kümelemede kullanılan nesne tipleri: kırpmaya alınanlar + INSERT (konumu güvenilir).
 # HATCH'in 10/20 kodu "yükseklik noktası"dır (çoğu zaman 0,0); DIMENSION tanım noktası pafta dışına düşebilir.
@@ -99,6 +108,8 @@ class SheetScan:
     layers: dict[str, int] = field(default_factory=dict)   # dosyadaki katmanlar -> geometrik nesne sayısı (en kalabalık 40; yazılar hariç)
     suggested_unit: str | None = None   # yazı yükseklikleri başlıktaki birimi yalanlıyorsa dosyanın gerçek birimi (mm / cm / m)
     text_height: float = 0.0            # medyan yazı yüksekliği (çizim birimi)
+    dropped: int = 0                    # pafta sayılmayıp listeden çıkarılan artık küme sayısı
+    strays: int = 0                     # pafta düzeninin dışına kaçmış, sınır kutusunu şişiren nesne sayısı
 
     @property
     def multi_sheet(self) -> bool:
@@ -123,17 +134,19 @@ class SheetScan:
         return UNIT_SCALE.get(u) if u else None
 
     def to_dict(self) -> dict:
-        return {"path": self.path, "insunits": self.insunits, "entity_count": self.entity_count,
+        return {"version": SCAN_VERSION, "path": self.path, "insunits": self.insunits, "entity_count": self.entity_count,
                 "extent": list(self.extent) if self.extent else None, "sheets": [s.to_dict() for s in self.sheets],
                 "titles": list(self.titles), "layers": dict(self.layers),
-                "suggested_unit": self.suggested_unit, "text_height": self.text_height}
+                "suggested_unit": self.suggested_unit, "text_height": self.text_height,
+                "dropped": self.dropped, "strays": self.strays}
 
     @classmethod
     def from_dict(cls, d: dict) -> "SheetScan":
         return cls(d["path"], int(d.get("insunits", 0)), int(d.get("entity_count", 0)),
                    tuple(d["extent"]) if d.get("extent") else None, [Sheet.from_dict(s) for s in d.get("sheets", [])],
                    list(d.get("titles", [])), dict(d.get("layers", {})),
-                   d.get("suggested_unit") or None, float(d.get("text_height", 0.0) or 0.0))
+                   d.get("suggested_unit") or None, float(d.get("text_height", 0.0) or 0.0),
+                   int(d.get("dropped", 0) or 0), int(d.get("strays", 0) or 0))
 
     def cache_path(self) -> Path:
         return _cache_path(self.path)
@@ -147,7 +160,10 @@ class SheetScan:
         if not cache.exists():
             return None
         try:
-            return cls.from_dict(json.loads(cache.read_text(encoding="utf-8")))
+            d = json.loads(cache.read_text(encoding="utf-8"))
+            if int(d.get("version", 1)) != SCAN_VERSION:
+                return None       # pafta tespiti değişti: eski liste kullanılmaz, dosya yeniden taranır
+            return cls.from_dict(d)
         except Exception:
             return None
 
@@ -315,6 +331,36 @@ def _clean_text(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+# ---------- Çizimin gövdesi ----------
+
+def core_region(xs: np.ndarray, ys: np.ndarray) -> tuple[Bbox, np.ndarray]:
+    """Çizimin gerçek gövdesi (sınır kutusu) ve gövdeye düşen nesnelerin maskesi.
+
+    Pafta düzeninin dışına kaçmış tek tük nesne — yanlış yapıştırılmış blok, sıfır noktasında unutulmuş
+    çizgi — sınır kutusunu on, yüz kat büyütür. Çerçevenin en küçük boyu, kümeleme boşluğu, başlık bandı payı:
+    bütün eşikler sınır kutusundan türediği için bu birkaç nesne pafta tespitini tümden bozar (C1 bloğunda
+    7.735 nesnenin %1'i genişliği 100 bin birimden 7,4 milyona çıkarıyordu; sonuç: altı kat planı tek pafta).
+
+    Gövde %1–%99 yüzdeliklerinden alınır, yarım gövde boyu pay bırakılır; bir kez daha daraltılıp durulur."""
+    n = len(xs)
+    if n == 0:
+        return (0.0, 0.0, 0.0, 0.0), np.zeros(0, dtype=bool)
+    keep = np.ones(n, dtype=bool)
+    if n >= 20:
+        for _ in range(3):
+            x, y = xs[keep], ys[keep]
+            x0, x1 = np.percentile(x, [1.0, 99.0])
+            y0, y1 = np.percentile(y, [1.0, 99.0])
+            pad = 0.5 * max(float(x1 - x0), float(y1 - y0), 1e-9)
+            nxt = (xs >= x0 - pad) & (xs <= x1 + pad) & (ys >= y0 - pad) & (ys <= y1 + pad)
+            if int(np.count_nonzero(nxt)) < 0.5 * n or np.array_equal(nxt, keep):
+                break
+            keep = nxt
+    if not keep.any():
+        keep = np.ones(n, dtype=bool)
+    return (float(xs[keep].min()), float(ys[keep].min()), float(xs[keep].max()), float(ys[keep].max())), keep
+
+
 # ---------- Çerçeve (pafta sınırı) tespiti ----------
 
 def _rect_of_polyline(xs: list[float], ys: list[float]) -> Bbox | None:
@@ -375,8 +421,54 @@ def _rects_from_lines(lines: np.ndarray, min_len: float) -> list[Bbox]:
     return rects
 
 
+def _overlap(a: Bbox, b: Bbox) -> float:
+    """İki kutunun kesişim alanı."""
+    return (max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1])))
+
+
+def _contains(outer: Bbox, inner: Bbox, tol: float) -> bool:
+    return (inner[0] >= outer[0] - tol and inner[1] >= outer[1] - tol
+            and inner[2] <= outer[2] + tol and inner[3] <= outer[3] + tol)
+
+
+def _area(r: Bbox) -> float:
+    return (r[2] - r[0]) * (r[3] - r[1])
+
+
+def _is_container(r: Bbox, cands: list[Bbox], tol: float) -> bool:
+    """r, içine iki ya da daha çok paftayı alan bir "layout" kutusu mu?
+
+    Pafta çerçevesi başka pafta çerçevesi taşımaz; taşıyorsa o bir çerçeve değil, hepsini kapsayan dış
+    dikdörtgendir. İçindekiler kutunun en az yarısını dolduruyorsa (antet kutusu, detay çerçevesi gibi tek tük
+    küçük kutular sayılmaz) r atılır."""
+    ar = _area(r)
+    if ar <= 0:
+        return False
+    inner: list[Bbox] = []
+    for c in cands:
+        ac = _area(c)
+        if c is r or ac < 0.08 * ar or ac > 0.75 * ar or not _contains(r, c, tol):
+            continue
+        if any(_overlap(c, k) >= 0.7 * max(ac, _area(k)) for k in inner):
+            continue      # aynı yere iki kez çizilmiş çerçeve tek sayılır
+        inner.append(c)
+    return len(inner) >= 2 and sum(_area(c) for c in inner) >= 0.5 * ar
+
+
+def dedupe_boxes(boxes: list[tuple[Bbox, str]]) -> list[tuple[Bbox, str]]:
+    """Aynı paftayı gösteren kutuları teke indirir: üst üste çizilmiş çerçeveler, aynı kutuyu iki kez veren
+    bölme. Yalnız neredeyse aynı olan kutular birleşir; büyük bir kutu içindeki küçük paftaları yutmaz."""
+    out: list[tuple[Bbox, str]] = []
+    for b, src in sorted(boxes, key=lambda t: -_area(t[0])):
+        if any(_overlap(b, k) >= 0.7 * max(_area(b), _area(k)) for k, _ in out):
+            continue
+        out.append((b, src))
+    return out
+
+
 def _select_frames(rects: list[Bbox], extent: float) -> list[Bbox]:
-    """Aday dikdörtgenlerden pafta çerçevelerini seçer: yeterince büyük, birbirinin içinde olmayanlar."""
+    """Aday dikdörtgenlerden pafta çerçevelerini seçer: yeterince büyük, başka pafta taşımayan, birbirinin
+    kopyası olmayan dikdörtgenler."""
     if not rects:
         return []
     min_side = extent * 1e-4
@@ -388,6 +480,14 @@ def _select_frames(rects: list[Bbox], extent: float) -> list[Bbox]:
     side_min = 0.05 * math.sqrt(amax)
     cands = [r for r, a in zip(cands, areas)
              if a >= 0.12 * amax and (r[2] - r[0]) >= side_min and (r[3] - r[1]) >= side_min]
+    if not cands:
+        return []
+    # İçine iki ya da daha çok pafta alan dış dikdörtgenler atılır. Eskiden tersi olurdu: en büyük kutu önce
+    # alınır, içine düşen gerçek çerçeveler "iç içe" diye elenirdi — tek bir layout kutusu altı kat planını
+    # birden yutuyordu (C1 bloğu).
+    tol = extent * 1e-4
+    inner_only = [r for r in cands if not _is_container(r, cands, tol)]
+    cands = inner_only or cands
     cands.sort(key=lambda r: -(r[2] - r[0]) * (r[3] - r[1]))
     kept: list[Bbox] = []
     for r in cands:
@@ -568,6 +668,150 @@ def boxes_from_titles(titles: list[tuple[float, float, float, str]], xs: np.ndar
     return out
 
 
+def _sparsest_cut(values: np.ndarray, lo: float, hi: float) -> float:
+    """[lo, hi] aralığında nesnelerin en seyrek olduğu yer: iki pafta arasındaki boşluk.
+
+    İki başlığın tam ortasından kesmek yanlıştır — plan kendi başlığının üstünde ya da altında durur, orta
+    nokta çoğu kez planın içine düşer. Paftalar arasında her zaman boşluk vardır; kesim oraya konur."""
+    if hi <= lo:
+        return (lo + hi) / 2.0
+    v = values[(values > lo) & (values < hi)]
+    if len(v) == 0:
+        return (lo + hi) / 2.0
+    nb = 60
+    counts = np.bincount(np.minimum(((v - lo) / (hi - lo) * nb).astype(np.int64), nb - 1), minlength=nb)
+    floor = int(counts.min())
+    runs: list[tuple[int, int, int]] = []
+    start: int | None = None
+    for i, c in enumerate(np.append(counts, floor + 1)):
+        if c <= floor and start is None:
+            start = i
+        elif c > floor and start is not None:
+            runs.append((i - start, start, i))
+            start = None
+    if not runs:
+        return (lo + hi) / 2.0
+    _, a, b = max(runs)
+    return lo + (a + b) / 2.0 / nb * (hi - lo)
+
+
+def _title_groups(vals: list[float], span: float) -> list[list[int]]:
+    """Başlık konumlarını boşluklara göre gruplar; aynı paftadaki alt başlıklar tek grup sayılır."""
+    tol = 0.08 * span
+    groups: list[list[int]] = []
+    for i in sorted(range(len(vals)), key=lambda i: vals[i]):
+        if groups and vals[i] - vals[groups[-1][-1]] <= tol:
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+    return groups
+
+
+def split_box_by_titles(box: Bbox, tt: list[tuple[float, float, float, str]],
+                        xs: np.ndarray, ys: np.ndarray, strict: bool = True) -> list[Bbox]:
+    """Bir kutu birden çok pafta başlığı taşıyorsa paftalara böler; bölünemiyorsa boş liste döner.
+
+    Ruhsat dosyalarında paftalar çoğu kez çerçevesizdir; tek bir layout dikdörtgeni ya da tek küme altı planı
+    birden kapsar (C1 bloğu: çatı, zemin, bodrum, birinci kat, çatı planı ve görünüşler tek "pafta"ydı).
+    Aynı boydaki başlıklar pafta sayısını verir: kutu önce başlık sütunlarına (x), sonra her sütun içinde
+    satırlara (y) bölünür; kesim iki komşu başlık arasındaki en boş yerden geçer."""
+    tt = [t for t in tt if not SECTION_RE.match(t[3])]
+    if len(tt) < 2:
+        return []
+    # Pafta başlığı kutunun **en büyük** yazısıdır. Bir kat planının içinde "A-A KESİTİ", "MERDİVEN DETAYI"
+    # gibi daha küçük başlıklar da vardır; onlara bölmek planı paramparça eder.
+    h_max = max(t[2] for t in tt)
+    same = [t for t in tt if t[2] >= 0.8 * h_max]
+    x0, y0, x1, y1 = box
+    span = max(x1 - x0, y1 - y0, 1e-9)
+    uniq: list[tuple[float, float, float, str]] = []
+    for t in sorted(same, key=lambda t: -t[2]):     # aynı yerdeki iki satırlık başlık tek sayılır
+        if not any(abs(t[0] - u[0]) <= 0.02 * span and abs(t[1] - u[1]) <= 0.02 * span for u in uniq):
+            uniq.append(t)
+    same = uniq
+    if len(same) < 2:
+        return []
+    w, h = x1 - x0, y1 - y0
+    cols = _title_groups([t[0] for t in same], w)
+    col_x = [median([same[i][0] for i in g]) for g in cols]
+    cx = [x0] + [_sparsest_cut(xs, col_x[i], col_x[i + 1]) for i in range(len(col_x) - 1)] + [x1]
+    cells: list[Bbox] = []
+    for ci, g in enumerate(cols):
+        gy = [same[i][1] for i in g]
+        rows = _title_groups(gy, h)
+        row_y = [median([gy[j] for j in r]) for r in rows]
+        band = ys[(xs >= cx[ci]) & (xs <= cx[ci + 1])]
+        cy = [y0] + [_sparsest_cut(band, row_y[i], row_y[i + 1]) for i in range(len(row_y) - 1)] + [y1]
+        for ri in range(len(rows)):
+            cells.append((cx[ci], cy[ri], cx[ci + 1], cy[ri + 1]))
+    if len(cells) < 2:
+        return []
+    # Bölme ancak her parça gerçek bir pafta kadar dolu olursa kabul edilir; bir parça bile cılız kalıyorsa
+    # bölünen şey birden çok pafta değil, tek paftanın içindeki alt başlıklardır.
+    total = int(np.count_nonzero((xs >= x0) & (xs <= x1) & (ys >= y0) & (ys <= y1)))
+    floor = max(float(MIN_SHEET_ENTITIES), 0.2 * total / len(cells))   # ortalama payın beşte biri
+    out: list[Bbox] = []
+    for c in cells:
+        m = (xs >= c[0]) & (xs <= c[2]) & (ys >= c[1]) & (ys <= c[3])
+        if int(np.count_nonzero(m)) < floor:
+            if strict:
+                return []        # bir parça bile cılızsa bölünen şey tek paftanın alt başlıklarıdır
+            continue
+        bx, by = xs[m], ys[m]
+        out.append((float(bx.min()), float(by.min()), float(bx.max()), float(by.max())))
+    return out if len(out) >= 2 else []
+
+
+def prune_sheets(sheets: list[Sheet]) -> tuple[list[Sheet], int]:
+    """Pafta sayılmayacak artık kümeleri listeden çıkarır.
+
+    Çerçeve ve kümeleme her zaman artık üretir: aks balonu, ölçü çizgisi, üç çizgilik bir işaret, yalnız yazı
+    taşıyan bir köşe. Bunlar "Pafta 7 (başlıksız, 3 nesne)" diye seçilebilir satırlar olarak listelenince
+    pafta listesi kullanılamaz hale gelir. Başlığı olan her kutu paftadır; başlıksız kutu ancak paftaların
+    ortancasının JUNK_SHARE kadarını taşıyorsa paftadır — böylece başlığı okunamamış gerçek paftalar
+    (24 bin nesnelik kiriş detayı) listede kalır, üç çizgilik artıklar kalmaz."""
+    if not sheets:
+        return [], 0
+    ref = [sh.entity_count for sh in sheets if sh.titled] or [max(sh.entity_count for sh in sheets)]
+    biggest = max(sh.entity_count for sh in sheets)
+    floor = max(float(MIN_SHEET_ENTITIES), JUNK_SHARE * median(ref), 0.5 * JUNK_SHARE * biggest)
+    kept = [sh for sh in sheets if sh.titled or sh.entity_count >= floor]
+    if len(kept) < 2:
+        return sheets, 0     # her şey elendi: tek planlı dosya olabilir, listeyi olduğu gibi bırak
+    return kept, len(sheets) - len(kept)
+
+
+def segmentation_score(sheets: list[Sheet]) -> float:
+    """Bir bölümlemenin çizimi ne kadar iyi açıkladığı.
+
+    Başlığı okunan pafta iyi; "başlıksız artık" kötü; üst üste binen paftalar çok kötü — gerçek paftalar
+    yan yana durur, birbirinin üstüne binmez. Çakışma cezası olmadan, çizgilerden yanlışlıkla çıkarılmış
+    iç içe dikdörtgenler "çerçeve" sanılıp doğru kümelemeyi yenebiliyor."""
+    if not sheets:
+        return float("-inf")
+    titled = sum(1 for sh in sheets if sh.titled)
+    over = 0
+    for i, a in enumerate(sheets):
+        aa = _area(a.bbox)
+        for b in sheets[i + 1:]:
+            ab = _area(b.bbox)
+            if min(aa, ab) > 0 and _overlap(a.bbox, b.bbox) >= 0.3 * min(aa, ab):
+                over += 1
+    return titled - 0.3 * (len(sheets) - titled) - 2.0 * over
+
+
+def finalize_sheets(sheets: list[Sheet]) -> tuple[list[Sheet], int]:
+    """Artıkları ayıklar, sıra numarasını verir, başlıksız paftaları içeriğiyle adlandırır."""
+    sheets, dropped = prune_sheets(sheets)
+    for i, sh in enumerate(sheets):
+        sh.index = i
+        if not sh.titled:
+            top = next(iter(sh.layers), "")
+            n = f"{sh.entity_count:,}".replace(",", ".")
+            sh.title = f"Pafta {i + 1} (başlıksız, {n} nesne{', en çok ' + top if top else ''})"
+    return sheets, dropped
+
+
 def _build_sheets(boxes: list[tuple[Bbox, str]], xs: np.ndarray, ys: np.ndarray,
                   titles: list[tuple[float, float, float, str]], extent: float,
                   layer_ids: np.ndarray | None = None, layer_names: list[str] | None = None,
@@ -615,12 +859,7 @@ def _build_sheets(boxes: list[tuple[Bbox, str]], xs: np.ndarray, ys: np.ndarray,
             rows[-1].append(s)
         else:
             rows.append([s])
-    sheets = [s for row in rows for s in sorted(row, key=lambda s: s.bbox[0])]
-    for i, s in enumerate(sheets):
-        s.index = i
-        if not s.titled:
-            s.title = f"Pafta {i + 1} (başlıksız, {s.entity_count} nesne)"
-    return sheets
+    return [s for row in rows for s in sorted(row, key=lambda s: s.bbox[0])]
 
 
 def scan_sheets(path: str | Path) -> SheetScan:
@@ -697,15 +936,30 @@ def scan_sheets(path: str | Path) -> SheetScan:
     npy = np.frombuffer(ys, dtype="d").copy() if len(ys) else np.zeros(0)
     if len(npx) == 0:
         return SheetScan(str(path), insunits, count, None, [])
-    extent_box = (float(npx.min()), float(npy.min()), float(npx.max()), float(npy.max()))
-    extent = max(extent_box[2] - extent_box[0], extent_box[3] - extent_box[1])
+    npl = np.frombuffer(layer_ids, dtype="i").copy() if len(layer_ids) else np.zeros(0, dtype="i")
+    geom = ~(np.frombuffer(is_text, dtype="b").astype(bool)) if len(is_text) else np.ones(0, dtype=bool)
+    # Pafta düzeninin dışına kaçmış nesneler sınır kutusunu şişirir ve bütün eşikleri bozar: gövdeye inilir.
+    extent_box, core = core_region(npx, npy)
+    strays = int(np.count_nonzero(~core))
+    if strays:
+        npx, npy = npx[core], npy[core]
+        if len(npl) == len(core):
+            npl = npl[core]
+        if len(geom) == len(core):
+            geom = geom[core]
+    core_w, core_h = extent_box[2] - extent_box[0], extent_box[3] - extent_box[1]
+    extent = max(core_w, core_h)
     titles: list[tuple[float, float, float, str]] = []
     big_other: list[tuple[float, float, float, str]] = []
     med = 0.0
+
+    def _in_core(t: tuple[float, float, float, str]) -> bool:
+        return extent_box[0] <= t[0] <= extent_box[2] and extent_box[1] <= t[1] <= extent_box[3]
+
     if len(heights):
         med = median(heights)
-        titles = [t for t in texts if t[2] >= 1.8 * med]
-        big_other = [t for t in other_texts if t[2] >= 1.8 * med]
+        titles = [t for t in texts if t[2] >= 1.8 * med and _in_core(t)]
+        big_other = [t for t in other_texts if t[2] >= 1.8 * med and _in_core(t)]
     suggested_unit = unit_from_text_height(med, INSUNITS_NAME.get(insunits)) if len(heights) >= 20 else None
 
     # 1) çerçeveler
@@ -721,6 +975,11 @@ def scan_sheets(path: str | Path) -> SheetScan:
                     cands.append((x + b[0] * sx, y + b[1] * sy, x + b[0] * sx + w, y + b[1] * sy + h)
                                  if sx > 0 and sy > 0 else (min(x + b[0] * sx, x + b[2] * sx), min(y + b[1] * sy, y + b[3] * sy),
                                                             max(x + b[0] * sx, x + b[2] * sx), max(y + b[1] * sy, y + b[3] * sy)))
+    # Gövdeden belirgin büyük dikdörtgen pafta çerçevesi olamaz: kaçak nesnelerle birlikte çizilmiş dev "layout"
+    # kutuları buradan elenir. Gövde nesnelerin **ilk** noktalarından hesaplandığı (çerçeve polyline'ının yalnız
+    # bir köşesi sayıldığı) için cömert pay bırakılır; asıl ayıklamayı ölçü tekrarı yapar.
+    lim_w, lim_h = core_w + 0.3 * extent, core_h + 0.3 * extent
+    cands = [r for r in cands if (r[2] - r[0]) <= lim_w and (r[3] - r[1]) <= lim_h]
     frames = _select_frames(cands, extent) if extent > 0 else []
     # boş çerçeveler (şablon antet vb.) atılır; çerçeveler nesnelerin çoğunu kapsamıyorsa bunlar pafta çerçevesi değildir
     mask = np.zeros(len(npx), dtype=bool)
@@ -731,48 +990,69 @@ def scan_sheets(path: str | Path) -> SheetScan:
             kept_frames.append((x0, y0, x1, y1))
             mask |= m
     frames = kept_frames if np.count_nonzero(mask) >= FRAME_COVERAGE_MIN * len(npx) else []
-    boxes: list[tuple[Bbox, str]] = []
+    frame_boxes: list[tuple[Bbox, str]] = []
     if len(frames) >= 2:
-        boxes = [(fr, "frame") for fr in frames]
-        # çerçeve dışında kalan nesneler (varsa) kümelenerek eklenir
-        rest = ~mask
+        frame_boxes = [(fr, "frame") for fr in frames]
+        rest = ~mask                       # çerçeve dışında kalan nesneler (varsa) kümelenerek eklenir
         if np.count_nonzero(rest) >= max(MIN_SHEET_ENTITIES, int(0.01 * len(npx))):
             for b in cluster_sheets(npx[rest], npy[rest], extent) or [
                     (float(npx[rest].min()), float(npy[rest].min()), float(npx[rest].max()), float(npy[rest].max()))]:
-                boxes.append((b, "cluster"))
-    else:
-        boxes = [(b, "cluster") for b in cluster_sheets(npx, npy, extent)]
-    # çerçeve / küme sayısı aynı hizadaki pafta başlıklarından belirgin azsa (çerçevesiz dizilim ya da birkaç büyük layout
-    # dikdörtgeni çerçeve sanıldıysa): bantlar başlık x konumlarından
+                frame_boxes.append((b, "cluster"))
+    cluster_boxes = [(b, "cluster") for b in cluster_sheets(npx, npy, extent)]
     band_names: list[str] = []
-    tb = boxes_from_titles(titles, npx, npy, extent, big_other, band_names)
-    title_bands = False
-    if len(tb) >= 3 and (len(tb) > len(boxes) if len(frames) < 2 else len(tb) >= len(boxes) + 2):
-        boxes = [(b, "title") for b in tb]
-        title_bands = True
-    npl = np.frombuffer(layer_ids, dtype="i").copy() if len(layer_ids) else np.zeros(0, dtype="i")
-    geom = ~(np.frombuffer(is_text, dtype="b").astype(bool)) if len(is_text) else np.ones(0, dtype=bool)
-    sheets = _build_sheets(boxes, npx, npy, titles, extent, npl, layer_names, geom) if len(boxes) >= 2 else []
-    if block_texts:
-        placeholder = re.compile(r"\b(ADI|ADİ|NAME|TITLE)\b", re.IGNORECASE)   # "KESİT ADI", "PAFTA ADI": yer tutucu
-        for sh in sheets:
-            if sh.titled:
+    tb = boxes_from_titles(titles, npx, npy, extent, big_other, band_names)   # çerçevesiz, yan yana dizilmiş paftalar
+    placeholder = re.compile(r"\b(ADI|ADİ|NAME|TITLE)\b", re.IGNORECASE)     # "KESİT ADI", "PAFTA ADI": yer tutucu
+    # başlık bandı adları: pafta adı bandın başlığıdır, paftadaki daha büyük alt başlıklar (ÖN GÖRÜNÜŞ…) aday listesine
+    band_by_box = ({tuple(round(v, 3) for v in b): n for b, n in zip(tb, band_names)}
+                   if len(band_names) == len(tb) else {})
+
+    def _segment(bx: list[tuple[Bbox, str]]) -> tuple[list[Sheet], int]:
+        """Bir kutu kümesini paftalara çevirir: kopyaları eler, çok başlıklı kutuları böler, artıkları ayıklar."""
+        bx = dedupe_boxes(bx)
+        if titles and bx:
+            refined: list[tuple[Bbox, str]] = []
+            for bbox, src in bx:
+                tin = [t for t in titles if bbox[0] <= t[0] <= bbox[2] and bbox[1] <= t[1] <= bbox[3]]
+                parts = split_box_by_titles(bbox, tin, npx, npy) if len(tin) >= 2 else []
+                refined.extend([(pb, src + "+split") for pb in parts] if parts else [(bbox, src)])
+            bx = dedupe_boxes(refined)
+        if len(bx) < 2:
+            return [], 0
+        sh = _build_sheets(bx, npx, npy, titles, extent, npl, layer_names, geom)
+        for one in sh:
+            n = band_by_box.get(tuple(round(v, 3) for v in one.bbox))
+            if n and one.title != n:
+                if one.titled and one.title not in one.titles:
+                    one.titles.insert(0, one.title)
+                one.title, one.titled = n, True
+        for one in sh:      # antet bloğunun içinden gelen başlıklar: yalnız başlıksız kalan paftalara
+            if one.titled or not block_texts:
                 continue
-            x0, y0, x1, y1 = sh.bbox
+            x0, y0, x1, y1 = one.bbox
             inside = [t for t in block_texts if x0 <= t[0] <= x1 and y0 <= t[1] <= y1 and not placeholder.search(t[3])]
             if inside:
-                best = max(inside, key=lambda t: t[2])
-                sh.title, sh.titled = best[3], True
-                sh.titles = [t[3] for t in inside if t[3] != best[3]][:6]
-    if title_bands and len(band_names) == len(tb):
-        # pafta adı = başlık satırındaki yazı; paftadaki daha büyük alt başlıklar (ÖN GÖRÜNÜŞ…) aday listesine
-        by_box = {tuple(round(v, 3) for v in b): n for b, n in zip(tb, band_names)}
-        for sh in sheets:
-            n = by_box.get(tuple(round(v, 3) for v in sh.bbox))
-            if n and sh.title != n:
-                if sh.titled and sh.title not in sh.titles:
-                    sh.titles.insert(0, sh.title)
-                sh.title, sh.titled = n, True
+                pick = max(inside, key=lambda t: t[2])
+                one.title, one.titled = pick[3], True
+                one.titles = [t[3] for t in inside if t[3] != pick[3]][:6]
+        return finalize_sheets(sh)
+
+    # Üç bölümleme birden denenir — çerçeveler, nesne kümeleri, başlık bantları — ve çizimi en iyi açıklayan
+    # seçilir: başlığı okunan pafta iyi, "başlıksız artık" kötü. Tek yönteme bağlı kalınca bir dosyada doğru
+    # çalışan kural başka dosyada paftaları paramparça ediyordu.
+    sheets: list[Sheet] = []
+    dropped = 0
+    best_score = float("-inf")
+    # Dördüncü aday: bütün gövdeyi doğrudan pafta başlıklarına böl. Çerçevesi olmayan, bantlara da dizilmemiş
+    # (ızgara yerleşimli) dosyalarda paftaları veren tek yöntem budur.
+    grid = [(b, "title") for b in split_box_by_titles(extent_box, titles, npx, npy, strict=False)]
+    for bx in (frame_boxes, cluster_boxes, [(b, "title") for b in tb], grid):
+        sh, dr = _segment(list(bx))
+        if not sh:
+            continue
+        score = segmentation_score(sh)
+        if score > best_score:
+            sheets, dropped, best_score = sh, dr, score
+
     top: list[str] = []
     for t in sorted(titles, key=lambda t: -t[2]):
         if t[3] not in top:
@@ -780,7 +1060,7 @@ def scan_sheets(path: str | Path) -> SheetScan:
         if len(top) >= 8:
             break
     return SheetScan(str(path), insunits, count, extent_box, sheets, top, _top_layers(npl[geom], layer_names),
-                     suggested_unit, float(med))
+                     suggested_unit, float(med), dropped, strays)
 
 
 # ---------- Kırpma ----------

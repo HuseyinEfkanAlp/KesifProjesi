@@ -275,7 +275,8 @@ def _source_out(src: Path, scan: SheetScan) -> dict:
     orig = src.name[len(f"src_{token}_"):]
     size = src.stat().st_size
     return {"token": token, "filename": orig, "size_mb": round(size / 1e6, 1), "entity_count": scan.entity_count,
-            "can_use_whole": size <= BIG_FILE_BYTES, "unit": scan.unit or "", "suggested_unit": scan.suggested_unit or ""}
+            "can_use_whole": size <= BIG_FILE_BYTES, "unit": scan.unit or "", "suggested_unit": scan.suggested_unit or "",
+            "dropped": scan.dropped, "strays": scan.strays}
 
 
 @router.post("/projects/{project_id}/drawings", status_code=201)
