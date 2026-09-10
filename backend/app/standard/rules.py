@@ -150,7 +150,8 @@ def _r(code, factor=1.0, spec="", times=""):
 
 
 RECIPES_BY_KIND: dict[str, list[dict]] = {
-    "kalip": [_r("KALIP_ISCILIK", 1.2)],   # kurma + söküm saat/m². Kalıp iskelesi reçetede değil: döşeme alanı × (H − d) (boq.structural_items)
+    # "kalip" reçetede yok: işçiliği eleman tipine / malzemeye göre hesaplanır (quantity/recipes.py: _formwork_recipe).
+    # Kalıp iskelesi de reçetede değil: döşeme alanı × (H − d) (boq.structural_items)
     "beton": [_r("BETON_ISCILIK", 1.0), _r("VIBRATOR", 0.3), _r("BETON_KUR", 1.0), _r("BETON_POMPAJ", 1.0)],
     "demir": [_r("DEMIR_ISCILIK", 0.02)],                                         # 20 saat / ton = 0,02 saat / kg
     "duvar": [_r("DUVAR_ISCILIK", 0.8), _r("DUVAR_TUTKAL", 4.0)],                # saat / m²; kg / m² (gazbeton tutkalı)
@@ -223,3 +224,63 @@ def rebar_labor_norms(dia_mm: int, layers: str = "", prefab_pct: float = 0.0) ->
     ready = min(max(float(prefab_pct or 0.0), 0.0), 100.0) / 100.0
     out["hazirlik"] = round(out["hazirlik"] * (1.0 - ready), 2)
     return out
+
+
+# ---------------------------------------------------------------- kalıp işçiliği (eleman tipi / malzeme / tekrar)
+#
+# Kalıpta da m² başına sabit saat yanlıştır: aynı 1 m² kalıp, elemanın **biçimine** göre çok farklı emek ister.
+#
+#   kolon    küçük yüzeyde dört köşe, şakül ve eksen tutturma  -> m² başına en çok kenar ve ölçü işi
+#   perde    büyük düz panolar, m² başına az kenar             -> en ucuz düşey kalıp
+#   kiriş    taban + iki yanak, baştan aşağı destek, tavan işi -> en pahalı yatay kalıp
+#   döşeme   büyük düz yüzey (altındaki iskele ayrı kalemdir)
+#   temel    yalnız çevre kenar kalıbı, yerde, düz             -> en ucuzu
+#   merdiven rıht + basamak + eğim                             -> en pahalısı
+#
+# İşçilik üçe ayrılır (demirdeki gibi, biri hiç olmayabilir):
+#   imalat : panonun kesilip çakılması / hazırlanması — bir kez yapılır, levha kaç kez kullanılırsa ona bölünür
+#   kurma  : yerine kurma, ölçü - şakül - eksen, destek ve sıkma
+#   söküm  : söküm, temizleme, yağlama, bir sonraki kata taşıma
+#
+# Hazır panolu sistemler (çelik pano, tünel kalıp) imalatı ortadan kaldırır, kurma ve sökümü hızlandırır.
+# Değerler yaygın uygulama varsayılanıdır (ÇŞB analizinden doğrulanmadı) — katalogdan / parametreden düzenlenir.
+FORMWORK_LABOR_HOURS_PER_M2: dict[str, dict[str, float]] = {
+    #                    imalat  kurma  söküm      (saat / m², plywood, tek kullanım)
+    "column":     {"imalat": 0.35, "kurma": 0.75, "sokum": 0.35},
+    "shear_wall": {"imalat": 0.25, "kurma": 0.55, "sokum": 0.25},
+    "beam":       {"imalat": 0.40, "kurma": 0.85, "sokum": 0.40},
+    "slab":       {"imalat": 0.25, "kurma": 0.55, "sokum": 0.30},
+    "foundation": {"imalat": 0.20, "kurma": 0.40, "sokum": 0.20},
+    "parapet":    {"imalat": 0.30, "kurma": 0.70, "sokum": 0.30},
+    "stair":      {"imalat": 0.60, "kurma": 1.20, "sokum": 0.50},
+}
+# eleman tipi okunamayan kalıp kalemi (KÇS kalemi, lento reçetesi…): eski düz 1,2 sa/m² değeri
+FORMWORK_LABOR_DEFAULT: dict[str, float] = {"imalat": 0.30, "kurma": 0.60, "sokum": 0.30}
+
+# kalıp malzemesi / sistemi çarpanı (params: formwork_material)
+FORMWORK_MATERIAL_FACTOR: dict[str, dict[str, float]] = {
+    "plywood": {"imalat": 1.0,  "kurma": 1.0,  "sokum": 1.0},
+    "ahsap":   {"imalat": 1.25, "kurma": 1.15, "sokum": 1.10},   # kereste: her pano yerinde kesilip çakılır
+    "celik":   {"imalat": 0.0,  "kurma": 0.70, "sokum": 0.60},   # hazır çelik pano: imalat yok, kilitli montaj
+    "tunel":   {"imalat": 0.0,  "kurma": 0.45, "sokum": 0.40},   # tünel kalıp: vinçle tek parça
+}
+
+
+def formwork_etype_of_group(group: str) -> str:
+    """Kalıp kalem grubundan eleman tipi: "column", "foundation:raft" -> "foundation"; tanınmazsa ""."""
+    et = str(group or "").split(":")[0].strip().lower()
+    return et if et in FORMWORK_LABOR_HOURS_PER_M2 else ""
+
+
+def formwork_labor_norms(etype: str = "", material: str = "", reuse: float = 1.0) -> dict[str, float]:
+    """Bir kalıp kalemi için saat / m²: {"imalat", "kurma", "sokum"}.
+
+    imalat levhanın kullanım sayısına bölünür: pano bir kez yapılır, N kez kullanılır — her kullanımdaki
+    yerinde düzeltme payı `kurma` içindedir."""
+    base = FORMWORK_LABOR_HOURS_PER_M2.get(etype or "", FORMWORK_LABOR_DEFAULT)
+    fac = FORMWORK_MATERIAL_FACTOR.get(str(material or "plywood").strip().lower(),
+                                       FORMWORK_MATERIAL_FACTOR["plywood"])
+    n = max(float(reuse or 1.0), 1.0)
+    return {"imalat": round(base["imalat"] * fac["imalat"] / n, 4),
+            "kurma": round(base["kurma"] * fac["kurma"], 4),
+            "sokum": round(base["sokum"] * fac["sokum"], 4)}

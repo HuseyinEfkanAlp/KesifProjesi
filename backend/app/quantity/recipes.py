@@ -14,8 +14,9 @@ from __future__ import annotations
 
 from ..standard.catalog import Catalog
 from ..standard.rules import (RECIPE_MAX_DEPTH, RECIPES_BY_KIND, REBAR_CHAIR_KG_PER_TON,
+                             formwork_etype_of_group, formwork_labor_norms,
                              rebar_dia_of_group, rebar_labor_norms)
-from .boq import BoqItem, _Acc, slug
+from .boq import BoqItem, _Acc, effective_params, slug
 
 
 def _rebar_recipe(item: BoqItem, params: dict) -> list[dict]:
@@ -40,11 +41,29 @@ def _rebar_recipe(item: BoqItem, params: dict) -> list[dict]:
     return [c for c in out if c["factor"] > 0]
 
 
+def _formwork_recipe(item: BoqItem, params: dict) -> list[dict]:
+    """Kalıp kaleminin işçiliği: m² başına sabit değil, elemanın **biçimine** bağlıdır.
+
+    Aynı 1 m² kalıp kolonda dört köşe + şakül, perdede düz pano, kirişte taban + iki yanak + tavan işi,
+    temelde yalnız yerde düz kenar demektir (bkz. standard.rules.FORMWORK_LABOR_HOURS_PER_M2). Ayrıca
+    kalıp malzemesi (hazır çelik pano / tünel kalıp imalatı ortadan kaldırır) ve levhanın kaç kez
+    kullanıldığı belirleyicidir: pano bir kez yapılır, N kez kullanılır."""
+    n = formwork_labor_norms(formwork_etype_of_group(item.group),
+                             str(params.get("formwork_material") or "plywood"),
+                             float(params.get("formwork_reuse") or 1.0))
+    out = [{"code": "KALIP_IMALAT", "factor": n["imalat"], "spec": "", "times": "", "when": ""},
+           {"code": "KALIP_KURMA", "factor": n["kurma"], "spec": "", "times": "", "when": ""},
+           {"code": "KALIP_SOKUM", "factor": n["sokum"], "spec": "", "times": "", "when": ""}]
+    return [c for c in out if c["factor"] > 0]
+
+
 def recipe_of(item: BoqItem, catalog: Catalog, params: dict | None = None) -> list[dict]:
     if item.detail.get("system") or item.detail.get("info") or item.group == "fire":
         return []   # sistem başlığı, bilgi satırı ve fire satırları reçete açmaz
     if item.kind == "demir":
         return _rebar_recipe(item, params or {})
+    if item.kind == "kalip":
+        return _formwork_recipe(item, params or {})
     cit = catalog.get(item.kind)
     if cit and cit.recipe:
         return list(cit.recipe)
@@ -68,6 +87,9 @@ def expand_recipes(items: list[BoqItem], catalog: Catalog, storey_height: float 
     katkılar torun kalemlerde tekrar çarpılmaz (170 lento 14 pozdan geliyorsa lento betonu yine 170 × 0,03'tür)."""
     if off:
         return items
+    # reçete normları proje parametrelerine bakar (kalıp malzemesi, levha kullanım sayısı, hazır demir %):
+    # çağıran vermediyse varsayılanlar geçerli olmalı, ama "_rebar_layers_default" gibi ek anahtarlar da korunur
+    params = {**effective_params(params), **(params or {})}
     H = float(storey_height or 0.0)
     acc = _Acc()
     existing = {it.key for it in items}

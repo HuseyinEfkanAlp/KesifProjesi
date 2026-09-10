@@ -234,6 +234,32 @@ Program her demir kalemini çapına göre üç ayrı işe açar (`standard/rules
 A4-A5 (2.156 t, çizimden okunan çap karışımı, çift kat): **55.032 adam-saat ≈ 25,5 sa/ton**, 5,4 t sehpa demiri.
 Tablodaki değerler yaygın uygulama varsayılanıdır, ÇŞB analizinden doğrulanmadı — katalogdan düzenlenir.
 
+### Kalıp işçiliği: eleman biçimine, malzemeye ve tekrar kullanıma bağlı
+
+Kalıpta da m² başına sabit saat yanlıştır: aynı 1 m² kalıp kolonda dört köşe + şakül + eksen tutturma, perdede
+düz pano, kirişte taban + iki yanak + tavan işi, temelde yalnız yerde düz kenar demektir. İşçilik üçe ayrılır
+(`standard/rules.py: FORMWORK_LABOR_HOURS_PER_M2`, `quantity/recipes.py: _formwork_recipe`):
+
+| | imalat (kesme-çakma) | kurma | söküm-temizlik | toplam |
+|---|---|---|---|---|
+| Temel (kenar kalıbı) | 0,20 | 0,40 | 0,20 | **0,80 sa/m²** |
+| Perde | 0,25 | 0,55 | 0,25 | **1,05** |
+| Döşeme | 0,25 | 0,55 | 0,30 | **1,10** |
+| Kolon | 0,35 | 0,75 | 0,35 | **1,45** |
+| Kiriş | 0,40 | 0,85 | 0,40 | **1,65** |
+| Merdiven | 0,60 | 1,20 | 0,50 | **2,30** |
+| *(tipi okunamayan kalem)* | 0,30 | 0,60 | 0,30 | **1,20** |
+
+- **İmalat levhanın kullanım sayısına bölünür** (`formwork_reuse`): pano bir kez yapılır, N kez kullanılır;
+  her kullanımdaki yerinde düzeltme payı *kurma* içindedir.
+- **Kalıp sistemi** (`formwork_material`) çarpan uygular: kereste ×1,25/1,15/1,10 · plywood ×1 ·
+  hazır çelik pano imalatı sıfırlar, kurma ×0,70 söküm ×0,60 · tünel kalıp kurma ×0,45 söküm ×0,40.
+- Döşeme altındaki **kalıp iskelesi** ayrı kalemdir (ÇŞB 15.185), bu norma dahil değildir.
+
+A4-A5 (43.348 m², tipik dağılım, 5 kullanım): plywood **45.594 saat (1,05 sa/m²)** · çelik pano 28.636 (0,66) ·
+tünel 18.609 (0,43). Eski düz 1,2 sa/m² her sistemde 52.018 saat diyordu.
+Değerler yaygın uygulama varsayılanıdır, ÇŞB analizinden doğrulanmadı.
+
 ## Metraj formülleri (statik)
 
 | Eleman | Beton | Kalıp |

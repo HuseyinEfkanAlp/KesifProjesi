@@ -417,7 +417,12 @@ AUX_ITEMS: list[CatalogItem] = [
     _i("DEMIR_HAZIRLIK", "STA", "Demir düzeltme - kesme - bükme (hazırlık)", "count", "", "KSF-STA-DEMIR_HAZIRLIK", unit=_L),
     _i("DEMIR_TASIMA", "STA", "Demir taşıma - istifleme - kata dağıtım", "count", "", "KSF-STA-DEMIR_TASIMA", unit=_L),
     _i("DEMIR_MONTAJ", "STA", "Demir yerleştirme - bağlama (montaj)", "count", "", "KSF-STA-DEMIR_MONTAJ", unit=_L),
-    _i("KALIP_ISCILIK", "STA", "Kalıp kurma + söküm işçiliği", "count", "", "KSF-STA-KALIP_ISCILIK", unit=_L),
+    # Kalıp işçiliği üçe ayrılır: normu eleman tipine, kalıp malzemesine ve levha kullanım sayısına göre değişir
+    # (rules.formwork_labor_norms). KALIP_ISCILIK eski tek kalemdir; varsayılan reçetede kullanılmaz.
+    _i("KALIP_ISCILIK", "STA", "Kalıp işçiliği (toplam, eski)", "count", "", "KSF-STA-KALIP_ISCILIK", unit=_L),
+    _i("KALIP_IMALAT", "STA", "Kalıp panosu imalatı (kesme - çakma)", "count", "", "KSF-STA-KALIP_IMALAT", unit=_L),
+    _i("KALIP_KURMA", "STA", "Kalıp kurma (ölçü - şakül - destek)", "count", "", "KSF-STA-KALIP_KURMA", unit=_L),
+    _i("KALIP_SOKUM", "STA", "Kalıp söküm - temizleme - taşıma", "count", "", "KSF-STA-KALIP_SOKUM", unit=_L),
     _i("KAZI_MAKINE", "STA", "Ekskavatör (kazı)", "count", "", "KSF-STA-KAZI_MAKINE", unit=_L),
     _i("KAMYON", "STA", "Kamyon (nakliye)", "count", "", "KSF-STA-KAMYON", unit=_L),
     _i("SIKISTIRMA", "STA", "Dolgu serme + sıkıştırma işçiliği", "count", "", "KSF-STA-SIKISTIRMA", unit=_L),
@@ -487,7 +492,7 @@ DEFAULT_RECIPES: dict[str, list[tuple]] = {
     "GROBETON": [("BETON_ISCILIK", 0.8), ("BETON_POMPAJ", 1.0)],
     "DOLGU": [("SIKISTIRMA", 0.3), ("KAMYON", 0.08)],
     "KAZI": [("KAZI_MAKINE", 0.05), ("KAMYON", 0.1)],
-    "KALIP": [("KALIP_ISCILIK", 1.2)],
+    # KALIP reçetesi koda gömülü değildir: eleman tipine / malzemeye göre hesaplanır (quantity/recipes.py: _formwork_recipe)
     "CELIK_PROFIL": [("KAYNAK", 0.5), ("ANTIPAS", 0.3), ("CELIK_BOYA", 0.3), ("CELIK_MONTAJ", 0.4), ("ANKRAJ_BULONU", 0.2, "M20")],
     "HASIR_CELIK": [("DEMIR_ISCILIK", 0.05)],
     # DEMIR reçetesi koda gömülü değildir: çapa / kata göre hesaplanır (quantity/recipes.py: _rebar_recipe).

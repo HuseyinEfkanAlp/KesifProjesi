@@ -148,22 +148,24 @@ def test_labor_hours_come_from_recipe_without_price_entry():
     it = BoqItem(key="kalip:column", kind="kalip", group="column", label="Kolon kalıbı", unit="m²",
                  quantity=1000.0, discipline="structural", kind_label="Kalıp", discipline_label="Statik")
     items = expand_recipes([it], Catalog())
-    labor = _keys(items)["kalip_iscilik:*"]
-    assert labor.unit == "saat" and labor.quantity == pytest.approx(1200.0)   # 1000 m² × 1,2 saat
+    labor = _keys(items)["kalip_kurma:*"]
+    assert labor.unit == "saat" and labor.quantity == pytest.approx(750.0)    # 1000 m² kolon × 0,75 saat
     assert labor.detail["parent_keys"] == ["kalip:column"]
 
     cost = compute_cost(items, default_price_items(items), hours_per_day=8.0)
-    line = next(l for l in cost["lines"] if l["key"] == "kalip_iscilik:*")
-    assert line["hours"] == pytest.approx(1200.0) and line["hours_source"] == "birim saat"
-    assert cost["duration"]["man_days"] == pytest.approx(150.0)               # 1200 / 8
-    assert "kalip_iscilik:*" not in cost["duration"]["missing_rates"]
-    assert "kalip_iscilik:*" in cost["duration"]["missing_crew"]              # takvim günü için ekip gerekir
+    line = next(l for l in cost["lines"] if l["key"] == "kalip_kurma:*")
+    assert line["hours"] == pytest.approx(750.0) and line["hours_source"] == "birim saat"
+    # imalat (0,35 / 5 kullanım) + kurma 0,75 + söküm 0,35 = 1,17 sa/m²
+    assert cost["duration"]["total_hours"] == pytest.approx(1170.0)
+    assert cost["duration"]["man_days"] == pytest.approx(1170.0 / 8, abs=0.2)
+    assert "kalip_kurma:*" not in cost["duration"]["missing_rates"]
+    assert "kalip_kurma:*" in cost["duration"]["missing_crew"]                # takvim günü için ekip gerekir
 
     # ekip girilince gün takvim günüdür
     prices = default_price_items(items)
-    next(p for p in prices if p.key == "kalip_iscilik:*").crew_size = 10
+    next(p for p in prices if p.key == "kalip_kurma:*").crew_size = 10
     cost = compute_cost(items, prices, hours_per_day=8.0)
-    assert next(l for l in cost["lines"] if l["key"] == "kalip_iscilik:*")["days"] == pytest.approx(15.0)
+    assert next(l for l in cost["lines"] if l["key"] == "kalip_kurma:*")["days"] == pytest.approx(9.375, abs=0.01)
 
 
 def test_explicit_hours_on_parent_are_not_counted_twice():
@@ -177,11 +179,12 @@ def test_explicit_hours_on_parent_are_not_counted_twice():
 
     cost = compute_cost(items, prices, hours_per_day=8.0)
     parent = next(l for l in cost["lines"] if l["key"] == "kalip:column")
-    child = next(l for l in cost["lines"] if l["key"] == "kalip_iscilik:*")
     assert parent["hours"] == pytest.approx(1500.0)
-    assert child["hours"] == 0.0 and child["hours_source"] == "üst kalemde sayıldı"
-    assert cost["duration"]["total_hours"] == pytest.approx(1500.0)           # 1500 + 1200 değil
-    assert "kalip_iscilik:*" not in cost["duration"]["missing_rates"]
+    for key in ("kalip_imalat:*", "kalip_kurma:*", "kalip_sokum:*"):
+        child = next(l for l in cost["lines"] if l["key"] == key)
+        assert child["hours"] == 0.0 and child["hours_source"] == "üst kalemde sayıldı"
+        assert key not in cost["duration"]["missing_rates"]
+    assert cost["duration"]["total_hours"] == pytest.approx(1500.0)           # 1500 + 1170 değil
 
 
 # ---------------------------------------------------------------- demir işçiliği: çap / kat / hazır demir
@@ -244,3 +247,57 @@ def test_rebar_layer_verdict_from_real_drawing_texts():
     # yalnız ilave alt donatı paftası: çift kat kanıtı değil
     assert layer_verdict(scan_layer_tags([("(ALT-EK)", "DONATI")] * 30)) == "tek"
     assert layer_verdict(scan_layer_tags([("ƒ12/20", "DONATI")] * 30)) == ""   # kanıt yok
+
+
+# ---------------------------------------------------------------- kalıp işçiliği: eleman tipi / malzeme / tekrar
+
+def _kalip(group: str, m2: float):
+    return BoqItem(key=f"kalip:{group}", kind="kalip", group=group, label=f"Kalıp {group}", unit="m²",
+                   quantity=m2, discipline="structural", kind_label="Kalıp", discipline_label="Statik")
+
+
+def _hours(items):
+    return {i.kind: i.quantity for i in items if i.unit == "saat"}
+
+
+def test_formwork_labor_depends_on_element_shape():
+    """Aynı 1 m² kalıp: kolonda dört köşe + şakül, perdede düz pano, temelde yerde düz kenar."""
+    cat = Catalog()
+    par = {"formwork_reuse": 1.0}   # imalatı bölme, saf normu gör
+    kolon = _hours(expand_recipes([_kalip("column", 100.0)], cat, params=par))
+    perde = _hours(expand_recipes([_kalip("shear_wall", 100.0)], cat, params=par))
+    kiris = _hours(expand_recipes([_kalip("beam", 100.0)], cat, params=par))
+    temel = _hours(expand_recipes([_kalip("foundation:raft", 100.0)], cat, params=par))
+    merdiven = _hours(expand_recipes([_kalip("stair", 100.0)], cat, params=par))
+    top = lambda h: sum(h.values())
+    assert top(temel) < top(perde) < top(kolon) < top(kiris) < top(merdiven)
+    assert kolon["kalip_kurma"] == pytest.approx(75.0)     # 100 m² × 0,75
+    assert temel["kalip_kurma"] == pytest.approx(40.0)
+    # radye alt tipi de temel bandına düşer
+    assert temel == _hours(expand_recipes([_kalip("foundation", 100.0)], cat, params=par))
+    assert "kalip_iscilik" not in kolon                     # eski tek kalem artık yazılmaz
+
+
+def test_formwork_panel_system_removes_manufacturing():
+    """Hazır çelik pano / tünel kalıpta pano imalatı yoktur, kurma ve söküm hızlanır."""
+    cat = Catalog()
+    ply = _hours(expand_recipes([_kalip("shear_wall", 100.0)], cat, params={"formwork_reuse": 1.0}))
+    steel = _hours(expand_recipes([_kalip("shear_wall", 100.0)], cat,
+                                  params={"formwork_material": "celik", "formwork_reuse": 1.0}))
+    tunel = _hours(expand_recipes([_kalip("shear_wall", 100.0)], cat,
+                                  params={"formwork_material": "tunel", "formwork_reuse": 1.0}))
+    assert ply["kalip_imalat"] == pytest.approx(25.0)
+    assert "kalip_imalat" not in steel and "kalip_imalat" not in tunel
+    assert steel["kalip_kurma"] == pytest.approx(ply["kalip_kurma"] * 0.70)
+    assert sum(tunel.values()) < sum(steel.values()) < sum(ply.values())
+
+
+def test_formwork_reuse_divides_panel_manufacturing():
+    """Pano bir kez yapılır, N kez kullanılır: imalat saati kullanım sayısına bölünür, kurma / söküm değişmez."""
+    cat = Catalog()
+    bir = _hours(expand_recipes([_kalip("column", 100.0)], cat, params={"formwork_reuse": 1.0}))
+    bes = _hours(expand_recipes([_kalip("column", 100.0)], cat, params={"formwork_reuse": 5.0}))
+    assert bir["kalip_imalat"] == pytest.approx(35.0)
+    assert bes["kalip_imalat"] == pytest.approx(7.0)
+    assert bes["kalip_kurma"] == pytest.approx(bir["kalip_kurma"])
+    assert bes["kalip_sokum"] == pytest.approx(bir["kalip_sokum"])
