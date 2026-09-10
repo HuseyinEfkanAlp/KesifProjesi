@@ -61,6 +61,17 @@ def summarize(lines: list[QuantityLine], rebar_tables: list[dict] | None = None,
         keys = [k for k in groups if groups[k]["etype"] == etype]
         line_kots = set(ratio_by_etype_kot.get(etype, {}))
         matched = {k for k in table_kots[etype] if k is not None and k in line_kots}
+        # Kalıp planı döşeme kotuyla, kolon donatı paftası kolon **üst** kotuyla adlandırılır: "+0.52 /+0.82
+        # KOTLARI KOLON APLİKASYON" ile "+0.00 kotundaki kalıp planı" aynı katın kolonlarıdır. Birebir
+        # eşleşmeyen tablo kotu, bir kat yüksekliğinden yakın ve boşta kalan kalıp planı kotuna bağlanır;
+        # bağlanmazsa o katın demiri hem tablodan hem oranla sayılır (A4-A5 kolonlarında 120 t fazla çıkıyordu).
+        free = sorted((k for k in line_kots if k is not None and k not in matched), key=_kot_val)
+        for tk in sorted((k for k in table_kots[etype] if k is not None and k not in matched), key=_kot_val):
+            near = [k for k in free if abs(_kot_val(k) - _kot_val(tk)) <= KOT_SNAP_M]
+            if near:
+                pick = min(near, key=lambda k: abs(_kot_val(k) - _kot_val(tk)))
+                matched.add(pick)
+                free.remove(pick)
         whole = (not matched) or (None in table_kots[etype]) or etype == "foundation"
         src = "tablo" if sources_by_target[etype] <= {"tablo", "elle"} else ("poz" if sources_by_target[etype] == {"poz"} else "tablo+poz")
         if keys:
@@ -216,6 +227,10 @@ def summarize(lines: list[QuantityLine], rebar_tables: list[dict] | None = None,
     return {"groups": ordered, "sections": section_rows, "totals": totals, "rebar_by_dia": rebar_by_dia,
             "rebar_table_total_kg": table_total, "rebar_ratio_total_kg": ratio_total, "rebar_by_source": rebar_by_source,
             "by_drawing": by_drawing, "warnings": warnings}
+
+
+# Donatı paftası ile kalıp planının kot adlandırması bu kadar ayrılabilir (aynı katın iki farklı referansı)
+KOT_SNAP_M = 1.5
 
 
 def _kot_val(k: str | None) -> float:

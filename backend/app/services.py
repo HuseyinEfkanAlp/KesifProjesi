@@ -344,6 +344,15 @@ def cleanup_uploads(max_age_hours: float = 24.0) -> int:
     return n
 
 
+def _drawing_kot(d) -> str | None:
+    """Paftanın kotu: önce başlığından ("+7.95 KOTU KALIP PLANI"), yoksa çizimden okunan kot.
+
+    Bazı paftaların adında kot yazmaz ("KALIP PLANI", "TEMEL KALIP PLANI") ama kot çizimin içinden okunmuştur
+    (drawing.kot). Kot olmadan o katın betonu hiçbir donatı paftasıyla eşleşemez ve demiri hem tablodan hem
+    oranla sayılır (A4-A5 kolonlarında 120 t fazla)."""
+    return kot_from_label(d.label) or (f"{float(d.kot):+.2f}" if d.kot is not None else None)
+
+
 def recompute_derived(el: Element) -> None:
     """Kullanıcı b/h/uzunluk değiştirdiğinde türetilen alan/çevreyi günceller."""
     if el.etype == "column" and el.b and el.h:
@@ -427,7 +436,7 @@ def rebar_table_rows(project: Project, session: Session) -> list[dict]:
                 continue
             target = m.get("target") or rebar_target_for(d.plan_type, d.label or "", d.filename or "")
             k = 1 if target == "foundation" else mult
-            rows.append({"drawing": d.label or d.filename, "drawing_id": d.id, "kot": m.get("kot") or kot_from_label(d.label),
+            rows.append({"drawing": d.label or d.filename, "drawing_id": d.id, "kot": m.get("kot") or _drawing_kot(d),
                          "target": target, "dia_mm": int(dia), "weight_kg": kg * k, "length_m": length_m * k,
                          "source": ("elle" if e.manual else m.get("source", "tablo")), "confidence": e.confidence,
                          "storey_count": k})
@@ -458,7 +467,7 @@ def project_quantities(project: Project, session: Session, drawings: list[Drawin
                                 rebar_ratios={**QuantityParams().rebar_ratios, **(project.rebar_ratios or {})})
         data = [ElementData.from_obj(e) for e in elements]
         for e in elements:
-            info[e.id] = {"drawing": d.label or d.filename, "drawing_id": d.id, "kot": kot_from_label(d.label), "layer": e.layer,
+            info[e.id] = {"drawing": d.label or d.filename, "drawing_id": d.id, "kot": _drawing_kot(d), "layer": e.layer,
                           "b": e.b, "h": e.h, "thickness": e.thickness, "area": round(e.area, 4), "length": round(e.length, 4),
                           "warnings": e.warnings, "storey_height": params.storey_height, "slab_thickness": params.slab_thickness}
         lines.extend(compute_all(data, params))

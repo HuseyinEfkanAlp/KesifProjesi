@@ -109,7 +109,9 @@ PLAN_TYPES: list[PlanType] = [
              pattern=r"PEYZAJ|BITKI|SERT\s*ZEMIN|CEVRE\s*DUZEN|^PEY[-_ ]|\bPEY[-_ ]?\d", hint="Sert zemin m², bitki adet."),
     PlanType("asn_asansor", "ASN", "Asansör planı", "mapped", level=OPTIONAL, pattern=r"ASANSOR"),
     # --- Mimari (özel olanlar önce, genel kat planı en sonda)
-    PlanType("mim_vaziyet", "MIM", "Vaziyet planı", "mapped", level=OPTIONAL, pattern=r"VAZIYET"),
+    # Vaziyet planı 1/1000'dir: bina dış hatları, yollar, ada sınırı. İçinden duvar / sıva / kaplama metrajı
+    # çıkarılmaz (A4-A5'te 1.073 m² sahte ytong duvarı üretiyordu); blok listesi ve alan bilgisi için yüklenir.
+    PlanType("mim_vaziyet", "MIM", "Vaziyet planı", "mapped", level=OPTIONAL, pattern=r"VAZIYET", analyze=False),
     PlanType("mim_tavan", "MIM", "Mimari tavan planı", "mapped",
              pattern=r"TAVAN", hint="Asma tavan / tavan kaplaması m²."),
     PlanType("mim_doseme_kaplama", "MIM", "Mimari döşeme (kaplama) planı", "mapped",

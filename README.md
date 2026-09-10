@@ -407,16 +407,23 @@ Demir: 11 donatı paftasının metraj tabloları (temel X/Y/ilave, döşeme alt/
 tabloları blok içindeydi (5 tablo, 633 t); kiriş detaylarında tablo yok, 7.987 adetli poz yazısından 604,6 t hesaplandı. Yalnız perde
 (7 t) oranla kaldı. Gerçek oranlar bu projede: radye 97, kolon **374**, kiriş 178, döşeme 82 kg/m³.
 
-Güven paketi sonrası (9 Eyl 2026; `find_parallel_pairs` çoklu eşleme ile aynı çizgiyi paylaşan ardışık kirişler de yakalanır):
+Güven paketi sonrası (9 Eyl 2026; `find_parallel_pairs` çoklu eşleme ile aynı çizgiyi paylaşan ardışık kirişler de yakalanır),
+10 Eyl 2026'da proje sıfırdan yeniden kurularak doğrulandı (parantez içi: 9 Eyl değerleri):
 
 | Grup | Adet | Beton m³ | Kalıp m² | Demir t | Demir kaynağı |
 |---|---|---|---|---|---|
 | Radye (RD1 7.166 m² × 0,70 + RD2 2.907 m² × 0,40) | 5 | 6.186 | 779 | 635,5 | tablo |
-| Kolon | 457 | 1.693 | 5.963 | 633,0 | tablo (blok içi) |
-| Perde | 23 | 74 | 433 | 10,4 | oran (140 kg/m³) |
-| Kiriş | 1.760 | 3.734 | 15.067 | 604,6 | poz yazıları (7.987 satır) |
-| Döşeme | 1.349 | 3.128 | 21.106 | 272,3 | tablo |
-| **Toplam** | | **14.815** | **43.348** | **2.156** | |
+| Kolon | 457 | 1.726 (1.693) | 6.103 (5.963) | 633,0 | tablo (blok içi) |
+| Perde | 23 | 83 (74) | 489 (433) | 11,6 (10,4) | oran (140 kg/m³) |
+| Kiriş | 1.760 | 3.734 | 15.608 (15.067) | 604,6 | poz yazıları (7.987 satır) |
+| Döşeme | 368 çokgen (1.349 parça) | 3.128 | 21.106 | 272,3 | tablo |
+| **Toplam** | | **14.918** (14.815) | **44.611** (43.348) | **2.163** (2.156) | |
+
+Demir çap bazında sapma −0,4% ile +0,2% arasında; tablo ve poz kaynaklı 2.145,5 t birebir aynı, oranla tahmin
+edilen yalnız 17,6 t (perde + parapet, ikisi de uyarıyla). Beton +0,7%, kalıp +2,9%: kalıp farkı kiriş yan kalıbının
+yüksekliğini belirleyen döşeme kalınlığından gelir (beton d'den bağımsız olduğu için birebir aynı kaldı).
+Döşeme "adet"i düştü çünkü kirişlerle bölünmüş aynı döşemenin bitişik parçaları artık tek elemanda birleşiyor
+(`parser/merge.py`); alan ve beton değişmez.
 
 Çap bazında: Ø8 154 t, Ø10 200 t, Ø12 367 t, Ø14 268 t, Ø16 82 t, Ø20 596 t, Ø26 481 t.
 
