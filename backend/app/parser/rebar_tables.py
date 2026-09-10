@@ -412,13 +412,22 @@ REBAR_TARGET_BY_PLAN: dict[str, str] = {
 _TARGET_STRONG = re.compile(r"TEMEL|RADYE|FOUND|RAFT|KOLON|COLUMN|K[Iİ]R[Iİ][SŞ]|BEAM|PERDE|SHEAR|MERD[Iİ]VEN|STAIR", re.IGNORECASE)
 
 
+# "sta_doseme_donati" donatı paftalarının **varsayılan** tipidir: başlıkta TEMEL / KOLON / KİRİŞ / PERDE
+# geçmeyen her donatı paftası buraya düşer, yani kendi başına "bu döşeme demiridir" kanıtı değildir.
+WEAK_REBAR_PLAN = "sta_doseme_donati"
+
+
 def rebar_target_for(plan_type: str | None, label: str = "", filename: str = "") -> str:
-    """Donatı paftasının demiri hangi elemana yazılır: plan tipi > pafta başlığında açık sözcük > dosya adı > döşeme.
-    Kiriş detay paftalarının başlığı çoğu zaman kiriş adıdır ("K1075", "(50/45)"); dosya adı "KİRİŞ DETAYLARI" karar verir."""
-    if plan_type in REBAR_TARGET_BY_PLAN:
-        return REBAR_TARGET_BY_PLAN[plan_type]
+    """Donatı paftasının demiri hangi elemana yazılır.
+
+    Sıra: paftanın kendi adındaki açık sözcük > plan tipi > dosya adı > döşeme. Plan tipi "döşeme donatısı"
+    ise bu bir karar değil varsayılandır; o durumda dosya adı sorulur — "TEMEL KALIP ve DONATI PLANLARI"
+    dosyasındaki "İLAVE DONATI PLANI" paftası temel demiridir, döşeme değil. Kiriş detay paftalarının başlığı
+    çoğu zaman kiriş adıdır ("K1075", "(50/45)"); orada da dosya adı "KİRİŞ DETAYLARI" karar verir."""
     if label and _TARGET_STRONG.search(label):
         return target_from_label(label)
+    if plan_type in REBAR_TARGET_BY_PLAN and plan_type != WEAK_REBAR_PLAN:
+        return REBAR_TARGET_BY_PLAN[plan_type]
     if filename and _TARGET_STRONG.search(filename):
         return target_from_label(filename)
-    return target_from_label(label)
+    return REBAR_TARGET_BY_PLAN.get(plan_type or "", "slab")

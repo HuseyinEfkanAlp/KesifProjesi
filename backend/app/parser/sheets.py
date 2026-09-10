@@ -853,6 +853,15 @@ def finalize_sheets(sheets: list[Sheet]) -> tuple[list[Sheet], int]:
     return sheets, dropped
 
 
+def pick_title(cands: list[tuple[float, float, float, str]]) -> list[tuple[float, float, float, str]]:
+    """Pafta adı adaylarını sıralar: en büyük yazı öndedir, ama kesit işareti ("A-A KESITI") en sona atılır.
+
+    Kesit işareti paftanın içindeki bir simgedir, paftanın adı değil. Ad olarak seçilirse pafta "mimari kesit"
+    sanılır ve metrajdan düşer (A4-A5 kiriş detaylarında iki pafta böyle kayboluyor, 34 t kiriş demiri eksik
+    çıkıyordu)."""
+    return sorted(cands, key=lambda t: (bool(SECTION_RE.match(t[3])), -t[2]))
+
+
 def _build_sheets(boxes: list[tuple[Bbox, str]], xs: np.ndarray, ys: np.ndarray,
                   titles: list[tuple[float, float, float, str]], extent: float,
                   layer_ids: np.ndarray | None = None, layer_names: list[str] | None = None,
@@ -884,9 +893,12 @@ def _build_sheets(boxes: list[tuple[Bbox, str]], xs: np.ndarray, ys: np.ndarray,
         title, titled = "", False
         alts: list[str] = []
         if inside:
-            inside.sort(key=lambda t: -t[2])
-            title, titled = inside[0][3], True
-            for t in inside[1:]:
+            inside = pick_title(inside)
+            # Kutudaki tek aday bir kesit işaretiyse ("A-A KESITI") pafta adsız sayılır: adı antet bloğundan
+            # gelsin (kiriş detay paftalarında ad blok içinde "KİRİŞ DETAYLARI" olarak duruyor).
+            titled = not SECTION_RE.match(inside[0][3])
+            title = inside[0][3] if titled else ""
+            for t in (inside[1:] if titled else inside):
                 if t[3] not in alts and t[3] != title:
                     alts.append(t[3])
                 if len(alts) >= 5:
@@ -1067,8 +1079,8 @@ def scan_sheets(path: str | Path) -> SheetScan:
         sh = _build_sheets(bx, npx, npy, titles, extent, npl, layer_names, geom)
         for one in sh:
             n = band_by_box.get(tuple(round(v, 3) for v in one.bbox))
-            if not n or one.title == n:
-                continue
+            if not n or one.title == n or SECTION_RE.match(n):
+                continue     # kesit işareti ("A-A KESITI") pafta adı değildir; paftanın kendi adı kalır
             # Bant adı, paftanın kendi tanınan başlığını ezmez: "TEMEL KALIP PLANI" varken başlık satırındaki
             # "+0.00 / +0.52 / +0.852 KOTLARI" yazısı pafta adı olamaz (plan tipi ondan tanınıyor).
             if one.titled and is_plan_title(one.title) and not is_plan_title(n):
@@ -1084,9 +1096,9 @@ def scan_sheets(path: str | Path) -> SheetScan:
             x0, y0, x1, y1 = one.bbox
             inside = [t for t in block_texts if x0 <= t[0] <= x1 and y0 <= t[1] <= y1 and not placeholder.search(t[3])]
             if inside:
-                pick = max(inside, key=lambda t: t[2])
-                one.title, one.titled = pick[3], True
-                one.titles = [t[3] for t in inside if t[3] != pick[3]][:6]
+                inside = pick_title(inside)
+                one.title, one.titled = inside[0][3], True
+                one.titles = [t[3] for t in inside[1:] if t[3] != inside[0][3]][:6]
         return finalize_sheets(sh)
 
     # Üç bölümleme birden denenir — çerçeveler, nesne kümeleri, başlık bantları — ve çizimi en iyi açıklayan

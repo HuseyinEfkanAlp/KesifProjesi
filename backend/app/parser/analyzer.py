@@ -286,6 +286,10 @@ def analyze_standard(drawing: Drawing, catalog: Catalog, params: DetectParams) -
     return result
 
 
+# Tablo yanındaki eleman adının paftanın hedefini değiştirebileceği durumlar (kolon ve perde aynı paftada çizilir)
+REFINABLE: dict[str, set[str]] = {"column": {"column", "shear_wall"}, "shear_wall": {"column", "shear_wall"}}
+
+
 def analyze_rebar(drawing: Drawing, label: str = "", rebar_target: str | None = None) -> AnalysisResult:
     """Donatı paftası: yalnızca metraj tabloları okunur; her çap bir 'rebar' elemanı (meta: kg, m, hedef eleman, kot)."""
     counts = drawing.layer_counts()
@@ -303,7 +307,11 @@ def analyze_rebar(drawing: Drawing, label: str = "", rebar_target: str | None = 
     src_label = "tablo" if source == "REBAR_TABLE" else "poz"
     by_target: dict[str, float] = {}
     for ti, t in enumerate(tables):
-        target = t.target or default_target
+        # Tablonun yanındaki eleman adı yalnız **aynı aileden** bir hedefe çevirebilir: kolon detay paftasındaki
+        # perde açılımı perdeye yazılır. Döşeme donatı paftasında tablonun yanına düşen bir kiriş adı ("K1075")
+        # bütün tabloyu kirişe yazamaz — o pafta döşeme demirini gösterir (A4-A5: 226 t döşeme demiri kirişe
+        # yazılıyordu).
+        target = t.target if t.target in REFINABLE.get(default_target, {default_target}) else default_target
         by_target[target] = by_target.get(target, 0.0) + t.total_kg
         for d in sorted(t.columns):
             kg = t.weight.get(d, 0.0)
