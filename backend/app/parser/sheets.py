@@ -31,7 +31,7 @@ import numpy as np
 TITLE_RE = re.compile(r"PLAN|KES[İI]T|DETAY|APL[İI]KASYON|G[ÖO]R[ÜU]N[ÜU]Ş|Ç[İI]Z[İI]M|CIZIM", re.IGNORECASE)
 # "A-A KESİTİ", "K1-K1 KESITI": paftanın **içindeki** kesit işareti; pafta başlığı değildir. Kiriş detay
 # paftalarında bir paftada onlarca tanesi olur, bunlara bölünürse tek pafta yüzlerce parçaya ayrılır.
-SECTION_RE = re.compile(r"^\s*[A-ZÇĞİÖŞÜ]{1,2}\d{0,2}\s*[-–]\s*[A-ZÇĞİÖŞÜ]{1,2}\d{0,2}\s+KES[İI]T", re.IGNORECASE)
+SECTION_RE = re.compile(r"^\s*[A-ZÇĞİÖŞÜ0-9]{1,3}\s*[-–]\s*[A-ZÇĞİÖŞÜ0-9]{1,3}\s+KES[İI]T", re.IGNORECASE)
 CODEPAGES = {"ANSI_1254": "cp1254", "ANSI_1252": "cp1252", "ANSI_1250": "cp1250", "ANSI_1251": "cp1251"}
 # Bu boyutun üstündeki dosyalar ezdxf ile hiç açılmaz; pafta seçimi zorunludur
 BIG_FILE_BYTES = 40 * 1024 * 1024
@@ -718,10 +718,24 @@ def split_box_by_titles(box: Bbox, tt: list[tuple[float, float, float, str]],
     tt = [t for t in tt if not SECTION_RE.match(t[3])]
     if len(tt) < 2:
         return []
-    # Pafta başlığı kutunun **en büyük** yazısıdır. Bir kat planının içinde "A-A KESİTİ", "MERDİVEN DETAYI"
-    # gibi daha küçük başlıklar da vardır; onlara bölmek planı paramparça eder.
-    h_max = max(t[2] for t in tt)
-    same = [t for t in tt if t[2] >= 0.8 * h_max]
+    # Pafta başlıkları aynı boydadır; bir kat planının içindeki "MERDİVEN DETAYI" alt başlığı daha küçüktür.
+    # Ama "en büyüğü al" da yanlış: aynı dosyada paftaların başlık boyu kat kat değişebiliyor (C1 bloğunda
+    # kat planları 194 bin, duvar imalat planı 972 bin birim). Bu yüzden yazılar boy sınıflarına ayrılır ve
+    # **iki ya da daha çok başlık taşıyan en büyük sınıf** pafta başlığı sınıfı sayılır; ondan büyük yazılar da
+    # pafta başlığıdır. Tek başına duran küçük bir alt başlık böylece bölmeye giremez.
+    heights = sorted({t[2] for t in tt}, reverse=True)
+    classes: list[list[float]] = []
+    for h in heights:
+        if classes and h >= 0.7 * classes[-1][0]:
+            classes[-1].append(h)
+        else:
+            classes.append([h])
+    floor_h = classes[0][-1]
+    for cls in classes:
+        if sum(1 for t in tt if t[2] >= cls[-1] * 0.999) >= 2:
+            floor_h = cls[-1]
+            break
+    same = [t for t in tt if t[2] >= floor_h * 0.999]
     x0, y0, x1, y1 = box
     span = max(x1 - x0, y1 - y0, 1e-9)
     uniq: list[tuple[float, float, float, str]] = []
@@ -731,35 +745,51 @@ def split_box_by_titles(box: Bbox, tt: list[tuple[float, float, float, str]],
     same = uniq
     if len(same) < 2:
         return []
-    w, h = x1 - x0, y1 - y0
-    cols = _title_groups([t[0] for t in same], w)
-    col_x = [median([same[i][0] for i in g]) for g in cols]
-    cx = [x0] + [_sparsest_cut(xs, col_x[i], col_x[i + 1]) for i in range(len(col_x) - 1)] + [x1]
-    cells: list[Bbox] = []
-    for ci, g in enumerate(cols):
-        gy = [same[i][1] for i in g]
-        rows = _title_groups(gy, h)
-        row_y = [median([gy[j] for j in r]) for r in rows]
-        band = ys[(xs >= cx[ci]) & (xs <= cx[ci + 1])]
-        cy = [y0] + [_sparsest_cut(band, row_y[i], row_y[i + 1]) for i in range(len(row_y) - 1)] + [y1]
-        for ri in range(len(rows)):
-            cells.append((cx[ci], cy[ri], cx[ci + 1], cy[ri + 1]))
-    if len(cells) < 2:
-        return []
-    # Bölme ancak her parça gerçek bir pafta kadar dolu olursa kabul edilir; bir parça bile cılız kalıyorsa
-    # bölünen şey birden çok pafta değil, tek paftanın içindeki alt başlıklardır.
+
+    def _cells(major_x: bool) -> list[Bbox]:
+        """Önce bir eksende (major), sonra her şeridin içinde diğerinde böler."""
+        ai, bi = (0, 1) if major_x else (1, 0)
+        lo_a, hi_a = (x0, x1) if major_x else (y0, y1)
+        lo_b, hi_b = (y0, y1) if major_x else (x0, x1)
+        va, vb = (xs, ys) if major_x else (ys, xs)
+        groups = _title_groups([t[ai] for t in same], hi_a - lo_a)
+        centers = [median([same[i][ai] for i in g]) for g in groups]
+        cuts = [lo_a] + [_sparsest_cut(va, centers[i], centers[i + 1]) for i in range(len(centers) - 1)] + [hi_a]
+        out: list[Bbox] = []
+        for gi, g in enumerate(groups):
+            inner = [same[i][bi] for i in g]
+            rows = _title_groups(inner, hi_b - lo_b)
+            rcent = [median([inner[j] for j in r]) for r in rows]
+            band = vb[(va >= cuts[gi]) & (va <= cuts[gi + 1])]
+            rcuts = [lo_b] + [_sparsest_cut(band, rcent[i], rcent[i + 1]) for i in range(len(rcent) - 1)] + [hi_b]
+            for ri in range(len(rows)):
+                out.append((cuts[gi], rcuts[ri], cuts[gi + 1], rcuts[ri + 1]) if major_x
+                           else (rcuts[ri], cuts[gi], rcuts[ri + 1], cuts[gi + 1]))
+        return out
+
     total = int(np.count_nonzero((xs >= x0) & (xs <= x1) & (ys >= y0) & (ys <= y1)))
-    floor = max(float(MIN_SHEET_ENTITIES), 0.2 * total / len(cells))   # ortalama payın beşte biri
-    out: list[Bbox] = []
-    for c in cells:
-        m = (xs >= c[0]) & (xs <= c[2]) & (ys >= c[1]) & (ys <= c[3])
-        if int(np.count_nonzero(m)) < floor:
-            if strict:
-                return []        # bir parça bile cılızsa bölünen şey tek paftanın alt başlıklarıdır
-            continue
-        bx, by = xs[m], ys[m]
-        out.append((float(bx.min()), float(by.min()), float(bx.max()), float(by.max())))
-    return out if len(out) >= 2 else []
+
+    def _accept(cells: list[Bbox]) -> list[Bbox]:
+        """Her parça gerçek bir pafta kadar dolu mu? Bir parça bile cılız kalıyorsa bölünen şey birden çok
+        pafta değil, tek paftanın içindeki alt başlıklardır."""
+        if len(cells) < 2:
+            return []
+        floor = max(float(MIN_SHEET_ENTITIES), 0.2 * total / len(cells))   # ortalama payın beşte biri
+        out: list[Bbox] = []
+        for c in cells:
+            m = (xs >= c[0]) & (xs <= c[2]) & (ys >= c[1]) & (ys <= c[3])
+            if int(np.count_nonzero(m)) < floor:
+                if strict:
+                    return []
+                continue
+            bx, by = xs[m], ys[m]
+            out.append((float(bx.min()), float(by.min()), float(bx.max()), float(by.max())))
+        return out if len(out) >= 2 else []
+
+    # Paftalar hemen her zaman soldan sağa dizilir; bölme önce x'te, sonra her sütun içinde y'de yapılır.
+    # İki ekseni de deneyip "daha çok pafta vereni" almak, tek paftayı ikiye kesen yanlış bölmeleri de
+    # kabul ettiriyordu (C1: doğramalar paftası ikiye bölünüyordu) — bu yüzden yalnız x-major kullanılır.
+    return _accept(_cells(True))
 
 
 def prune_sheets(sheets: list[Sheet]) -> tuple[list[Sheet], int]:
@@ -781,15 +811,25 @@ def prune_sheets(sheets: list[Sheet]) -> tuple[list[Sheet], int]:
     return kept, len(sheets) - len(kept)
 
 
+def is_plan_title(title: str) -> bool:
+    """Başlık tanınan bir pafta tipine oturuyor mu (TEMEL KALIP PLANI, GÖRÜNÜŞLER, DOĞRAMALAR…)?
+
+    Kutuya düşen herhangi bir büyük yazı "başlık" sayılabiliyor ("Arsanın", "+0.00 / +0.52 KOTLARI");
+    bunlar paftayı adlandırmaz. Bölümlemeleri karşılaştırırken yalnız gerçek pafta başlıkları puan verir."""
+    from ..planset import classify_title
+    return bool(title) and classify_title(title) is not None
+
+
 def segmentation_score(sheets: list[Sheet]) -> float:
     """Bir bölümlemenin çizimi ne kadar iyi açıkladığı.
 
-    Başlığı okunan pafta iyi; "başlıksız artık" kötü; üst üste binen paftalar çok kötü — gerçek paftalar
+    Tanınan pafta başlığı iyi; "başlıksız artık" kötü; üst üste binen paftalar çok kötü — gerçek paftalar
     yan yana durur, birbirinin üstüne binmez. Çakışma cezası olmadan, çizgilerden yanlışlıkla çıkarılmış
-    iç içe dikdörtgenler "çerçeve" sanılıp doğru kümelemeyi yenebiliyor."""
+    iç içe dikdörtgenler "çerçeve" sanılıp doğru kümelemeyi yenebiliyor. Başlığı olan ama tanınmayan pafta
+    ne ödül ne ceza alır: gerçek olabilir de (ofise özgü ad), üstüne düşmüş bir yazı da."""
     if not sheets:
         return float("-inf")
-    titled = sum(1 for sh in sheets if sh.titled)
+    titled = sum(1 for sh in sheets if sh.titled and is_plan_title(sh.title))
     over = 0
     for i, a in enumerate(sheets):
         aa = _area(a.bbox)
@@ -797,7 +837,8 @@ def segmentation_score(sheets: list[Sheet]) -> float:
             ab = _area(b.bbox)
             if min(aa, ab) > 0 and _overlap(a.bbox, b.bbox) >= 0.3 * min(aa, ab):
                 over += 1
-    return titled - 0.3 * (len(sheets) - titled) - 2.0 * over
+    blank = sum(1 for sh in sheets if not sh.titled)
+    return titled - 0.3 * blank - 2.0 * over
 
 
 def finalize_sheets(sheets: list[Sheet]) -> tuple[list[Sheet], int]:
@@ -1006,6 +1047,11 @@ def scan_sheets(path: str | Path) -> SheetScan:
     band_by_box = ({tuple(round(v, 3) for v in b): n for b, n in zip(tb, band_names)}
                    if len(band_names) == len(tb) else {})
 
+    # "DOĞRAMALAR", "PREKAST KALIP" gibi PLAN / KESİT geçmeyen pafta adları TITLE_RE'ye takılmaz; başlık bandının
+    # tanıdıkları kutu içi bölmede de pafta başlığı sayılır (C1: duvar imalat planı ile prekast kalıp aynı bantta).
+    _band_set = set(band_names)
+    split_titles = titles + [t for t in big_other if t[3] in _band_set]
+
     def _segment(bx: list[tuple[Bbox, str]]) -> tuple[list[Sheet], int]:
         """Bir kutu kümesini paftalara çevirir: kopyaları eler, çok başlıklı kutuları böler, artıkları ayıklar."""
         bx = dedupe_boxes(bx)
@@ -1021,10 +1067,17 @@ def scan_sheets(path: str | Path) -> SheetScan:
         sh = _build_sheets(bx, npx, npy, titles, extent, npl, layer_names, geom)
         for one in sh:
             n = band_by_box.get(tuple(round(v, 3) for v in one.bbox))
-            if n and one.title != n:
-                if one.titled and one.title not in one.titles:
-                    one.titles.insert(0, one.title)
-                one.title, one.titled = n, True
+            if not n or one.title == n:
+                continue
+            # Bant adı, paftanın kendi tanınan başlığını ezmez: "TEMEL KALIP PLANI" varken başlık satırındaki
+            # "+0.00 / +0.52 / +0.852 KOTLARI" yazısı pafta adı olamaz (plan tipi ondan tanınıyor).
+            if one.titled and is_plan_title(one.title) and not is_plan_title(n):
+                if n not in one.titles:
+                    one.titles.append(n)
+                continue
+            if one.titled and one.title not in one.titles:
+                one.titles.insert(0, one.title)
+            one.title, one.titled = n, True
         for one in sh:      # antet bloğunun içinden gelen başlıklar: yalnız başlıksız kalan paftalara
             if one.titled or not block_texts:
                 continue
@@ -1044,7 +1097,7 @@ def scan_sheets(path: str | Path) -> SheetScan:
     best_score = float("-inf")
     # Dördüncü aday: bütün gövdeyi doğrudan pafta başlıklarına böl. Çerçevesi olmayan, bantlara da dizilmemiş
     # (ızgara yerleşimli) dosyalarda paftaları veren tek yöntem budur.
-    grid = [(b, "title") for b in split_box_by_titles(extent_box, titles, npx, npy, strict=False)]
+    grid = [(b, "title") for b in split_box_by_titles(extent_box, titles + big_other, npx, npy, strict=False)]
     for bx in (frame_boxes, cluster_boxes, [(b, "title") for b in tb], grid):
         sh, dr = _segment(list(bx))
         if not sh:
