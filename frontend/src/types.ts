@@ -725,5 +725,5 @@ export interface CostResult {
   /** fiyatı girilmemiş ürün anahtarları */
   missing_materials: string[]
   missing_labor: string[]
-  duration: { hours_per_day: number; total_hours: number; sequential_days: number; parallel_days: number; missing_rates: string[] }
+  duration: { hours_per_day: number; total_hours: number; man_days: number; sequential_days: number; parallel_days: number; missing_rates: string[]; missing_crew: string[] }
 }

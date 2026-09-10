@@ -140,3 +140,45 @@ def test_grandchildren_not_multiplied_by_parent_count():
     assert k["kalip:*"].quantity == pytest.approx(140 * 0.3)
     assert k["beton_pompaj:*"].quantity == pytest.approx(140 * 0.03)              # torunun torunu da tek kez
     assert "kalip_iskelesi:*" not in k                                              # lento kalıbı iskele istemez (ÇŞB 15.185)
+
+
+def test_labor_hours_come_from_recipe_without_price_entry():
+    """Birimi "saat" olan reçete kalemlerinde miktar zaten adam-saattir: fiyat girilmeden süre çıkar."""
+    from app.cost.pricing import compute_cost, default_price_items
+    it = BoqItem(key="kalip:column", kind="kalip", group="column", label="Kolon kalıbı", unit="m²",
+                 quantity=1000.0, discipline="structural", kind_label="Kalıp", discipline_label="Statik")
+    items = expand_recipes([it], Catalog())
+    labor = _keys(items)["kalip_iscilik:*"]
+    assert labor.unit == "saat" and labor.quantity == pytest.approx(1200.0)   # 1000 m² × 1,2 saat
+    assert labor.detail["parent_keys"] == ["kalip:column"]
+
+    cost = compute_cost(items, default_price_items(items), hours_per_day=8.0)
+    line = next(l for l in cost["lines"] if l["key"] == "kalip_iscilik:*")
+    assert line["hours"] == pytest.approx(1200.0) and line["hours_source"] == "birim saat"
+    assert cost["duration"]["man_days"] == pytest.approx(150.0)               # 1200 / 8
+    assert "kalip_iscilik:*" not in cost["duration"]["missing_rates"]
+    assert "kalip_iscilik:*" in cost["duration"]["missing_crew"]              # takvim günü için ekip gerekir
+
+    # ekip girilince gün takvim günüdür
+    prices = default_price_items(items)
+    next(p for p in prices if p.key == "kalip_iscilik:*").crew_size = 10
+    cost = compute_cost(items, prices, hours_per_day=8.0)
+    assert next(l for l in cost["lines"] if l["key"] == "kalip_iscilik:*")["days"] == pytest.approx(15.0)
+
+
+def test_explicit_hours_on_parent_are_not_counted_twice():
+    """Üst kaleme adam-saat/birim girilirse aynı iş reçete işçiliğinde tekrar sayılmaz."""
+    from app.cost.pricing import compute_cost, default_price_items
+    it = BoqItem(key="kalip:column", kind="kalip", group="column", label="Kolon kalıbı", unit="m²",
+                 quantity=1000.0, discipline="structural", kind_label="Kalıp", discipline_label="Statik")
+    items = expand_recipes([it], Catalog())
+    prices = default_price_items(items)
+    next(p for p in prices if p.key == "kalip:column").hours_per_unit = 1.5
+
+    cost = compute_cost(items, prices, hours_per_day=8.0)
+    parent = next(l for l in cost["lines"] if l["key"] == "kalip:column")
+    child = next(l for l in cost["lines"] if l["key"] == "kalip_iscilik:*")
+    assert parent["hours"] == pytest.approx(1500.0)
+    assert child["hours"] == 0.0 and child["hours_source"] == "üst kalemde sayıldı"
+    assert cost["duration"]["total_hours"] == pytest.approx(1500.0)           # 1500 + 1200 değil
+    assert "kalip_iscilik:*" not in cost["duration"]["missing_rates"]

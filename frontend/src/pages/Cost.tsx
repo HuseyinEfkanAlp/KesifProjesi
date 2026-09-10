@@ -34,14 +34,15 @@ export default function Cost() {
         <div className="card">
           <div className="label">Süre (disiplinler paralel)</div>
           <div className="value">{fmt(dur.parallel_days, 1)} gün</div>
-          <div className="muted">ardışık: {fmt(dur.sequential_days, 1)} gün · {fmt(dur.total_hours, 0)} adam-saat · {dur.hours_per_day} saat/gün</div>
+          <div className="muted">ardışık: {fmt(dur.sequential_days, 1)} gün · {fmt(dur.total_hours, 0)} adam-saat ({fmt(dur.man_days, 0)} adam-gün) · {dur.hours_per_day} saat/gün</div>
         </div>
       </div>
-      {(cost.missing_prices.length > 0 || dur.missing_rates.length > 0) && (
+      {(cost.missing_prices.length > 0 || dur.missing_rates.length > 0 || dur.missing_crew.length > 0) && (
         <div className="warn">
           {cost.missing_materials.length > 0 && <div>Fiyatı girilmemiş {cost.missing_materials.length} ürün var; bunları kullanan {cost.missing_prices.length} kalem toplama 0 olarak girdi. </div>}
           {cost.missing_labor.length > 0 && <div>İşçilik fiyatı girilmemiş {cost.missing_labor.length} kalem var. </div>}
           {dur.missing_rates.length > 0 && <div>Adam-saat girilmemiş {dur.missing_rates.length} kalem süreye katılmadı. </div>}
+          {dur.missing_crew.length > 0 && <div>Ekip girilmemiş {dur.missing_crew.length} kalemde gün, tek kişilik <b>adam-gün</b>dür; takvim günü için işçilik satırlarına ekip sayısı girin. </div>}
           <Link to={`/projects/${pid}/prices`}>Birim fiyatlara git</Link>
         </div>
       )}

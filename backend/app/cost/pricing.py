@@ -11,13 +11,21 @@ fiyatları kaybolmaz.
 Süre: kalem saati = miktar × adam-saat/birim; kalem günü = saat / (ekip × günlük saat).
   - "ardışık" toplam: tüm kalem günlerinin toplamı (tek ekip her işi sırayla yapar)
   - "disiplin bazlı": her disiplinin toplam günü; disiplinler paralel çalışırsa süre = en uzun disiplin
+
+**Birimi "saat" olan kalemlerde miktar zaten adam-saattir** (reçeteden gelir: kalıp 800 m² × 1,2 = 960 saat);
+adam-saat/birim girilmemişse 1,0 kabul edilir, yani süre fiyat girilmeden çıkar. Kullanıcı yine de bir değer
+girerse (normu değiştirmek için) o değer geçerlidir.
+
+Çift sayım: bir kalemin reçetesi işçilik kalemi doğuruyorsa (kalıp → kalıp işçiliği) ve kullanıcı ayrıca üst
+kaleme adam-saat/birim girdiyse aynı iş iki kez sayılırdı. Üst kaleme açıkça girilen değer geçerlidir; o üst
+kalemden gelen reçete işçiliği süreye katılmaz (satırda hours_source = "üst kalemde sayıldı").
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from ..quantity.boq import KIND_META, BoqItem
-from .materials import MaterialData, material_of
+from .materials import MaterialData, is_labor_only, material_of
 
 # Geriye uyumluluk (eski içe aktarmalar)
 QUANTITY_KINDS: dict[str, tuple[str, str]] = {k: (v[0], v[1]) for k, v in KIND_META.items()}
@@ -59,6 +67,20 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
     mat_map = {m.key: m for m in (materials or [])}
     params = params or {}
     hours_per_day = hours_per_day if hours_per_day and hours_per_day > 0 else 8.0
+
+    def explicit_hours(key: str) -> bool:
+        """Kullanıcı bu kaleme kendi eliyle adam-saat/birim girdi mi?"""
+        p = price_map.get(key)
+        return bool(p) and (p.hours_per_unit or 0) > 0
+
+    # üst kalemine açıkça adam-saat girilmiş reçete işçilikleri: saatleri orada sayıldı, burada tekrar sayılmaz
+    covered: set[str] = set()
+    for it in items:
+        if is_labor_only(it) and it.detail.get("recipe"):
+            pkeys = it.detail.get("parent_keys") or ([it.detail["parent"]] if it.detail.get("parent") else [])
+            if pkeys and all(explicit_hours(k) for k in pkeys):
+                covered.add(it.key)
+
     lines = []
     for it in items:
         if it.quantity <= 0 or it.detail.get("system") or it.detail.get("info"):
@@ -79,8 +101,13 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
             return default, "girilmedi"
 
         lab, lab_src = pick("labor_price")
-        hpu, _ = pick("hours_per_unit")
-        crew, _ = pick("crew_size", 1.0)
+        hpu, hpu_src = pick("hours_per_unit")
+        labor_only = is_labor_only(it)
+        if labor_only and not hpu:
+            hpu, hpu_src = 1.0, "birim saat"    # miktarın kendisi adam-saat (reçete normundan)
+        if it.key in covered:
+            hpu, hpu_src = 0.0, "üst kalemde sayıldı"
+        crew, crew_src = pick("crew_size", 1.0)
         brand, _ = pick("brand", "")
         # malzeme: kalemin ürünü (C30/37 beton, Ø12 demir…) — fiyat ürün listesinden gelir
         m = material_of(it, params)
@@ -107,7 +134,8 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
             "material_total": mat_total, "labor_total": lab_total, "total": round(mat_total + lab_total, 2),
             "price_source": mat_src,
             "labor_source": lab_src if lab else "işçilik girilmedi",
-            "hours_per_unit": float(hpu), "crew_size": float(crew),
+            "hours_per_unit": float(hpu), "crew_size": float(crew), "hours_source": hpu_src,
+            "crew_source": crew_src,
             "hours": round(hours, 1), "days": round(days, 2),
         })
     material_subtotal = round(sum(l["material_total"] for l in lines), 2)
@@ -143,6 +171,8 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
         d["hours"] = round(d["hours"] + l["hours"], 1)
         d["days"] = round(d["days"] + l["days"], 2)
     total_hours = round(sum(l["hours"] for l in lines), 1)
+    # ekip girilmemiş kalemde "gün" aslında adam-gündür (1 kişi varsayımı); takvim günü için ekip gerekir
+    missing_crew = [l["key"] for l in lines if l["hours"] > 0 and l["crew_source"] == "girilmedi"]
     sequential_days = round(sum(l["days"] for l in lines), 1)
     parallel_days = round(max((d["days"] for d in by_disc.values()), default=0.0), 1)
     return {
@@ -162,6 +192,9 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
             "total_hours": total_hours,
             "sequential_days": sequential_days,
             "parallel_days": parallel_days,
-            "missing_rates": [l["key"] for l in lines if l["hours_per_unit"] <= 0],
+            "man_days": round(total_hours / hours_per_day, 1),
+            "missing_rates": [l["key"] for l in lines if l["hours_per_unit"] <= 0
+                              and l["hours_source"] != "üst kalemde sayıldı"],
+            "missing_crew": missing_crew,
         },
     }

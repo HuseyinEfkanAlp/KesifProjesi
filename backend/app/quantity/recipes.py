@@ -96,6 +96,10 @@ def expand_recipes(items: list[BoqItem], catalog: Catalog, storey_height: float 
                 src = child.detail.setdefault("from", [])
                 if isinstance(src, list) and len(src) < 8 and parent.label not in src:
                     src.append(parent.label)
+                # üst kalemin anahtarı: aynı işin saatini hem üst kalemde hem reçetede saymamak için (cost.pricing)
+                pk = child.detail.setdefault("parent_keys", [])
+                if isinstance(pk, list) and parent.key not in pk:
+                    pk.append(parent.key)
                 new_keys[key] = new_keys.get(key, frozenset()) | chain | {kind}
         chains.update(new_keys)
         frontier = [acc.items[k] for k in new_keys]

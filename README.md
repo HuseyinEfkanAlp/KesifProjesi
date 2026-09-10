@@ -195,6 +195,16 @@ Fiyat kalemi anahtarı `<tür>:<grup>` (`beton:column`, `duvar:ytong:20`, `kablo
 kalem süresi = miktar × adam-saat / (ekip × günlük saat). Toplam süre iki biçimde: işler ardışık (kalemlerin toplamı) ve
 disiplinler paralel (en uzun disiplin). Adam-saat girilmeyen kalemler süreye katılmaz ve uyarı verilir.
 
+**Adam-saat nereden gelir:** reçetedeki işçilik bileşeninden. Kalıp 1.000 m² → "Kalıp kurma + söküm işçiliği"
+1.200 saat (norm 1,2 saat/m², katalogdan düzenlenir). Birimi *saat* olan bu kalemlerde **miktarın kendisi adam-saattir**;
+adam-saat/birim girilmezse 1,0 kabul edilir, yani süre hiçbir şey girilmeden çıkar. Kullanıcı üst kaleme (kalıp m²)
+kendi normunu girerse o geçerlidir ve o üst kalemden gelen reçete işçiliği süreye ikinci kez katılmaz
+(satırda `hours_source = "üst kalemde sayıldı"`).
+
+**Ekip:** girilmemişse gün, tek kişilik **adam-gün**dür (`duration.man_days`); takvim günü için işçilik satırına
+ekip sayısı girilir (1.200 saat ÷ 10 kişi ÷ 8 saat = 15 gün). Ekip girilmemiş kalemler `duration.missing_crew`
+ile uyarılır.
+
 ## Metraj formülleri (statik)
 
 | Eleman | Beton | Kalıp |
