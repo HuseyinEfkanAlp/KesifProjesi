@@ -168,3 +168,58 @@ RECIPES_BY_KIND: dict[str, list[dict]] = {
              _r("KILIT"), _r("KAPI_KOLU"), _r("STOPER"), _r("ESIK", 1.0, "", "WID"), _r("DUBEL_VIDA", 6.0), _r("SILIKON", 1.0, "", "PER")],
 }
 RECIPE_MAX_DEPTH = 4
+
+
+# ---------------------------------------------------------------- demir işçiliği (çap / kat / hazırlık bazında)
+#
+# "1 m² kaç adam-saat" demir için anlamsızdır: belirleyici olan **ton başına** işçiliktir ve o da çapa bağlıdır.
+# Bir ton Ø8 demir ~2.500 m, bir ton Ø26 demir ~240 m'dir: aynı tonaj on kat farklı sayıda çubuk, bağ noktası ve
+# kesim demektir. ÇŞB'nin demiri iki ayrı poza bölmesinin (15.160.1003 Ø8–12 / 15.160.1004 Ø14–28) sebebi de budur.
+#
+# İşçilik üç ayrı işe bölünür — biri sahada hiç yapılmayabilir (demir hazır kesilmiş / bükülmüş gelirse):
+#   hazırlık : düzeltme, kesme, bükme, etriye / pilye imalatı
+#   taşıma   : sahaya indirme, istifleme, kata / kalıp üstüne dağıtım
+#   montaj   : yerine yerleştirme, aralık ayarı, bağlama, sehpa / pas payı
+#
+# Çift kat (alt + üst) donatıda montaj artar: üst hasır sehpa üstünde, havada bağlanır ve üstünde yürünür.
+# Değerler yaygın uygulama varsayılanıdır (ÇŞB analizinden doğrulanmadı) — projeye göre katalogdan düzenlenir.
+REBAR_LABOR_HOURS_PER_TON: list[tuple[int, int, dict[str, float]]] = [
+    #  min  max   hazırlık  taşıma  montaj      (saat / ton)
+    (6,  10, {"hazirlik": 12.0, "tasima": 6.0, "montaj": 24.0}),   # ince: çok çubuk, çok bağ noktası
+    (11, 12, {"hazirlik":  9.0, "tasima": 5.0, "montaj": 17.0}),
+    (13, 16, {"hazirlik":  8.0, "tasima": 4.0, "montaj": 13.0}),
+    (17, 22, {"hazirlik":  7.0, "tasima": 4.0, "montaj": 10.0}),
+    (23, 40, {"hazirlik":  6.0, "tasima": 4.0, "montaj":  8.0}),   # kalın: az çubuk ama ağır, vinç / iki kişi
+]
+REBAR_LABOR_DEFAULT_DIA = 14        # çapı okunamayan demir kaleminde varsayılan bant
+MIN_REBAR_DIA, MAX_REBAR_DIA = 6, 40
+REBAR_DOUBLE_LAYER_MONTAJ = 1.15    # çift kat: üst hasır havada bağlanır
+REBAR_CHAIR_KG_PER_TON = 25.0       # çift katta üst hasırı taşıyan sehpa / poz demiri (kg / ton)
+
+
+def rebar_dia_of_group(group: str) -> int:
+    """Demir kalem grubundan çap: "o12" / "column:o12" / "fire:o12" -> 12; çap yoksa 0.
+
+    Katalog kalemi olarak yazılan demirde (KSF / reçete: DEMIR spec'i "çap (mm)") grup çıplak sayıdır: "12"."""
+    for part in str(group or "").split(":"):
+        p = part.strip().lower()
+        if p.startswith("o") and p[1:].isdigit():
+            p = p[1:]
+        if p.isdigit() and MIN_REBAR_DIA <= int(p) <= MAX_REBAR_DIA:
+            return int(p)
+    return 0
+
+
+def rebar_labor_norms(dia_mm: int, layers: str = "", prefab_pct: float = 0.0) -> dict[str, float]:
+    """Bir demir kalemi için saat / ton: {"hazirlik", "tasima", "montaj"}.
+
+    dia_mm 0 ise REBAR_LABOR_DEFAULT_DIA bandı kullanılır. layers == "cift" montajı artırır.
+    prefab_pct: hazır kesilmiş / bükülmüş gelen demir yüzdesi — o oranda hazırlık sahada yapılmaz."""
+    d = int(dia_mm) or REBAR_LABOR_DEFAULT_DIA
+    row = next((v for lo, hi, v in REBAR_LABOR_HOURS_PER_TON if lo <= d <= hi), REBAR_LABOR_HOURS_PER_TON[-1][2])
+    out = dict(row)
+    if layers == "cift":
+        out["montaj"] = round(out["montaj"] * REBAR_DOUBLE_LAYER_MONTAJ, 2)
+    ready = min(max(float(prefab_pct or 0.0), 0.0), 100.0) / 100.0
+    out["hazirlik"] = round(out["hazirlik"] * (1.0 - ready), 2)
+    return out

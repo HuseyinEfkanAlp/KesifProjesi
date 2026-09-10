@@ -205,6 +205,35 @@ kendi normunu girerse o geçerlidir ve o üst kalemden gelen reçete işçiliği
 ekip sayısı girilir (1.200 saat ÷ 10 kişi ÷ 8 saat = 15 gün). Ekip girilmemiş kalemler `duration.missing_crew`
 ile uyarılır.
 
+### Demir işçiliği: çapa, kata ve hazır demire bağlı
+
+Demirde "1 m² kaç adam-saat" anlamsızdır; belirleyici **ton başına** işçiliktir ve o da **çapa** bağlıdır:
+bir ton Ø8 ≈ 2.500 m, bir ton Ø26 ≈ 240 m — aynı tonaj on kat farklı sayıda çubuk, bağ noktası ve kesim demektir.
+(ÇŞB'nin demiri 15.160.1003 Ø8–12 ve 15.160.1004 Ø14–28 diye ikiye ayırmasının sebebi de budur.)
+
+Program her demir kalemini çapına göre üç ayrı işe açar (`standard/rules.py: REBAR_LABOR_HOURS_PER_TON`,
+`quantity/recipes.py: _rebar_recipe`):
+
+| | hazırlık (kesme-bükme) | taşıma-dağıtım | montaj (yerleştirme-bağlama) | toplam |
+|---|---|---|---|---|
+| Ø8–10 | 12 | 6 | 24 | **42 sa/t** |
+| Ø12 | 9 | 5 | 17 | **31** |
+| Ø14–16 | 8 | 4 | 13 | **25** |
+| Ø18–22 | 7 | 4 | 10 | **21** |
+| Ø24–40 | 6 | 4 | 8 | **18** |
+
+- **Çift kat / tek kat çizimden okunur.** Alt ve üst donatı yazıları ve katman adları sayılır
+  (`parser/rebar_mix.py: scan_layer_tags` / `layer_verdict`): `(ALT)` / `(ÜST)`, `ƒ20/18 Temel Üst Donatısı (X Yönü)`,
+  katman `VM Üst Donatı` / `VOLKAN-DONATI ALT`. Kot yazıları ("+0.82 (TEMEL ÜST KOT)") kanıt sayılmaz.
+  Çift katta montaj ×1,15 (üst hasır sehpa üstünde, havada bağlanır) ve **sehpa / poz demiri** 25 kg/ton eklenir
+  — sehpanın kendi kesme-bükme ve yerine koyma işçiliği de zincirde açılır.
+  Proje parametresi `rebar_layers` ile elle `cift` / `tek` seçilebilir.
+- **Hazır demir:** `rebar_prefab_pct` = atölyede kesilip bükülerek gelen demir yüzdesi; o oranda hazırlık sahada
+  yapılmaz (taşıma ve montaj değişmez).
+
+A4-A5 (2.156 t, çizimden okunan çap karışımı, çift kat): **55.032 adam-saat ≈ 25,5 sa/ton**, 5,4 t sehpa demiri.
+Tablodaki değerler yaygın uygulama varsayılanıdır, ÇŞB analizinden doğrulanmadı — katalogdan düzenlenir.
+
 ## Metraj formülleri (statik)
 
 | Eleman | Beton | Kalıp |

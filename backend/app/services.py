@@ -17,6 +17,7 @@ from .parser.layer_profile import (DEFAULT_DISCIPLINE, MAPPED_DISCIPLINE, REBAR_
                                    TYPE_DISCIPLINE, LayerProfile)
 from .parser.rebar_tables import REBAR_TARGET_BY_PLAN, TARGET_WORDS, kot_from_label, rebar_target_for
 from .parser.materials import merge_materials
+from .parser.rebar_mix import layer_verdict as rebar_layer_verdict
 from .parser.rebar_mix import scan_texts as scan_rebar_texts
 from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary, effective_params, electrical_items,
                            expand_systems, slug, sort_items, standard_items, structural_items)
@@ -169,6 +170,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.warnings = result.warnings
     drawing.materials = result.materials or {}
     drawing.rebar_mix = {str(k): float(v) for k, v in (result.rebar_mix or {}).items()}
+    drawing.rebar_layers = {str(k): float(v) for k, v in (result.rebar_layers or {}).items()}
     drawing.rooms = result.rooms or []
     drawing.poz = result.poz or {}
     drawing.unit_verdict = result.unit_verdict
@@ -492,6 +494,27 @@ def project_rebar_mix(project: Project, session: Session, drawings: list[Drawing
     return out
 
 
+def project_rebar_layers(project: Project, drawings: list[Drawing]) -> dict[str, str]:
+    """Eleman tipi -> "cift" / "tek" / "" (bilinmiyor): donatı tek sıra mı, alt + üst iki sıra mı.
+
+    Ton başına demir işçiliğini değiştirir (üst hasır sehpa üstünde, havada bağlanır) ve çift katta sehpa
+    (poz) demiri gerektirir. Kanıt paftadaki alt / üst donatı yazıları ve katman adlarıdır; paftanın hedef
+    eleman tipine yazılır ("*" genel havuz). Proje parametresi `rebar_layers` "auto" değilse o geçerlidir."""
+    forced = str((project.params or {}).get("rebar_layers") or "auto").lower()
+    if forced in ("cift", "tek"):
+        return {"*": forced}
+    tags: dict[str, dict[str, float]] = {}
+    for d in drawings:
+        t = {str(k): float(v) for k, v in (d.rebar_layers or {}).items()}
+        if not t:
+            continue
+        for target in {rebar_mix_target(d), "*"}:
+            acc = tags.setdefault(target, {})
+            for k, v in t.items():
+                acc[k] = acc.get(k, 0.0) + v
+    return {et: v for et, t in tags.items() if (v := rebar_layer_verdict(t))}
+
+
 def rebar_mix_target(d: Drawing) -> str:
     """Paftadaki donatı yazılarının hangi eleman tipine ait olduğu; belirsizse "*" (genel havuz)."""
     t = REBAR_TARGET_BY_PLAN.get(d.plan_type or "")
@@ -562,7 +585,8 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
         if any(TYPE_DISCIPLINE.get(e.etype) == "electrical" for e in elements):
             elec.append({**entry, "elements": [e for e in elements if TYPE_DISCIPLINE.get(e.etype) == "electrical"]})
     mix = project_rebar_mix(project, session, all_drawings)
-    items = (structural_items(summary, params, rebar_mix=mix) + architectural_items(arch, params, schedule_poz=sched_poz)
+    layers = project_rebar_layers(project, all_drawings)
+    items = (structural_items(summary, params, rebar_mix=mix, rebar_layers=layers) + architectural_items(arch, params, schedule_poz=sched_poz)
              + electrical_items(elec, params))
     if std:
         items += standard_items(std, params, catalog)
@@ -576,7 +600,9 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
         if systems["systems"]:
             items = expand_systems(items, systems["systems"], catalog)
         off = {x.strip() for x in str(params.get("derived_off") or "").split(",") if x.strip()}
-        items = expand_recipes(items, catalog, storey_height=sh["effective"], off="recete" in off)
+        # demir işçiliği çapa / kata göre hesaplanır: reçete parametreleri (hazır demir %, genel kat kararı) geçilir
+        rp = dict(params); rp["_rebar_layers_default"] = layers.get("*", "")
+        items = expand_recipes(items, catalog, storey_height=sh["effective"], off="recete" in off, params=rp)
     return sort_items(items)
 
 

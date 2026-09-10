@@ -93,3 +93,55 @@ def split_by_dia(quantity: float, mix: dict[int, float]) -> list[tuple[int, floa
     if not norm:
         return []
     return [(d, quantity * share) for d, share in sorted(norm.items()) if quantity * share > 0]
+
+
+# ---------------------------------------------------------------- donatı katı (çift kat / tek kat)
+#
+# Temel ve döşemede donatı tek sıra (tek kat) ya da alt + üst iki sıra (çift kat) yerleşir. Bu, ton başına
+# işçiliği değiştirir: üst hasır sehpa (poz demiri) üstünde, havada bağlanır. Çizimde kanıt iki yerdedir:
+#
+#   yazıda   "ƒ20/18 Temel Üst Donatısı (X Yönü)"   "(70cm)ƒ14/18 (Alt)"   "(ALT-EK)"   "(ÜST)"
+#   katmanda "VM Üst Donatı"   "VOLKAN-DONATI ALT"
+#
+# Kot yazıları ("+0.82 (TEMEL ÜST KOT)", "D.A.K. = DELİK ALT KOTU") donatı kanıtı değildir: KOT geçen yazı elenir.
+_TAG_ALT = re.compile(r"\(\s*ALT(?:-\w+)?\s*\)|\bALT\s+DONATI|\bDONATI\s+ALT\b", re.IGNORECASE)
+_TAG_UST = re.compile(r"\(\s*[ÜU]ST(?:-\w+)?\s*\)|\b[ÜU]ST\s+DONATI|\bDONATI\s+[ÜU]ST\b", re.IGNORECASE)
+_KOT = re.compile(r"KOT", re.IGNORECASE)
+
+
+def _tag_of(text: str) -> str:
+    """Bir yazı ya da katman adı hangi donatı katını gösteriyor: "alt" / "ust" / ""."""
+    t = (text or "").strip()
+    if not t or len(t) > 160 or _KOT.search(t):
+        return ""
+    alt, ust = bool(_TAG_ALT.search(t)), bool(_TAG_UST.search(t))
+    return "alt" if alt and not ust else ("ust" if ust and not alt else "")
+
+
+def scan_layer_tags(items: list[tuple[str, str]]) -> dict[str, float]:
+    """(yazı, katman) çiftlerinden alt / üst donatı kanıtı sayar -> {"alt": n, "ust": n}.
+
+    Yazının kendisi ya da yazıldığı katman katı söyleyebilir; ikisi de söylüyorsa yazı esastır."""
+    out: dict[str, float] = defaultdict(float)
+    for text, layer in items:
+        tag = _tag_of(text) or _tag_of(layer)
+        if tag:
+            out[tag] += 1.0
+    return dict(out)
+
+
+def scan_drawing_layers(drawing) -> dict[str, float]:
+    return scan_layer_tags([(e.text, e.layer) for e in drawing.entities if e.kind == "text" and e.text])
+
+
+def layer_verdict(tags: dict[str, float], min_share: float = 0.15, min_count: int = 4) -> str:
+    """Sayımlardan karar: "cift" (alt + üst), "tek" (yalnız biri), "" (kanıt yok / yetersiz).
+
+    Çift kat demek için zayıf olan tarafın en az %15 pay ve min_count kanıtı olmalı; yoksa tek kat sayılır
+    (ör. yalnız "(ALT-EK)" yazan ilave donatı paftası çift kat kanıtı değildir)."""
+    alt, ust = float(tags.get("alt") or 0.0), float(tags.get("ust") or 0.0)
+    total = alt + ust
+    if total < min_count:
+        return ""
+    weak = min(alt, ust)
+    return "cift" if weak >= min_count and weak / total >= min_share else "tek"

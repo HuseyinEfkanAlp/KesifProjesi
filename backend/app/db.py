@@ -49,6 +49,7 @@ _ADDED_COLUMNS = [
     ("project", "systems", "JSON"),
     ("drawing", "materials", "JSON"),
     ("drawing", "rebar_mix", "JSON"),
+    ("drawing", "rebar_layers", "JSON"),
     ("drawing", "rooms", "JSON"),
     ("drawing", "poz", "JSON"),
     ("drawing", "unit_verdict", "VARCHAR"),

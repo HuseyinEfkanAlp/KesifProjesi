@@ -13,13 +13,38 @@ aynı kod zincirde tekrar etmez. Üretilen satır: detail.recipe = True, detail.
 from __future__ import annotations
 
 from ..standard.catalog import Catalog
-from ..standard.rules import RECIPE_MAX_DEPTH, RECIPES_BY_KIND
+from ..standard.rules import (RECIPE_MAX_DEPTH, RECIPES_BY_KIND, REBAR_CHAIR_KG_PER_TON,
+                             rebar_dia_of_group, rebar_labor_norms)
 from .boq import BoqItem, _Acc, slug
 
 
-def recipe_of(item: BoqItem, catalog: Catalog) -> list[dict]:
+def _rebar_recipe(item: BoqItem, params: dict) -> list[dict]:
+    """Demir kaleminin işçiliği: sabit değil, **çapa** ve donatının **kaç kat** olduğuna bağlıdır.
+
+    Bir ton Ø8 ~2.500 m, bir ton Ø26 ~240 m'dir: aynı tonaj çok farklı sayıda çubuk, bağ noktası ve kesim
+    demektir (bkz. standard.rules.REBAR_LABOR_HOURS_PER_TON). Ayrıca demir hazır kesilmiş / bükülmüş
+    geliyorsa hazırlık sahada yapılmaz (`rebar_prefab_pct`), çift kat donatıda üst hasır sehpa üstünde
+    bağlanır ve sehpa (poz) demiri gerekir.
+
+    Çarpanlar saat/kg'dır (norm saat/ton ÷ 1000); kalem miktarı kg'dır."""
+    dia = rebar_dia_of_group(item.group)
+    layers = str(item.detail.get("rebar_layers") or params.get("_rebar_layers_default") or "")
+    prefab = float(params.get("rebar_prefab_pct") or 0.0)
+    n = rebar_labor_norms(dia, layers, prefab)
+    out = [{"code": "DEMIR_HAZIRLIK", "factor": n["hazirlik"] / 1000.0, "spec": "", "times": "", "when": ""},
+           {"code": "DEMIR_TASIMA", "factor": n["tasima"] / 1000.0, "spec": "", "times": "", "when": ""},
+           {"code": "DEMIR_MONTAJ", "factor": n["montaj"] / 1000.0, "spec": "", "times": "", "when": ""}]
+    if layers == "cift" and REBAR_CHAIR_KG_PER_TON > 0:
+        out.append({"code": "SEHPA_DEMIRI", "factor": REBAR_CHAIR_KG_PER_TON / 1000.0,
+                    "spec": str(dia or ""), "times": "", "when": ""})
+    return [c for c in out if c["factor"] > 0]
+
+
+def recipe_of(item: BoqItem, catalog: Catalog, params: dict | None = None) -> list[dict]:
     if item.detail.get("system") or item.detail.get("info") or item.group == "fire":
         return []   # sistem başlığı, bilgi satırı ve fire satırları reçete açmaz
+    if item.kind == "demir":
+        return _rebar_recipe(item, params or {})
     cit = catalog.get(item.kind)
     if cit and cit.recipe:
         return list(cit.recipe)
@@ -35,7 +60,7 @@ def recipe_of(item: BoqItem, catalog: Catalog) -> list[dict]:
 
 
 def expand_recipes(items: list[BoqItem], catalog: Catalog, storey_height: float | None = None,
-                   off: bool = False) -> list[BoqItem]:
+                   off: bool = False, params: dict | None = None) -> list[BoqItem]:
     """Kalem listesine reçete satırlarını ekler (var olanlar korunur). off=True: reçete kapalı.
 
     Seviye seviye açılır: bir derinlikteki tüm üst kalemler işlendikten sonra o derinlikte oluşan her alt kalem **bir kez**
@@ -55,7 +80,7 @@ def expand_recipes(items: list[BoqItem], catalog: Catalog, storey_height: float 
             if parent.quantity <= 0:
                 continue
             chain = chains.get(parent.key, frozenset([parent.kind]))
-            for comp in recipe_of(parent, catalog):
+            for comp in recipe_of(parent, catalog, params):
                 code = comp["code"]
                 kind = code.lower()
                 if kind in chain:

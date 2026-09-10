@@ -32,7 +32,7 @@ const SARF_FIELDS: Array<{ key: keyof ProjectParams; label: string; step: string
 /** Sayıya çevrilmeyen (metin) proje parametreleri; ürün seçimi Birim Fiyatlar sayfasından yapılır */
 const STRING_PARAMS = ['facade_system', 'roof_system', 'derived_off', 'finish_rooms', 'concrete_class', 'lean_concrete_class',
   'rebar_grade', 'formwork_material', 'concrete_class_foundation', 'concrete_class_column', 'concrete_class_shear_wall',
-  'concrete_class_beam', 'concrete_class_slab', 'rebar_dia_split']
+  'concrete_class_beam', 'concrete_class_slab', 'rebar_dia_split', 'rebar_layers']
 
 export default function ProjectDetail() {
   const id = Number(useParams().id)
@@ -240,6 +240,25 @@ export default function ProjectDetail() {
                 <option value="off">bölme, tek "çap karışık" kalemi kalsın</option>
               </select>
             </label>
+            <h3>Demir işçiliği</h3>
+            <p className="muted">Demir işçiliği ton başınadır ve <b>çapa</b> bağlıdır: bir ton Ø8 ~2.500 m, bir ton Ø26 ~240 m
+              — aynı tonaj on kat farklı sayıda çubuk, bağ noktası ve kesim demektir. Program her demir kalemini çapına göre
+              hazırlık (kesme-bükme), taşıma ve montaj (yerleştirme-bağlama) saatlerine ayırır.</p>
+            <div className="row">
+              <label className="field" title="Alt + üst iki sıra donatıda üst hasır sehpa üstünde, havada bağlanır: montaj saati artar ve sehpa (poz) demiri gerekir">
+                Donatı kaç sıra
+                <select value={dparams.rebar_layers ?? ''} onChange={(e) => setDparams({ ...dparams, rebar_layers: e.target.value })}>
+                  <option value="">çizimden oku (alt / üst donatı yazılarından)</option>
+                  <option value="cift">çift kat (alt + üst)</option>
+                  <option value="tek">tek kat</option>
+                </select>
+              </label>
+              <label className="field" title="Demir atölyede kesilip bükülerek geliyorsa kesme / bükme sahada yapılmaz; taşıma ve montaj değişmez">
+                Hazır kesilmiş - bükülmüş gelen demir (%)
+                <input type="number" step="5" value={dparams.rebar_prefab_pct ?? ''} placeholder="0"
+                  onChange={(e) => setDparams({ ...dparams, rebar_prefab_pct: e.target.value })} />
+              </label>
+            </div>
             <h3>Statik sarf ve fire (bağ teli, plywood, kalıp yağı, çivi)</h3>
             <div className="params-grid">
               {SARF_FIELDS.map((f) => (

@@ -90,6 +90,8 @@ export interface ProjectParams {
   work_hours_per_day: number
   concrete_waste_pct: number
   rebar_waste_pct: number
+  rebar_layers?: string           // '' (çizimden oku) | 'cift' | 'tek'
+  rebar_prefab_pct?: number       // hazır kesilmiş - bükülmüş gelen demir %
   tie_wire_kg_per_t: number
   plywood_sheet_m2: number
   formwork_reuse: number

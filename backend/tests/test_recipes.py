@@ -182,3 +182,65 @@ def test_explicit_hours_on_parent_are_not_counted_twice():
     assert child["hours"] == 0.0 and child["hours_source"] == "üst kalemde sayıldı"
     assert cost["duration"]["total_hours"] == pytest.approx(1500.0)           # 1500 + 1200 değil
     assert "kalip_iscilik:*" not in cost["duration"]["missing_rates"]
+
+
+# ---------------------------------------------------------------- demir işçiliği: çap / kat / hazır demir
+
+def _rebar(group: str, kg: float, layers: str = ""):
+    return BoqItem(key=f"demir:{group}", kind="demir", group=group, label=f"Demir {group}", unit="kg",
+                   quantity=kg, discipline="structural", kind_label="Demir", discipline_label="Statik",
+                   detail={"rebar_layers": layers} if layers else {})
+
+
+def test_rebar_labor_depends_on_diameter():
+    """Aynı tonaj, farklı çap: ince demir ton başına çok daha fazla işçilik ister."""
+    cat = Catalog()
+    thin = {i.kind: i.quantity for i in expand_recipes([_rebar("o8", 1000.0)], cat)}
+    thick = {i.kind: i.quantity for i in expand_recipes([_rebar("o26", 1000.0)], cat)}
+    assert thin["demir_montaj"] == pytest.approx(24.0)    # 1 ton Ø8  -> 24 saat montaj
+    assert thick["demir_montaj"] == pytest.approx(8.0)    # 1 ton Ø26 ->  8 saat
+    assert thin["demir_hazirlik"] > thick["demir_hazirlik"]
+    # eski tek kalem artık yazılmaz
+    assert "demir_iscilik" not in thin
+
+
+def test_rebar_double_layer_adds_chairs_and_hours():
+    """Çift kat (alt + üst) donatı: üst hasır havada bağlanır, sehpa (poz) demiri gerekir."""
+    cat = Catalog()
+    tek = {i.kind: i.quantity for i in expand_recipes([_rebar("o20", 1000.0, "tek")], cat)}
+    cift = {i.kind: i.quantity for i in expand_recipes([_rebar("o20", 1000.0, "cift")], cat)}
+    # montaj = demirin kendisi × 1,15 + sehpa demirinin yerine konması (25 kg × 0,020 sa/kg)
+    assert cift["demir_montaj"] == pytest.approx(tek["demir_montaj"] * 1.15 + 25 * 0.020)
+    assert cift["demir_tasima"] == pytest.approx(tek["demir_tasima"])      # taşıma kattan etkilenmez
+    assert "sehpa_demiri" not in tek
+    assert cift["sehpa_demiri"] == pytest.approx(25.0)                     # 25 kg / ton
+    # sehpa demirinin kendi işçiliği de var (kesme-bükme + yerine koyma)
+    assert cift["demir_hazirlik"] > tek["demir_hazirlik"]
+
+
+def test_rebar_prefab_removes_site_preparation():
+    """Demir hazır kesilmiş / bükülmüş geliyorsa kesme - bükme sahada yapılmaz."""
+    cat = Catalog()
+    site = {i.kind: i.quantity for i in expand_recipes([_rebar("o14", 1000.0)], cat, params={})}
+    ready = {i.kind: i.quantity for i in expand_recipes([_rebar("o14", 1000.0)], cat,
+                                                        params={"rebar_prefab_pct": 100.0})}
+    assert site["demir_hazirlik"] == pytest.approx(8.0)
+    assert "demir_hazirlik" not in ready                                   # tamamen ortadan kalkar
+    assert ready["demir_montaj"] == pytest.approx(site["demir_montaj"])     # montaj ve taşıma değişmez
+    assert ready["demir_tasima"] == pytest.approx(site["demir_tasima"])
+    half = {i.kind: i.quantity for i in expand_recipes([_rebar("o14", 1000.0)], cat,
+                                                       params={"rebar_prefab_pct": 50.0})}
+    assert half["demir_hazirlik"] == pytest.approx(4.0)
+
+
+def test_rebar_layer_verdict_from_real_drawing_texts():
+    """Alt / üst donatı kanıtı yazıdan ve katman adından okunur; kot yazıları kanıt değildir."""
+    from app.parser.rebar_mix import layer_verdict, scan_layer_tags
+    real = ([("(70cm)ƒ20/18 (Üst)", "VM Üst Donatı")] * 12 + [("(40cm)ƒ14/18 (Alt)", "VOLKAN-DONATI ALT")] * 9
+            + [("ƒ20/18 Temel Alt Donatısı (X Yönü)", "DONATI")] * 3
+            + [("+0.82 (TEMEL ÜST KOT)", "KOT")] * 15 + [("D.A.K. = DELİK ALT KOTU", "LEJANT")])
+    tags = scan_layer_tags(real)
+    assert tags == {"ust": 12, "alt": 12} and layer_verdict(tags) == "cift"
+    # yalnız ilave alt donatı paftası: çift kat kanıtı değil
+    assert layer_verdict(scan_layer_tags([("(ALT-EK)", "DONATI")] * 30)) == "tek"
+    assert layer_verdict(scan_layer_tags([("ƒ12/20", "DONATI")] * 30)) == ""   # kanıt yok

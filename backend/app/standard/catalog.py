@@ -176,7 +176,10 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("GROBETON", "STA", "Grobeton", "volume", "kalınlık (cm)", "KSF-STA-GROBETON-10", poz="15.150.1003"),
     _i("DOLGU", "STA", "Dolgu / blokaj", "volume", "kalınlık (cm)", "KSF-STA-DOLGU-30"),
     _i("KAZI", "STA", "Kazı", "volume", "derinlik (cm)", "KSF-STA-KAZI-350", poz="15.120.1101"),
-    _i("DEMIR", "STA", "Nervürlü demir (kg)", "count", "çap (mm)", "KSF-STA-DEMIR-12", unit="kg"),   # poz çapa göre: rules.default_poz (Ø8–12 / Ø14–28)
+    _i("DEMIR", "STA", "Nervürlü demir (kg)", "count", "çap (mm)", "KSF-STA-DEMIR-12", unit="kg"),
+    # Çift kat donatıda üst hasırı alttan taşıyan sehpa / poz demiri ('kurbağa'); tek katta yoktur.
+    _i("SEHPA_DEMIRI", "STA", "Sehpa / poz demiri (çift kat üst hasır taşıyıcısı)", "count", "çap (mm)",
+       "KSF-STA-SEHPA_DEMIRI-12", unit="kg"),   # poz çapa göre: rules.default_poz (Ø8–12 / Ø14–28)
     _i("KALIP", "STA", "Kalıp", "area", "", "KSF-STA-KALIP"),
     _i("KALIP_ISKELESI", "STA", "Kalıp iskelesi (çelik boru)", "volume", "", "KSF-STA-KALIP_ISKELESI", unit="m³", poz="15.185.1001"),
     _i("BETON_POMPAJ", "STA", "Beton pompajı / yerleştirme", "volume", "", "KSF-STA-BETON_POMPAJ", unit="m³"),
@@ -408,7 +411,12 @@ AUX_ITEMS: list[CatalogItem] = [
     _i("BETON_ISCILIK", "STA", "Beton yerleştirme işçiliği", "count", "", "KSF-STA-BETON_ISCILIK", unit=_L),
     _i("VIBRATOR", "STA", "Vibratör (beton sıkıştırma)", "count", "", "KSF-STA-VIBRATOR", unit=_L),
     _i("BETON_KUR", "STA", "Beton kürü (kür kimyasalı / sulama)", "area", "", "KSF-STA-BETON_KUR"),
-    _i("DEMIR_ISCILIK", "STA", "Demir kesme - bükme - yerleştirme işçiliği", "count", "", "KSF-STA-DEMIR_ISCILIK", unit=_L),
+    # Demir işçiliği üçe ayrılır: normu çapa ve alt/üst kata göre değişir (rules.rebar_labor_norms).
+    # DEMIR_ISCILIK eski tek kalemdir; artık varsayılan reçetede kullanılmaz, eski katalog / fiyat satırları için durur.
+    _i("DEMIR_ISCILIK", "STA", "Demir işçiliği (toplam, eski)", "count", "", "KSF-STA-DEMIR_ISCILIK", unit=_L),
+    _i("DEMIR_HAZIRLIK", "STA", "Demir düzeltme - kesme - bükme (hazırlık)", "count", "", "KSF-STA-DEMIR_HAZIRLIK", unit=_L),
+    _i("DEMIR_TASIMA", "STA", "Demir taşıma - istifleme - kata dağıtım", "count", "", "KSF-STA-DEMIR_TASIMA", unit=_L),
+    _i("DEMIR_MONTAJ", "STA", "Demir yerleştirme - bağlama (montaj)", "count", "", "KSF-STA-DEMIR_MONTAJ", unit=_L),
     _i("KALIP_ISCILIK", "STA", "Kalıp kurma + söküm işçiliği", "count", "", "KSF-STA-KALIP_ISCILIK", unit=_L),
     _i("KAZI_MAKINE", "STA", "Ekskavatör (kazı)", "count", "", "KSF-STA-KAZI_MAKINE", unit=_L),
     _i("KAMYON", "STA", "Kamyon (nakliye)", "count", "", "KSF-STA-KAMYON", unit=_L),
@@ -482,7 +490,8 @@ DEFAULT_RECIPES: dict[str, list[tuple]] = {
     "KALIP": [("KALIP_ISCILIK", 1.2)],
     "CELIK_PROFIL": [("KAYNAK", 0.5), ("ANTIPAS", 0.3), ("CELIK_BOYA", 0.3), ("CELIK_MONTAJ", 0.4), ("ANKRAJ_BULONU", 0.2, "M20")],
     "HASIR_CELIK": [("DEMIR_ISCILIK", 0.05)],
-    "DEMIR": [("DEMIR_ISCILIK", 0.02)],
+    # DEMIR reçetesi koda gömülü değildir: çapa / kata göre hesaplanır (quantity/recipes.py: _rebar_recipe).
+    "SEHPA_DEMIRI": [("DEMIR_HAZIRLIK", 0.012), ("DEMIR_MONTAJ", 0.020)],   # saat/kg; sehpa bükümlü, yerine tek tek konur
     # lento: yerinde döküm varsayımı (adet başına 0,03 m³ beton, 3 kg demir, 0,3 m² kalıp); prefabrik ise katalogdan sıfırlayın
     "LENTO": [("BETON", 0.03, "25"), ("DEMIR", 3.0, "12"), ("KALIP", 0.3)],
     "SAHA_BETONU": [("BETON_ISCILIK", 0.8), ("BETON_KUR", 1.0), ("BETON_POMPAJ", 1.0)],

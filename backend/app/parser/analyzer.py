@@ -30,6 +30,7 @@ from .rebar_tables import kot_from_label, parse_rebar_label_groups, parse_rebar_
 from .loader import UNIT_SCALE, Drawing, load_dxf
 from .materials import scan_materials
 from .rebar_mix import scan_drawing as scan_rebar_mix
+from .rebar_mix import scan_drawing_layers as scan_rebar_layers
 from .schedules import parse_rooms, parse_schedule
 from ..standard.catalog import Catalog
 
@@ -66,6 +67,7 @@ class AnalysisResult:
     suggested_unit: str | None = None     # etiketler başka bir birime işaret ediyorsa
     materials: dict = field(default_factory=dict)   # yazılardan tanınan malzeme / sistem kanıtı (parser/materials.py)
     rebar_mix: dict = field(default_factory=dict)   # donatı yazılarından çap payları (parser/rebar_mix.py)
+    rebar_layers: dict = field(default_factory=dict)  # alt / üst donatı kanıt sayısı (çift kat mı; parser/rebar_mix.py)
     rooms: list[dict] = field(default_factory=list)  # mahal alanı yazıları (parser/schedules.py: parse_rooms)
     poz: dict = field(default_factory=dict)          # doğrama pozları: sizes / kinds / prefixes (detectors/openings.py: poz_catalog)
     unit_verdict: str | None = None       # yazı yükseklikleri / etiketlerin desteklediği birim (yeterli kanıt yoksa None)
@@ -84,7 +86,7 @@ class AnalysisResult:
             "elements": [e.to_dict() for e in self.elements],
             "layers": [l.to_dict() for l in self.layers],
             "warnings": self.warnings, "suggested_unit": self.suggested_unit, "materials": self.materials,
-            "rebar_mix": self.rebar_mix,
+            "rebar_mix": self.rebar_mix, "rebar_layers": self.rebar_layers,
             "poz": self.poz, "unit_verdict": self.unit_verdict,
             "disciplines": self.disciplines, "discipline_hints": self.discipline_hints,
             "levels": self.levels, "kot": self.kot,
@@ -409,6 +411,7 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
     result.warnings.extend(sw)
     result.materials = materials
     result.rebar_mix = scan_rebar_mix(drawing)
+    result.rebar_layers = scan_rebar_layers(drawing)
     result.rooms = room_rows(drawing)
     if suggested and suggested != drawing.unit:
         result.suggested_unit = suggested
@@ -434,6 +437,7 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
         result = analyze_standard(drawing, catalog, params)
         result.materials = scan_materials(drawing)
         result.rebar_mix = scan_rebar_mix(drawing)
+        result.rebar_layers = scan_rebar_layers(drawing)
         result.disciplines = [STANDARD_DISCIPLINE]
         return result
     if discipline == MAPPED_DISCIPLINE:
@@ -442,6 +446,7 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
         result = analyze_rebar(drawing, label, rebar_target)
         result.materials = scan_materials(drawing)
         result.rebar_mix = scan_rebar_mix(drawing)
+        result.rebar_layers = scan_rebar_layers(drawing)
         result.disciplines = [REBAR_DISCIPLINE]
         return result
     is_std = discipline == STANDARD_DISCIPLINE
@@ -490,7 +495,8 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
 
     result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
                             discipline=discipline, layers=layer_infos, warnings=list(drawing.warnings),
-                            materials=scan_materials(drawing), rebar_mix=scan_rebar_mix(drawing), disciplines=list(discs))
+                            materials=scan_materials(drawing), rebar_mix=scan_rebar_mix(drawing),
+                            rebar_layers=scan_rebar_layers(drawing), disciplines=list(discs))
     result._catalog = catalog   # mekanik dedektörü kalem kodlarını katalogdan doğrular
 
     if discipline == "structural" or (is_std and ksf_struct):
