@@ -293,7 +293,8 @@ export default function Prices() {
                           <td>
                             {i.is_general
                               ? <><b>{i.name.replace(' (genel)', '')}</b> <span className="muted hint">genel · tüm {i.kind_label.toLocaleLowerCase('tr-TR')} kalemleri</span></>
-                              : <>{i.name}{i.recipe && <span className="badge recipe" style={{ marginLeft: 6 }}>reçete</span>}</>}
+                              : <>{i.name}{i.recipe && <span className="badge recipe" style={{ marginLeft: 6 }}>reçete</span>}
+                                  {i.material_name && <span className="muted hint" title="Malzeme fiyatı bu üründen gelir; aynı ürünü kullanan bütün kalemler tek fiyattan hesaplanır. Ürün fiyatı 'Malzeme' sekmesinde girilir."> ← {i.material_name}</span>}</>}
                           </td>
                           <td className="mono">{i.poz || ''}</td>
                           <td className="num muted">{fmtQ(i.quantity)}</td>

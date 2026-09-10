@@ -22,6 +22,7 @@ from .detectors.shear_walls import detect_shear_walls
 from .detectors.slabs import detect_slabs
 from .detectors.standard import detect_mapped, detect_standard, standard_layers
 from .detectors.walls import detect_walls
+from .merge import merge_area_elements
 from .geometry import polygon_area
 from .layer_profile import (ALL_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, MAPPED_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE,
                             STRUCTURAL_TYPES, LayerProfile, ksf_spec_dims, ksf_structural_type, types_for)
@@ -625,4 +626,7 @@ def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectP
         result.unit_verdict = drawing2.unit
         result.warnings = warn + [w for w in result.warnings if "kolon etiketleri" not in w and "yazı yükseklikleri" not in w]
         result.suggested_unit = drawing2.unit
+    # Aynı kalemin bitişik parçaları tek elemanda toplanır (kirişlerle bölünmüş döşeme, parçalanmış kaplama)
+    result.elements, mw = merge_area_elements(result.elements)
+    result.warnings += mw
     return result

@@ -455,6 +455,10 @@ export interface PriceItem {
   quantity: number | null
   poz: string
   recipe: boolean
+  /** Kalemin kullandığı ürün: malzeme fiyatı buradan gelir, aynı ürünü kullanan bütün kalemler tek fiyattan
+   *  hesaplanır (kolon / perde / kiriş / döşeme betonu tek "C30/37 hazır beton" satırından). Boş: salt işçilik. */
+  material_key?: string
+  material_name?: string
 }
 
 /** KÇS kataloğu */

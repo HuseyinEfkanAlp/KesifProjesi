@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import Loading from '../components/Loading'
 import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
@@ -20,6 +20,26 @@ const REBAR_SOURCE_HINT: Record<string, string> = {
   'poz+oran': 'Bazı katların donatı paftası yok: o katlar oranla',
 }
 
+/** Keşif kalemlerini türe göre bloklar: aynı türün (beton, kalıp, demir…) kalemleri tek başlık altında,
+ *  başlıkta türün toplamı. Sıra korunur; "sistem" / "bilgi" satırları toplama girmez. */
+function kindBlocks(items: Boq['items']) {
+  const order: string[] = []
+  const by = new Map<string, Boq['items']>()
+  for (const it of items) {
+    if (!by.has(it.kind)) { by.set(it.kind, []); order.push(it.kind) }
+    by.get(it.kind)!.push(it)
+  }
+  return order.map((kind) => {
+    const rows = by.get(kind)!
+    const real = rows.filter((x) => !x.detail?.system && !x.detail?.info)
+    return {
+      kind, kindLabel: rows[0].kind_label, unit: rows[0].unit, rows,
+      total: real.reduce((s, x) => s + x.quantity, 0),
+      count: real.reduce((s, x) => s + x.count, 0),
+    }
+  })
+}
+
 export default function Quantities() {
   const pid = Number(useParams().id)
   const [project, setProject] = useState<Project | null>(null)
@@ -29,6 +49,8 @@ export default function Quantities() {
   const [rebarMix, setRebarMix] = useState<Record<string, { dia_mm: number; share: number }[]>>({})
   const [error, setError] = useState('')
   const [showLines, setShowLines] = useState(false)
+  // Keşif listesinde tür (beton, kalıp, demir…) önce toplamıyla görünür; kalem ayrıntısı katlanır.
+  const [openKinds, setOpenKinds] = useState<Record<string, boolean>>({})
   const [refresh, setRefresh] = useState(0)
 
   useEffect(() => {
@@ -114,13 +136,22 @@ export default function Quantities() {
           <table>
             <thead><tr><th>Poz</th><th>Disiplin</th><th>Tür</th><th>Kalem</th><th className="num">Miktar</th><th>Birim</th><th className="num">Adet / hat</th><th>Not</th></tr></thead>
             <tbody>
-              {g.items.map((it, idx) => {
-                const next = g.items[idx + 1]
-                const sameKind = g.items.filter((x) => x.kind === it.kind && !x.detail?.system && !x.detail?.info)
-                const showSubtotal = (!next || next.kind !== it.kind) && sameKind.length > 1
-                const subtotal = sameKind.reduce((s, x) => s + x.quantity, 0)
+              {kindBlocks(g.items).map(({ kind, kindLabel, unit, rows, total, count }) => {
+                const key = `${g.group}:${kind}`
+                const open = rows.length === 1 || openKinds[key]
                 return (
-                <>
+                <Fragment key={key}>
+                {rows.length > 1 && (
+                  <tr className="subtotal" style={{ cursor: 'pointer' }} onClick={() => setOpenKinds({ ...openKinds, [key]: !openKinds[key] })}>
+                    <td colSpan={3}><b>{open ? '▾' : '▸'} {kindLabel}</b></td>
+                    <td className="muted">{rows.length} kalem{open ? '' : ' — ayrıntı için tıklayın'}</td>
+                    <td className="num"><b>{fmt(total, unit === 'adet' || unit === 'kg' ? 0 : 2)}</b></td>
+                    <td><b>{unit}</b></td>
+                    <td className="num">{count ? fmt(count, 0) : ''}</td>
+                    <td></td>
+                  </tr>
+                )}
+                {open && rows.map((it) => (
                 <tr key={it.key} className={it.detail?.system ? 'system-row' : ''}>
                   <td className="mono" title={it.poz_name}>{it.poz || <span className="muted">-</span>}</td>
                   <td><span className={`badge disc-${it.discipline.split(':')[0]}`}>{it.discipline_label.split(' (')[0]}</span></td>
@@ -131,17 +162,8 @@ export default function Quantities() {
                   <td className="num">{it.count ? fmt(it.count, 0) : '-'}</td>
                   <td className="muted">{it.notes.join('; ')}</td>
                 </tr>
-                {showSubtotal && (
-                  <tr key={`${it.key}-sub`} className="subtotal">
-                    <td colSpan={3} className="muted">{it.kind_label} toplamı</td>
-                    <td className="muted">{sameKind.length} kalem</td>
-                    <td className="num"><b>{fmt(subtotal, it.unit === 'adet' || it.unit === 'kg' ? 0 : 2)}</b></td>
-                    <td>{it.unit}</td>
-                    <td className="num">{sameKind.reduce((s, x) => s + x.count, 0) ? fmt(sameKind.reduce((s, x) => s + x.count, 0), 0) : ''}</td>
-                    <td></td>
-                  </tr>
-                )}
-                </>
+                ))}
+                </Fragment>
                 )
               })}
             </tbody>
