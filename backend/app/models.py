@@ -20,6 +20,9 @@ class Project(SQLModel, table=True):
     params: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     # Plan seti: plan tipi kodu -> required / optional / skip (varsayılandan farklı olanlar; bkz. planset.py)
     plan_set: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
+    # Projedeki yapı blokları: ["C1", "C2", "C3", "C4"]. Yüklenen çizimlerin adından kendiliğinden dolar, elle
+    # eklenir / silinir. Bir bloğun hiç çizimi yüklenmediyse ancak buradan bilinir — plan seti kontrolü buna bakar.
+    blocks: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     # Katmanlı sistem bileşen kararları: {sistem_kodu: {bileşen_kodu: {"include": bool, "spec": str}}} (bkz. services.project_systems)
     systems: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -31,6 +34,9 @@ class Drawing(SQLModel, table=True):
     filename: str
     stored_path: str
     label: str = ""                 # "Zemin Kat", "Temel" vb.
+    # Yapı bloğu: "C1", "A4-A5"; "" = ortak / tüm bina (bodrum, zemin, vaziyet, altyapı — bloklara bölünmeyen plan).
+    # Dosya adından tanınır (parser/blocks.py), çizim listesinden değiştirilir.
+    block: str = ""
     discipline: str = "structural"  # structural | architectural | electrical | rebar | standard | mapped
     # Aynı paftada çizilen ek sezgisel disiplinler (mimari paftada elektrik gibi); analizde ana disipline eklenir
     disciplines: list[str] = Field(default_factory=list, sa_column=Column(JSON))

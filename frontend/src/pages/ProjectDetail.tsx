@@ -53,6 +53,7 @@ export default function ProjectDetail() {
   }, [])
 
   // parametre formu
+  const [blocks, setBlocks] = useState<string[]>([])
   const [params, setParams] = useState({ storey_height: 3, slab_thickness: 0.15, vat_rate: 0 })
   const [ratios, setRatios] = useState<Record<string, number>>({})
   const [dparams, setDparams] = useState<Record<string, string>>({})
@@ -64,6 +65,7 @@ export default function ProjectDetail() {
       setDrawings(ds)
       setParams({ storey_height: p.storey_height, slab_thickness: p.slab_thickness, vat_rate: p.vat_rate })
       setRatios(p.rebar_ratios)
+      setBlocks(p.blocks ?? [])
       setDparams(Object.fromEntries(Object.entries(p.params ?? {}).map(([k, v]) => [k, v === null || v === undefined ? '' : String(v)])))
     } catch (e) { setError((e as Error).message) }
   }, [id])
@@ -277,18 +279,46 @@ export default function ProjectDetail() {
       </div>
 
       <div className="panel">
+        <h3>Yapı blokları</h3>
+        <p className="muted">Bodrum ve zemin katlar birleşikse onların planları <b>ortak</b> kalır; üst katlar blok blok
+          çizildiyse blokları buraya yazın (virgülle: <code>C1, C2, C3, C4</code>). Blok adı yüklenen dosya adından da
+          tanınır — ama <b>hiç dosyası yüklenmemiş</b> bir blok ancak burada yazıyorsa eksik olduğu anlaşılır.</p>
+        <div className="row">
+          <label className="field" style={{ flex: 1 }}>Projedeki bloklar
+            <input className="wide" defaultValue={blocks.join(', ')} placeholder="C1, C2, C3, C4  (boş: tek yapı)"
+              onBlur={async (e) => {
+                const next = e.target.value.split(',').map((x) => x.trim()).filter(Boolean)
+                if (next.join('|') === blocks.join('|')) return
+                setBusy(true)
+                try { await Api.projects.setBlocks(id, next); setBlocks(next); setRefresh((r) => r + 1); await load() }
+                catch (err) { setError((err as Error).message) } finally { setBusy(false) }
+              }} />
+          </label>
+        </div>
+      </div>
+
+      <div className="panel">
         <h3>Çizimler</h3>
         {drawings.length === 0 && <p className="muted">Henüz çizim yüklenmedi.</p>}
         {drawings.length > 0 && (
           <div style={{ overflowX: 'auto' }}>
             <table>
               <thead>
-                <tr><th>Plan</th><th>Plan tipi</th><th>Disiplin</th><th>Dosya</th><th>Birim</th><th className="num">Kat</th><th className="num">H (m)</th><th className="num">Eleman</th><th>Uyarı</th><th></th></tr>
+                <tr><th>Plan</th><th title="Bu çizim hangi bloğa ait; boş = ortak / tüm bina (bodrum, zemin gibi birleşik katlar)">Blok</th><th>Plan tipi</th><th>Disiplin</th><th>Dosya</th><th>Birim</th><th className="num">Kat</th><th className="num">H (m)</th><th className="num">Eleman</th><th>Uyarı</th><th></th></tr>
               </thead>
               <tbody>
                 {drawings.map((d) => (
                   <tr key={d.id}>
                     <td><input className="wide" defaultValue={d.label} onBlur={(e) => e.target.value !== d.label && patchDrawing(d, { label: e.target.value })} /></td>
+                    <td>
+                      <select value={d.block ?? ''} disabled={busy} className={`narrow${d.block ? '' : ' unset'}`}
+                        title="Boş = ortak / tüm bina. Bodrum ve zemin birleşikse ortak bırakın; blok başına çizilen katlarda bloğu seçin."
+                        onChange={(e) => patchDrawing(d, { block: e.target.value })}>
+                        <option value="">Ortak</option>
+                        {blocks.map((b) => <option key={b} value={b}>{b}</option>)}
+                        {d.block && !blocks.includes(d.block) && <option value={d.block}>{d.block}</option>}
+                      </select>
+                    </td>
                     <td>
                       <select value={d.plan_type} disabled={busy} className={`narrow${d.plan_type ? '' : ' unset'}`} title="Plan seti kontrolünde hangi paftayı karşıladığı"
                         onChange={(e) => patchDrawing(d, { plan_type: e.target.value })}>{planTypeOptions}</select>

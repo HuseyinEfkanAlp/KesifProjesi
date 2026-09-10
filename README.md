@@ -84,6 +84,19 @@ Tarayıcı: http://127.0.0.1:5173  (API dokümantasyonu: http://127.0.0.1:8000/d
    - Proje sayfasının başındaki **"Çizimlerden ne anlaşıldı"** tablosu her pafta için durum (okundu / boş / sorun / tip seçilmedi),
      bulunanlar ("99 duvar · 35 pencere · 11 kapı · 5 mahal alanı") ve tek cümlelik not verir (`drawings.drawing_summary`);
      plan seti kontrolü, katmanlı sistemler ve çizim ayarları katlanır bölümlerdedir.
+   - **Yapı blokları** (`parser/blocks.py`, `Drawing.block`, `Project.blocks`): yaygın tipolojide bodrum ve zemin
+     katlar birleşiktir (ortada koridor, tek yapı), üst katlar C1 / C2 / C3 / C4 diye ayrılır; statik tek ruhsat
+     dosyası, mimari blok blok ayrı dosyalar gelir. Blok adı dosya adından tanınır (`… A4-A5 BLOK KALIP PLANLARI.dwg`,
+     `C1 BLOK MİMARİ.dwg`, `BLOK: C4 kuvvet.dwg`; "BLOKAJ" blok sayılmaz) ve çizim listesindeki **Blok** sütunundan
+     değiştirilir. Boş = **ortak / tüm bina** (bodrum, zemin, vaziyet, altyapı). Blok bilinci üç yeri düzeltir:
+     - plan seti kontrolü blok başına yapılır: bir tipin çizimlerinden en az biri bir bloğa aitse o tip her blokta
+       aranır ("Mimari: Mimari kat planları şu bloklarda yok: C3"). Yalnız ortak çizilen tipler (temel, vaziyet)
+       blok başına aranmaz. **Hiç dosyası yüklenmemiş** blok ancak proje bloklarında yazıyorsa bilinir — bu yüzden
+       proje sayfasında blok listesi girilir (`PUT /api/projects/{id}/blocks`).
+     - aynı kat eşleştirmesi blok içinde kalır: C1'in +6.00 kalıp planı, C2'nin +6.00 mimari planını elemez
+       (`services._plan_footprints`) — yoksa cephe alanı eksik çıkardı.
+     - çatı alanı blok başına hesaplanır. Podyum varsa (ortak kat + üstünde kuleler) toplam çatı = birleşik kat
+       oturumu; blok çatıları ve aradaki **podyum terası** bunun içindedir, üst üste sayılmaz.
    - **Plan seti kontrolü**: proje sayfası ve sihirbaz, hangi plan tiplerinin yüklendiğini gösterir; yüklenmemiş zorunlu planlar
      için uyarı verir ("Altyapı: Altyapı planı yüklenmedi", "Elektrik: Elektrik kablo tava planı yüklenmedi",
      "Mimari: Mimari tavan planı yüklenmedi" …). Projede gerçekten olmayan bir plan satırında **Bu projede yok** seçilir;

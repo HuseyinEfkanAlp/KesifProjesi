@@ -11,7 +11,7 @@ interface Props {
 }
 
 const STATUS_LABEL: Record<PlanStatus, string> = {
-  present: 'Yüklendi', missing: 'EKSİK', skipped: 'Bu projede yok', optional_missing: 'İsteğe bağlı',
+  present: 'Yüklendi', partial: 'BLOK EKSİK', missing: 'EKSİK', skipped: 'Bu projede yok', optional_missing: 'İsteğe bağlı',
 }
 const LEVEL_LABEL: Record<PlanLevel, string> = { required: 'Gerekli', optional: 'İsteğe bağlı', skip: 'Bu projede yok' }
 
@@ -46,7 +46,7 @@ export default function PlanChecklist({ projectId, refreshKey, onLoaded }: Props
           Plan seti kontrolü{' '}
           {check.complete
             ? <span className="badge st-present">tamam</span>
-            : <span className="badge st-missing">{check.missing_required} eksik</span>}
+            : <span className="badge st-missing">{check.missing_required} eksik{(check.partial ?? 0) > 0 ? ` · ${check.partial} blok eksiği` : ''}</span>}
           <span className="muted" style={{ fontWeight: 400, marginLeft: 8 }}>{check.present} plan tipi yüklendi</span>
         </h3>
         <button className="secondary small" onClick={() => setOpen(!open)}>{open ? 'Listeyi gizle' : 'Listeyi göster'}</button>
@@ -54,6 +54,10 @@ export default function PlanChecklist({ projectId, refreshKey, onLoaded }: Props
       {check.warnings.length > 0 && open && (
         <div className="warn">
           <b>Eksik planlar var.</b> Yüklemediğiniz planların keşfi çıkmaz. Projede gerçekten yoksa satırında <i>Bu projede yok</i> seçin.
+          {(check.undeclared_blocks ?? []).length > 0 && (
+            <div style={{ marginTop: 6 }}>Çizimlerde geçen ama proje bloklarına eklenmemiş ad:{' '}
+              <b>{(check.undeclared_blocks ?? []).join(', ')}</b> — yazım farkıysa çizimin blok sütununu düzeltin.</div>
+          )}
           <ul>{check.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
         </div>
       )}
@@ -72,9 +76,17 @@ export default function PlanChecklist({ projectId, refreshKey, onLoaded }: Props
                 <tr key={t.code} className={`st-${t.status}`}>
                   {i === 0 && <td rowSpan={g.types.length} className="group-cell"><b>{g.label}</b><div className="muted">{g.present} / {g.types.length}</div></td>}
                   <td title={t.hint}>{t.label}{t.hint && <div className="muted hint">{t.hint}</div>}</td>
-                  <td><span className={`badge st-${t.status}`}>{STATUS_LABEL[t.status]}</span>{t.via && <div className="muted hint">{t.via} karşılıyor</div>}</td>
                   <td>
-                    {t.drawings.map((d) => <Link key={d.id} to={`/projects/${projectId}/drawings/${d.id}`} className="chip">{d.label}</Link>)}
+                    <span className={`badge st-${t.status}`}>{STATUS_LABEL[t.status]}</span>
+                    {t.via && <div className="muted hint">{t.via} karşılıyor</div>}
+                    {(t.missing_blocks ?? []).length > 0 && <div className="muted hint">yok: {(t.missing_blocks ?? []).join(', ')}</div>}
+                  </td>
+                  <td>
+                    {t.drawings.map((d) => (
+                      <Link key={d.id} to={`/projects/${projectId}/drawings/${d.id}`} className="chip">
+                        {d.block ? `${d.block} · ` : ''}{d.label}
+                      </Link>
+                    ))}
                   </td>
                   <td>
                     <select value={t.level} onChange={(e) => setLevel(t.code, e.target.value as PlanLevel)}>

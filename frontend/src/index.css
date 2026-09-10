@@ -116,9 +116,11 @@ code.layer { font-family: var(--mono); font-size: 12px; background: #eef2f6; pad
 /* plan seti durumu */
 .badge.st-present { background: var(--ok); }
 .badge.st-missing { background: var(--danger); }
+.badge.st-partial { background: #e8a33d; }   /* tip yüklü ama bazı bloklarda yok */
 .badge.st-skipped { background: #9a9a9a; }
 .badge.st-optional_missing { background: #e5e9ee; color: var(--muted); }
 .plan-table tr.st-missing td { background: #fff5f4; }
+.plan-table tr.st-partial td { background: #fff9ec; }
 .plan-table tr.st-skipped td { color: var(--muted); }
 .plan-table td.group-cell { vertical-align: top; background: #f7f9fb; }
 .plan-table .hint { font-size: 11px; }

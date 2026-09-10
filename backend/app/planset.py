@@ -268,35 +268,58 @@ class PlanStatus:
     level: str
     drawings: list[dict] = field(default_factory=list)
     via: str | None = None       # başka bir tipin karşıladığı (ör. elk_genel -> elk_aydinlatma)
+    missing_blocks: list[str] = field(default_factory=list)   # bu tipi olmayan bloklar (C2, C3…)
 
     @property
     def status(self) -> str:
-        if self.drawings or self.via:
-            return "present"
         if self.level == SKIP:
             return "skipped"
+        if self.drawings or self.via:
+            return "partial" if self.missing_blocks else "present"
         return "missing" if self.level == REQUIRED else "optional_missing"
 
     def to_dict(self) -> dict:
-        return {**self.plan.to_dict(), "level": self.level, "status": self.status, "drawings": self.drawings, "via": self.via}
+        return {**self.plan.to_dict(), "level": self.level, "status": self.status, "drawings": self.drawings,
+                "via": self.via, "missing_blocks": self.missing_blocks}
 
 
-def plan_check(drawings: list, plan_set: dict | None) -> dict:
+def plan_check(drawings: list, plan_set: dict | None, blocks: list[str] | None = None) -> dict:
     """Projenin çizimlerine göre plan seti durumu.
 
-    drawings: plan_type / id / label alanları olan nesneler (Drawing modeli ya da sözlük).
+    drawings: plan_type / id / label / block alanları olan nesneler (Drawing modeli ya da sözlük).
+
+    **Blok bilinci:** yaygın tipolojide bodrum ve zemin birleşiktir (blok = "" ortak), üst katlar C1…C4 diye
+    ayrılır ve her bloğun kendi mimari / tesisat dosyası olur. Bir plan tipinin çizimlerinden en az biri bir
+    bloğa aitse o tip "blok başına" sayılır: projedeki her blokta olmalıdır, olmayan bloklar uyarı verir.
+    Yalnız ortak çizimi olan tipler (vaziyet, altyapı, temel) blok başına aranmaz.
+
+    blocks: projede tanımlı blok adları (Project.blocks). Hiç çizimi yüklenmemiş bir blok ancak buradan
+    bilinir — C3'ün dosyası hiç yüklenmediyse çizimlere bakarak C3'ün varlığı anlaşılamaz.
     """
     levels = effective_levels(plan_set)
     statuses = {p.code: PlanStatus(p, levels[p.code]) for p in PLAN_TYPES}
     unknown: list[dict] = []
+    blocks: set[str] = {b.strip() for b in (blocks or []) if b and b.strip()}
+    declared = set(blocks)
+    by_code_blocks: dict[str, set[str]] = {}
     for d in drawings:
         get = (lambda k: d.get(k)) if isinstance(d, dict) else (lambda k: getattr(d, k, None))
         code = get("plan_type") or ""
-        info = {"id": get("id"), "label": get("label") or get("filename") or "", "discipline": get("discipline")}
+        blk = (get("block") or "").strip()
+        if blk:
+            blocks.add(blk)
+        info = {"id": get("id"), "label": get("label") or get("filename") or "", "discipline": get("discipline"),
+                "block": blk}
         if code in statuses:
             statuses[code].drawings.append(info)
+            by_code_blocks.setdefault(code, set()).add(blk)
         else:
             unknown.append(info)
+    for code, st in statuses.items():
+        seen = by_code_blocks.get(code) or set()
+        if st.level == SKIP or not blocks or not (seen - {""}):
+            continue   # blok bilgisi yok ya da bu tip yalnız ortak çizilmiş: blok başına aranmaz
+        st.missing_blocks = sorted(blocks - seen)
     for code, st in statuses.items():
         if st.drawings:
             for other in st.plan.satisfies:
@@ -307,17 +330,24 @@ def plan_check(drawings: list, plan_set: dict | None) -> dict:
         types = [statuses[p.code].to_dict() for p in PLAN_TYPES if p.group == gcode]
         groups.append({"code": gcode, "label": glabel, "types": types,
                        "missing": sum(1 for t in types if t["status"] == "missing"),
+                       "partial": sum(1 for t in types if t["status"] == "partial"),
                        "present": sum(1 for t in types if t["status"] == "present")})
     missing = [statuses[p.code] for p in PLAN_TYPES if statuses[p.code].status == "missing"]
+    partial = [statuses[p.code] for p in PLAN_TYPES if statuses[p.code].status == "partial"]
     warnings = [f"{PLAN_GROUPS[st.plan.group]}: {st.plan.label} yüklenmedi" for st in missing]
+    warnings += [f"{PLAN_GROUPS[st.plan.group]}: {st.plan.label} şu bloklarda yok: {', '.join(st.missing_blocks)}"
+                 for st in partial]
     if unknown:
         warnings.append(f"{len(unknown)} çizimin plan tipi tanınamadı; çizim listesinden plan tipini seçin")
     return {
         "groups": groups,
         "warnings": warnings,
+        "blocks": sorted(blocks),
+        "undeclared_blocks": sorted(blocks - declared),   # çizimden tanınmış ama projeye eklenmemiş
         "missing_required": len(missing),
+        "partial": len(partial),
         "present": sum(1 for st in statuses.values() if st.status == "present"),
         "total_required": sum(1 for st in statuses.values() if st.level == REQUIRED),
         "unknown": unknown,
-        "complete": not missing and not unknown,
+        "complete": not missing and not partial and not unknown,
     }

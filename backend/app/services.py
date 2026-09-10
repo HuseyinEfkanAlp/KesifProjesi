@@ -637,11 +637,35 @@ def roof_area(project: Project, session: Session, items: list[BoqItem] | None = 
     elif params.get("roof_area_m2"):
         out.update(area=float(params["roof_area_m2"]), source="manual", detail="proje parametresi (elle girildi)")
     else:
+        # Her bloğun çatısı ayrıdır: blok başına en büyük kat oturumu alınır ve bloklar toplanır.
+        # (Tek blokta davranış aynıdır: katların en büyüğü.) Podyum üstünde kalan teras ayrıca yazılır.
         fps = [fp for fp in _plan_footprints(project, session, drawings) if not fp["basement"]]
         if fps:
-            top = max(fps, key=lambda f: f["area"])
-            out.update(area=round(top["area"], 2), source="estimated",
-                       detail=f"en büyük kat planı oturumu ({top['drawing']}; tahmin, elle düzeltilebilir)")
+            per_block: dict[str, dict] = {}
+            for fp in fps:
+                b = fp.get("block") or ""
+                if fp["area"] > per_block.get(b, {"area": 0.0})["area"]:
+                    per_block[b] = fp
+            tops = list(per_block.values())
+            common = per_block.get("")            # ortak / birleşik kat (podyum): bodrum değil, zemin
+            towers = sum(f["area"] for b, f in per_block.items() if b)
+            names = ", ".join(f"{f.get('block') or 'ortak'}: {f['drawing']}" for f in tops)
+            if common and towers > 0:
+                # Bloklar podyumun üstünde oturur: yukarıdan bakınca bütün çatı yüzeyleri podyum oturumunu kaplar.
+                # Toplam = podyum oturumu; blok çatıları + aradaki teras bunun içindedir (üst üste sayılmaz).
+                total = max(common["area"], towers)
+                terrace = round(total - towers, 2)
+                detail = (f"birleşik kat oturumu ({common['drawing']}) = blok çatıları ({towers:,.0f} m²) "
+                          f"+ podyum terası ({max(terrace, 0):,.0f} m²)")
+                if terrace > 1.0:
+                    out["terrace"] = terrace
+            elif len(tops) > 1:
+                total = towers or sum(f["area"] for f in tops)
+                detail = f"blok başına en büyük kat planı oturumu, {len(tops)} blok toplandı ({names})"
+            else:
+                total = tops[0]["area"]
+                detail = f"en büyük kat planı oturumu ({tops[0]['drawing']})"
+            out.update(area=round(total, 2), source="estimated", detail=detail + "; tahmin, elle düzeltilebilir")
     evidence = merge_materials([d.materials or {} for d in drawings])
     cands = [c for c in ROOF_SYSTEM_EVIDENCE if c in evidence]
     out["candidates"] = cands
@@ -900,7 +924,10 @@ def _unique_floor_footprints(fps: list[dict]) -> list[dict]:
 
 def _plan_footprints(project: Project, session: Session, drawings: list[Drawing]) -> list[dict]:
     """Kat planlarının (statik kalıp ya da mimari) bina oturumu: aynı kat için statik varsa mimari sayılmaz.
-    Bodrum / temel paftaları cephe için atlanır (yer altı)."""
+    Bodrum / temel paftaları cephe için atlanır (yer altı).
+
+    Aynı kat eşleşmesi **blok içinde** yapılır: C1'in +6.00 kalıp planı, C2'nin +6.00 mimari planını elemez.
+    Ortak (blok = "") çizimler yalnız ortak planları eler — bodrum ve zemin gibi birleşik katlar."""
     out = []
     labels_struct = set()
     for d in drawings:
@@ -910,8 +937,9 @@ def _plan_footprints(project: Project, session: Session, drawings: list[Drawing]
                 continue
             fp = building_footprint(els)
             if fp and fp[0] >= 10:
-                labels_struct.add(kot_from_label(d.label))
-                out.append({"drawing": d.label or d.filename, "drawing_id": d.id, "area": round(fp[0], 2), "perimeter": round(fp[1], 2),
+                labels_struct.add((d.block or "", kot_from_label(d.label)))
+                out.append({"drawing": d.label or d.filename, "drawing_id": d.id, "block": d.block or "",
+                            "area": round(fp[0], 2), "perimeter": round(fp[1], 2),
                             "storey_height": storey_height_of(project, d), "storey_count": d.storey_count,
                             "basement": "BODRUM" in (d.label or "").upper(), "source": "structural"})
     for d in drawings:
@@ -919,11 +947,12 @@ def _plan_footprints(project: Project, session: Session, drawings: list[Drawing]
             els = _included_elements(d, session)
             if not any(e.etype == "wall" for e in els):
                 continue
-            if kot_from_label(d.label) and kot_from_label(d.label) in labels_struct:
+            if kot_from_label(d.label) and (d.block or "", kot_from_label(d.label)) in labels_struct:
                 continue
             fp = building_footprint(els)
             if fp and fp[0] >= 10:
-                out.append({"drawing": d.label or d.filename, "drawing_id": d.id, "area": round(fp[0], 2), "perimeter": round(fp[1], 2),
+                out.append({"drawing": d.label or d.filename, "drawing_id": d.id, "block": d.block or "",
+                            "area": round(fp[0], 2), "perimeter": round(fp[1], 2),
                             "storey_height": storey_height_of(project, d), "storey_count": d.storey_count,
                             "basement": "BODRUM" in (d.label or "").upper(), "source": "architectural"})
     return out

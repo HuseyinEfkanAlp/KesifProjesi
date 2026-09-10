@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from ..db import get_session
 from ..models import Drawing, Element, PriceItem, Project
 from ..parser.layer_profile import ALL_TYPES, DEFAULT_PROFILE, DISCIPLINES, TYPES_BY_DISCIPLINE, LayerProfile
+from ..parser.blocks import normalize as normalize_block
 from ..planset import LEVELS, PLAN_GROUPS, PLAN_TYPE_BY_CODE, PLAN_TYPES, effective_levels, plan_check
 from ..quantity.boq import DEFAULT_PARAMS, KIND_META
 from ..quantity.engine import DEFAULT_REBAR_RATIOS
@@ -68,7 +69,7 @@ def get_project(project_id: int, session: Session) -> Project:
 def project_out(p: Project, session: Session) -> dict:
     n = len(session.exec(select(Drawing.id).where(Drawing.project_id == p.id)).all())
     ds = session.exec(select(Drawing).where(Drawing.project_id == p.id)).all()
-    check = plan_check(ds, p.plan_set)
+    check = plan_check(ds, p.plan_set, p.blocks)
     from ..services import storey_heights
     sh = storey_heights(p, ds)
     return {**p.model_dump(), "drawing_count": n,
@@ -210,7 +211,26 @@ def read_plan_check(project_id: int, session: Session = Depends(get_session)):
     """Plan seti kontrolü: hangi plan tipleri yüklü, hangileri eksik (uyarı), hangileri bu projede yok sayıldı."""
     p = get_project(project_id, session)
     ds = session.exec(select(Drawing).where(Drawing.project_id == p.id)).all()
-    return {**plan_check(ds, p.plan_set), "plan_set": effective_levels(p.plan_set), "levels": list(LEVELS)}
+    return {**plan_check(ds, p.plan_set, p.blocks), "plan_set": effective_levels(p.plan_set),
+            "levels": list(LEVELS), "project_blocks": list(p.blocks or [])}
+
+
+@router.put("/{project_id}/blocks")
+def update_blocks(project_id: int, body: list[str], session: Session = Depends(get_session)):
+    """Projedeki yapı bloklarını yazar: ["C1","C2","C3","C4"].
+
+    Bir bloğun hiç çizimi yüklenmediyse varlığı ancak buradan bilinir; plan seti kontrolü eksik bloğu
+    bu listeye bakarak uyarır. Ortak (bodrum / zemin gibi birleşik) planlar listede yer almaz."""
+    p = get_project(project_id, session)
+    seen: list[str] = []
+    for raw in body:
+        n = normalize_block(raw)
+        if n and n not in seen:
+            seen.append(n)
+    p.blocks = seen
+    session.add(p)
+    session.commit()
+    return read_plan_check(project_id, session)
 
 
 @router.put("/{project_id}/plan-set")

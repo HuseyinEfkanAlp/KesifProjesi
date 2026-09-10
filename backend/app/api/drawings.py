@@ -16,6 +16,7 @@ from ..export.svg import render_svg
 from ..models import Drawing, Element, Project
 from ..parser.layer_profile import ALL_ELEMENT_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, types_for  # noqa: F401
 from ..parser.analyzer import HEURISTIC_DISCIPLINES
+from ..parser.blocks import detect_block, detect_with_known, normalize as normalize_block
 from ..parser.dwg import convert_dwg_to_dxf, dwg_supported
 from ..parser.loader import UNIT_SCALE, load_dxf
 from ..parser.sheets import BIG_FILE_BYTES, Sheet, SheetScan, crop_sheets, scan_sheets
@@ -211,9 +212,25 @@ def _refresh_openings(project: Project, session: Session) -> None:
             analyze_and_store(d, project, session)
 
 
+def _project_blocks(project: Project, session: Session) -> list[str]:
+    """Projede şimdiye kadar tanınmış blok adları (yeni çizimin adını eşlemek için)."""
+    return sorted({(d.block or "") for d in session.exec(select(Drawing).where(Drawing.project_id == project.id))} - {""})
+
+
+def _detect_block(project: Project, session: Session, *texts: str) -> str:
+    """Dosya adı / pafta başlığından blok; "BLOK" kelimesi yoksa projedeki bilinen adlarla eşleştirilir."""
+    if b := detect_block(*texts):
+        return b
+    known = _project_blocks(project, session)
+    for t in texts:
+        if b := detect_with_known(t or "", known):
+            return b
+    return ""
+
+
 def _create_drawing(project: Project, dest: Path, filename: str, label: str, storey_count: int,
                     unit_override: str | None, session: Session, storey_height: float | None = None,
-                    discipline: str = DEFAULT_DISCIPLINE, plan_type: str = "") -> Drawing:
+                    discipline: str = DEFAULT_DISCIPLINE, plan_type: str = "", block: str | None = None) -> Drawing:
     """Kaydedilmiş DXF için Drawing kaydı açar ve analiz eder; hata olursa dosya ve kayıt geri alınır."""
     try:
         load_dxf(dest, unit_override=unit_override)
@@ -223,8 +240,12 @@ def _create_drawing(project: Project, dest: Path, filename: str, label: str, sto
     d = Drawing(project_id=project.id, filename=filename, stored_path=str(dest),
                 label=label, storey_count=max(1, storey_count), unit_override=unit_override or None,
                 storey_height=storey_height if storey_height and storey_height > 0 else None,
-                discipline=discipline, plan_type=plan_type)
+                discipline=discipline, plan_type=plan_type,
+                block=normalize_block(block) if block is not None else _detect_block(project, session, filename, label))
     session.add(d)
+    if d.block and d.block not in (project.blocks or []):
+        project.blocks = list(project.blocks or []) + [d.block]   # tanınan blok projeye eklenir
+        session.add(project)
     session.commit()
     session.refresh(d)
     try:
@@ -419,6 +440,7 @@ class DrawingPatch(BaseModel):
     discipline: str | None = None      # değişirse yeniden analiz
     disciplines: list[str] | None = None   # ek sezgisel disiplinler (aynı paftada mimari + elektrik); değişirse yeniden analiz
     plan_type: str | None = None       # plan seti tipi ("" -> tanımsız)
+    block: str | None = None           # yapı bloğu ("C1"); "" -> ortak / tüm bina
 
 
 @router.patch("/drawings/{drawing_id}")
@@ -453,6 +475,8 @@ def update_drawing(drawing_id: int, body: DrawingPatch, session: Session = Depen
             d.disciplines = extra
     if "plan_type" in data:
         d.plan_type = _check_plan_type(data.pop("plan_type"))
+    if "block" in data:
+        d.block = normalize_block(data.pop("block") or "")
     height_changed = "storey_height" in data and data["storey_height"] != d.storey_height
     for k, v in data.items():
         setattr(d, k, v)

@@ -37,6 +37,8 @@ export interface DrawingPatch {
   unit_override?: string
   discipline?: Discipline
   plan_type?: string
+  /** Yapı bloğu ('' = ortak / tüm bina) */
+  block?: string
 }
 
 export interface UploadOptions {
@@ -60,6 +62,9 @@ export const Api = {
     planCheck: (id: number) => request<PlanCheck>(`/api/projects/${id}/plan-check`),
     setPlanLevels: (id: number, levels: Record<string, PlanLevel>) =>
       request<PlanCheck>(`/api/projects/${id}/plan-set`, { method: 'PUT', body: json(levels) }),
+    /** Projedeki yapı blokları (["C1","C2"]); hiç çizimi yüklenmemiş blok ancak buradan bilinir */
+    setBlocks: (id: number, blocks: string[]) =>
+      request<PlanCheck>(`/api/projects/${id}/blocks`, { method: 'PUT', body: json(blocks) }),
     planTypes: () => request<{ groups: Record<string, string>; types: PlanType[]; levels: PlanLevel[] }>('/api/projects/meta/plan-types'),
     systems: (id: number) => request<ProjectSystems>(`/api/projects/${id}/systems`),
     /** {sistem: {bileşen: {include?, spec?}}}; boş nesne kararı siler (kanıta döner) */

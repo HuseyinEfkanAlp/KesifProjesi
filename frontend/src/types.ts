@@ -127,6 +127,7 @@ export interface ProjectParams {
 }
 
 export interface Project {
+  blocks?: string[]                // yapı blokları: ["C1","C2"]; boş = tek yapı
   id: number
   name: string
   description: string
@@ -143,7 +144,7 @@ export interface Project {
 
 /** Plan seti: proje için gerekli pafta tipleri (planset.py) */
 export type PlanLevel = 'required' | 'optional' | 'skip'
-export type PlanStatus = 'present' | 'missing' | 'skipped' | 'optional_missing'
+export type PlanStatus = 'present' | 'partial' | 'missing' | 'skipped' | 'optional_missing'
 
 export interface PlanType {
   code: string
@@ -159,8 +160,9 @@ export interface PlanType {
 
 export interface PlanTypeStatus extends PlanType {
   status: PlanStatus
-  drawings: { id: number; label: string; discipline: Discipline }[]
+  drawings: { id: number; label: string; discipline: Discipline; block?: string }[]
   via: string | null
+  missing_blocks?: string[]        // bu tipi olmayan bloklar (C3)
 }
 
 export interface PlanCheckSummary {
@@ -172,7 +174,14 @@ export interface PlanCheckSummary {
 }
 
 export interface PlanCheck extends PlanCheckSummary {
-  groups: { code: string; label: string; types: PlanTypeStatus[]; missing: number; present: number }[]
+  /** Projedeki bloklar (tanımlı + çizimlerden tanınan) */
+  blocks?: string[]
+  /** Çizimde geçen ama proje bloklarına eklenmemiş adlar */
+  undeclared_blocks?: string[]
+  project_blocks?: string[]
+  /** Tipi yüklü ama bazı bloklarda eksik olan plan sayısı */
+  partial?: number
+  groups: { code: string; label: string; types: PlanTypeStatus[]; missing: number; partial?: number; present: number }[]
   unknown: { id: number; label: string; discipline: Discipline }[]
   plan_set: Record<string, PlanLevel>
   levels: PlanLevel[]
@@ -193,6 +202,7 @@ export interface LayerInfo {
 }
 
 export interface Drawing {
+  block?: string                   // yapı bloğu; '' = ortak / tüm bina
   id: number
   project_id: number
   filename: string
