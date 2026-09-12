@@ -97,12 +97,6 @@ def segment_net_length(a: Point, b: Point, obstacles_union) -> float:
     return seg.length - seg.intersection(obstacles_union).length
 
 
-def distance_point_to_polygon(pt: Point, pts: Sequence[Point]) -> float:
-    if len(pts) >= 3:
-        return Polygon(pts).buffer(0).distance(SPoint(pt))
-    return LineString(pts).distance(SPoint(pt))
-
-
 def bbox(pts: Sequence[Point]) -> tuple[float, float, float, float]:
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]

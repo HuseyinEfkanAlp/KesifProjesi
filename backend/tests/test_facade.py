@@ -43,16 +43,20 @@ def test_facade_from_structural_estimate_and_system(client, storey_dxf, precast_
     assert fa["per_drawing"][0]["area"] == pytest.approx(fa["per_drawing"][0]["perimeter"] * 3.0 * 4, rel=1e-3)
     boq = client.get(f"/api/projects/{pid}/quantities").json()["boq"]
     by = {i["key"]: i for i in boq["items"]}
-    assert "cephe_brut:*" not in by and "mantolama_sistem:*" not in by   # sistem seçilmeden keşfe girmez
+    assert "cephe_brut:*" not in by and not any(k.startswith("mantolama_sistem:") for k in by)   # sistem seçilmeden keşfe girmez
 
     # cephe sistemi seç: mantolama; miktar = net cephe alanı, bileşenler kanıtsız -> hepsi "projede yok" diye sorulur
     r = client.patch(f"/api/projects/{pid}", json={"params": {"facade_system": "MANTOLAMA_SISTEM"}})
     assert r.status_code == 200 and r.json()["params"]["facade_system"] == "MANTOLAMA_SISTEM"
     by = {i["key"]: i for i in client.get(f"/api/projects/{pid}/quantities").json()["boq"]["items"]}
     assert by["cephe_brut:*"]["detail"]["info"] is True and by["cephe_brut:*"]["quantity"] == pytest.approx(fa["gross"], abs=0.01)
-    assert by["mantolama_sistem:*"]["quantity"] == pytest.approx(fa["net"], abs=0.01) and by["mantolama_sistem:*"]["detail"]["system"] is True
+    # Cephe yönlere ayrılır (ön / arka / sağ / sol): her yön ayrı satır, toplamları net cephe alanı
+    sistem = [i for k, i in by.items() if k.startswith("mantolama_sistem:")]
+    assert len(sistem) == 4
+    assert sum(i["quantity"] for i in sistem) == pytest.approx(fa["net"], abs=0.05)
+    assert all(i["detail"]["system"] is True and i["detail"]["facade_side"] for i in sistem)
     cost = client.get(f"/api/projects/{pid}/cost").json()["cost"]
-    assert not any(l["key"] in ("cephe_brut:*", "mantolama_sistem:*") for l in cost["lines"])   # bilgi ve sistem satırı fiyatlanmaz
+    assert not any(l["key"] == "cephe_brut:*" or l["key"].startswith("mantolama_sistem:") for l in cost["lines"])
     assert client.get(f"/api/projects/{pid}/systems").json()["facade"]["source"] == "estimated"
     sy = client.get(f"/api/projects/{pid}/systems").json()
     m = next(s for s in sy["systems"] if s["code"] == "MANTOLAMA_SISTEM")

@@ -12,3 +12,5 @@ frontend/dist/
 *.dwl2
 *.sheets.json
 !samples/**/*.dxf
+# Dönüşüm ve doğrulama çalışma dizini (yerel; çıktılar README ve docs/ içinde özetlenir)
+work/

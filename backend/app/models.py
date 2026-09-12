@@ -107,6 +107,8 @@ class PriceItem(SQLModel, table=True):
     brand: str = ""                 # tercih edilen marka / ürün
     hours_per_unit: float = 0.0     # işçilik süresi: adam-saat / birim
     crew_size: float = 0.0          # bu kalemde aynı anda çalışan kişi sayısı (0 = genel satırdan / 1)
+    # ÇŞB / firma birim fiyatı (her şey dahil): doluysa malzeme + işçiliğin yerine geçer
+    poz_price: float = 0.0
     set_fields: list[str] = Field(default_factory=list, sa_column=Column(JSON))   # kullanıcının açıkça girdiği alanlar (0 dahil)
 
 
@@ -142,7 +144,8 @@ class PriceBookItem(SQLModel, table=True):
     Aynı ürün için birden çok tedarikçi satırı olabilir; geçerli fiyat `preferred` işaretli satır, yoksa en
     düşük pozitif fiyattır. Yeni projede ürün ve işçilik satırları bu bankadan doldurulur."""
     id: int | None = Field(default=None, primary_key=True)
-    scope: str = "material"         # material (ürün fiyatı) | labor (işçilik fiyatı, anahtar "<tür>:*")
+    scope: str = "material"         # material (ürün) | labor (işçilik) | poz (ÇŞB birim fiyatı, her şey dahil)
+    poz: str = Field(default="", index=True)   # ÇŞB poz numarası (scope="poz" satırlarında anahtar budur)
     key: str = Field(index=True)    # ürün anahtarı: beton:c30_37, demir:o12, duvar_ytong:*
     name: str = ""
     unit: str = ""

@@ -88,6 +88,8 @@ export interface ProjectParams {
   cable_waste_pct: number
   tray_waste_pct: number
   work_hours_per_day: number
+  /** Aynı anda çalışan ekip sayısı; bir ekipteki kişi sayısı normdur (rules.CREW_SIZE) */
+  crew_count: number
   concrete_waste_pct: number
   rebar_waste_pct: number
   rebar_layers?: string           // '' (çizimden oku) | 'cift' | 'tek'
@@ -261,6 +263,21 @@ export interface SheetInfo {
   analyze: boolean
   /** Başlıksız küçük küme (merdiven detayı, pano tablosu, lejant): plan değil, seçili gelmez */
   fragment?: boolean
+  /** İçerik türü: "plan" ölçülecek çizim, "antet" proje bilgi tablosu, "bos" çizimsiz çerçeve,
+   *  "cetvel" poz / ürün listesi ya da lejant (geometrisi ölçülmez, yazıları okunur) */
+  kind?: 'plan' | 'antet' | 'bos' | 'cetvel'
+  /** Plan olmayan içeriğin listede gösterilen açıklaması */
+  kind_note?: string
+}
+
+/** Ruhsat antedinden (proje bilgi tablosu) okunanlar */
+export interface TitleBlock {
+  fields: Record<string, string>
+  concrete_class: string
+  rebar_grade: string
+  foundation_kind: string
+  storey_count: number | null
+  area_m2: number | null
 }
 
 export interface SourceInfo {
@@ -276,6 +293,9 @@ export interface SourceInfo {
   dropped?: number
   /** Pafta düzeninin dışına kaçmış, sınır kutusunu şişiren nesne sayısı */
   strays?: number
+  /** Dosyanın antedinden okunanlar; boş proje parametrelerine yazılır */
+  titleblock?: TitleBlock
+  titleblock_summary?: string
 }
 
 /** Yükleme yanıtı: dosya çok paftalıysa önce pafta seçilir */
@@ -312,6 +332,11 @@ export interface Element {
   included: boolean
   manual: boolean
   meta?: Record<string, unknown>
+  /** Aynı kalemi tüketen elemanların ortak anahtarı: "column|100/100". Sunucuda hesaplanır;
+   *  plan önizlemesindeki çokgenin data-group değeriyle birebir aynıdır. */
+  group?: string
+  /** Grubun okunur etiketi: "100/100", "radye 70 cm", "30 cm ytong" */
+  section?: string
 }
 
 export interface QuantityGroup {
@@ -423,11 +448,16 @@ export interface Boq {
 }
 
 export interface QuantitiesResponse {
+  quality: QualityReport
   summary: QuantitySummary
   lines: QuantityLine[]
   boq: Boq
   /** Çizimdeki donatı yazılarından okunan çap dağılımı: eleman tipi -> paylar ("*": proje geneli) */
   rebar_mix?: Record<string, { dia_mm: number; share: number }[]>
+  /** Çap bazında demir: metraj + oran + fire, işçilik saatleri */
+  rebar?: RebarReport
+  /** Ana kalemler: beton / kalıp / demir / duvar / sıva / boya */
+  headline?: HeadlineSection[]
   params: { storey_height: number; slab_thickness: number } & ProjectParams
   /** Kot yazılarından türeyen kat seviyeleri ve etkin kat yüksekliği (H girilmemişse bunlar kullanılır) */
   levels?: { levels: number[]; heights: number[]; effective: number; source: string; per_drawing: Record<string, { height: number; source: string; kot: number | null }> }
@@ -748,5 +778,145 @@ export interface CostResult {
   /** fiyatı girilmemiş ürün anahtarları */
   missing_materials: string[]
   missing_labor: string[]
-  duration: { hours_per_day: number; total_hours: number; man_days: number; sequential_days: number; parallel_days: number; missing_rates: string[]; missing_crew: string[] }
+  missing_ranked?: MissingRanked
+  duration: {
+    hours_per_day: number; total_hours: number; man_days: number
+    sequential_days: number; parallel_days: number
+    missing_rates: string[]; missing_crew: string[]
+    /** Ekibi program normundan gelen kalemler (kullanıcı girişi değil) */
+    norm_crew?: string[]
+    /** Bu takvim süresi için sahada gereken ortalama kişi sayısı */
+    implied_headcount: number
+    /** Eşzamanlı ekip sayısı (proje parametresi) */
+    crew_count: number
+  }
+}
+
+export interface QualityReport {
+  status: 'incomplete' | 'review_required'
+  label: string
+  certified: boolean
+  notice: string
+  estimated_rebar_kg: number
+  derived_counts: Record<string, number>
+  issues: {
+    code: string; severity: 'blocking' | 'review'; message: string; drawing_id: number | null; drawing: string | null
+    /** Tek tıkla uygulanabilen düzeltme (varsa): kontrol listesinde düğme olarak çıkar */
+    fix?: { action: 'storey_height_auto'; label: string }
+  }[]
+  assumptions: { key: string; label: string; value: string | number | null; source: 'default' | 'user' | 'drawing' }[]
+  /** Sonucu ikinci bir yoldan sınayan bağımsız kontroller (backend: selfcheck.py) */
+  selfcheck?: SelfCheck
+}
+
+/** Kendini doğrulayan / yanlışlayan kontroller. "kararsiz" = kontrol dairesel olurdu ya da kanıt yok. */
+export interface SelfCheck {
+  checks: {
+    kod: string; ad: string; kapsam: string
+    sonuc: 'destekliyor' | 'celisiyor' | 'kararsiz'
+    aciklama: string; olculen: number | null; beklenen: string
+    /** Bu kontrolü dairesel olmaktan çıkaran şey; "YOK — ..." ise kontrol bir şey kanıtlamaz */
+    bagimsizlik: string
+  }[]
+  destekleyen: number
+  celisen: number
+  kararsiz: number
+  ozet: string
+  notice: string
+}
+
+/** Demir raporu: çap bazında metraj + oran + fire, işçilik ve sarf (backend: quantity/rebar_report.py) */
+export interface RebarRow {
+  dia_mm: number
+  metraj_kg: number
+  ratio_kg: number
+  fire_kg: number
+  order_kg: number
+  length_m: number
+  targets: Record<string, number>
+  sources: Record<string, number>
+}
+export interface RebarReport {
+  rows: RebarRow[]
+  totals: { metraj_kg: number; ratio_kg: number; fire_kg: number; order_kg: number }
+  unsized: { metraj_kg: number; ratio_kg: number; fire_kg: number; groups: string[] } | null
+  labour: { key: string; label: string; hours: number }[]
+  labour_hours: number
+  extras: { key: string; label: string; quantity: number; unit: string }[]
+}
+
+/** Ana kalem (beton / kalıp / demir / duvar / sıva / boya): toplam, ayrıştırma, döküm.
+ *  Backend: quantity/headline.py — `net` ölçülen, `total` sipariş (fire dahil). */
+export interface HeadlineRow {
+  label: string
+  quantity: number
+  count?: number
+  /** demir: çap satırı */
+  dia_mm?: number
+  metraj_kg?: number
+  ratio_kg?: number
+  fire_kg?: number
+  order_kg?: number
+  length_m?: number
+  targets?: Record<string, number>
+  /** duvar: brüt / düşülen / zaten net */
+  gross_m2?: number
+  openings_m2?: number
+  already_net_m2?: number
+  review?: boolean
+}
+export interface HeadlineSection {
+  kind: string
+  label: string
+  unit: string
+  total: number
+  net: number
+  waste: number
+  /** demir: oranla tahmin edilen kısım */
+  estimated?: number
+  /** duvar: brüt alan, düşülen boşluk, çizimde zaten kesilmiş boşluk */
+  gross?: number
+  deducted?: number
+  already_net?: number
+  rows: HeadlineRow[]
+  unsized?: RebarReport['unsized']
+  labour: { key: string; label: string; hours: number }[]
+  labour_hours: number
+  extras: { key: string; label: string; quantity: number; unit: string }[]
+}
+
+
+/** İçeri alınmış birim fiyat listesi satırı (ÇŞB / firma pozu). Bedel her şey dahildir. */
+export interface PozRow {
+  id: number
+  poz: string
+  name: string
+  unit: string
+  price: number
+  supplier_name: string
+  note: string
+  updated_at: string
+}
+
+export interface PozBook {
+  rows: PozRow[]
+  notice: string
+}
+
+export interface PozImportResult {
+  okunan: number
+  atlanan: number
+  tekrar: number
+  yeni: number
+  guncellenen: number
+  ornek: { poz: string; name: string; unit: string; price: number }[]
+  notice: string
+}
+
+
+/** Fiyatı girilmemiş kalemler, etki sırasına göre (tutar tahmini değil; büyüklük sıralaması) */
+export interface MissingRanked {
+  labor: { key: string; label: string; kind: string; kind_label: string; unit: string; quantity: number; hours: number; poz: string; eksik: string }[]
+  materials: { key: string; name: string; unit: string; quantity: number; kalem: number }[]
+  notice: string
 }

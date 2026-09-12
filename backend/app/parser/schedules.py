@@ -73,16 +73,6 @@ def parse_schedule(texts: list[str], source: str = "") -> list[ScheduleRow]:
     return sorted(rows.values(), key=lambda r: (re.sub(r"\d+", "", r.poz), int(re.search(r"\d+", r.poz).group()) if re.search(r"\d+", r.poz) else 0, r.poz))
 
 
-def merge_schedules(per_drawing: list[list[ScheduleRow]]) -> list[ScheduleRow]:
-    out: dict[str, ScheduleRow] = {}
-    for rows in per_drawing:
-        for r in rows:
-            cur = out.get(r.poz)
-            if cur is None or r.count > cur.count:
-                out[r.poz] = r
-    return list(out.values())
-
-
 # ---------- Mahal alanları: "LOBİ\n45.20 m2", "CALZEDONIA 106.60m2", "14.93m2"
 _ROOM = re.compile(r"^(?P<name>.*?)\s*(?P<area>\d{1,5}(?:[.,]\d{1,2})?)\s*(?:m2|m²|M2|M²)\s*$", re.IGNORECASE | re.DOTALL)
 

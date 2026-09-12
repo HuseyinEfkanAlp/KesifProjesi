@@ -8,7 +8,8 @@ from sqlmodel import Session
 
 from ..db import get_session
 from ..export.excel import build_workbook
-from ..services import boq_payload, project_cost, project_params
+from ..quantity import headline, rebar_report
+from ..services import boq_payload, project_cost, project_params, project_quality
 from .projects import get_project
 
 router = APIRouter(prefix="/api/projects", tags=["reports"])
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/api/projects", tags=["reports"])
 def read_cost(project_id: int, session: Session = Depends(get_session)):
     p = get_project(project_id, session)
     _, summary, _, items, cost = project_cost(p, session)
-    return {"summary": summary, "boq": boq_payload(items), "cost": cost}
+    return {"summary": summary, "boq": boq_payload(items), "cost": cost, "quality": project_quality(p, session, items, summary, cost)}
 
 
 @router.get("/{project_id}/cost.xlsx")
@@ -27,7 +28,10 @@ def download_excel(project_id: int, session: Session = Depends(get_session)):
     lines, summary, info, items, cost = project_cost(p, session)
     data = build_workbook({"name": p.name, "storey_height": p.storey_height, "slab_thickness": p.slab_thickness,
                            **project_params(p)},
-                          lines, summary, cost, element_info=info, boq=[i.to_dict() for i in items])
+                          lines, summary, cost, element_info=info, boq=[i.to_dict() for i in items],
+                          quality=project_quality(p, session, items, summary, cost),
+                          rebar=rebar_report.build(items, summary),
+                          headline=headline.build(items, summary))
     fname = re.sub(r"[^A-Za-z0-9_-]+", "_", p.name) or "proje"
     return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{fname}_kesif_maliyet.xlsx"'})

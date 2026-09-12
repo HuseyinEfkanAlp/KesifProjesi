@@ -78,7 +78,12 @@ export default function PlanIntake({ projectId, storeyHeight, onChanged, compact
           setPicks(init)
           setShowAll(false)
           setPicker({ ...res, file: file.name })
-          addLog({ file: file.name, kind: 'info', text: `${res.sheets.length} pafta bulundu; ${Object.values(init).filter((p) => p.checked).length} tanesi plan olarak tanındı, onay bekliyor` })
+          const skipped = res.sheets.filter((s) => s.kind === 'antet' || s.kind === 'bos').length
+          const cetvel = res.sheets.filter((s) => s.kind === 'cetvel').length
+          addLog({ file: file.name, kind: 'info', text: `${res.sheets.length} kutu bulundu; ${Object.values(init).filter((p) => p.checked).length} tanesi plan olarak tanındı, onay bekliyor`
+            + (skipped ? ` (${skipped} tanesi antet / boş çerçeve — plan değil)` : '')
+            + (cetvel ? ` · ${cetvel} cetvel: geometrisi ölçülmez, poz ve adetleri okunur` : '')
+            + (res.source.titleblock_summary ? ` · antetten: ${res.source.titleblock_summary}` : '') })
         } else {
           const d = res
           addLog({ file: file.name, kind: d.plan_type ? 'ok' : 'warn', text: `${describe(d)} · ${DISCIPLINES[d.discipline]} · ${d.element_count} eleman${d.plan_type ? '' : ' — çizim listesinden plan tipini seçin'}` })
@@ -125,6 +130,9 @@ export default function PlanIntake({ projectId, storeyHeight, onChanged, compact
     if (e.dataTransfer.files?.length) enqueue(e.dataTransfer.files)
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Antet (proje bilgi tablosu) ve boş çerçeveler plan değildir: "Tümünü seç" bunları atlar.
+  // Cetvel (poz / ürün listesi, lejant) atlanmaz: geometrisi ölçülmese de yazılarındaki adet metraja girer.
+  const notPlan = new Set((picker?.sheets ?? []).filter((s) => s.kind === 'antet' || s.kind === 'bos').map((s) => s.index))
   const selectedCount = Object.values(picks).filter((p) => p.checked).length
   const visibleSheets: SheetInfo[] = picker
     ? picker.sheets.filter((s) => showAll || s.plan_type || picks[s.index]?.checked)
@@ -177,6 +185,13 @@ export default function PlanIntake({ projectId, storeyHeight, onChanged, compact
             Her pafta başlığından plan tipi ve analiz disiplini tanındı; tanınanlar işaretli. Yanlışsa plan tipini değiştirin, tanınmayanı seçin.
             Kesit ve detay paftaları metraja girmediği için işaretlenmez. Kat kalıp planlarında "kaç kat temsil ediyor" ve kat yüksekliğini girin.
           </p>
+          {picker.source.titleblock_summary && (
+            <p className="muted hint">
+              Dosyanın antedinden (proje bilgi tablosu) okundu: <b>{picker.source.titleblock_summary}</b>.
+              Antet bir pafta değildir, listede yer almaz; okunan değerler <b>boş</b> proje parametrelerine yazılır,
+              sizin girdiğiniz değer ezilmez.
+            </p>
+          )}
           {((picker.source.dropped ?? 0) > 0 || (picker.source.strays ?? 0) > 0) && (
             <p className="muted hint">
               {(picker.source.dropped ?? 0) > 0 && <>Pafta sayılmayan {picker.source.dropped} artık küme listelenmedi (aks balonu, ölçü çizgisi, yalnız yazı taşıyan köşeler). </>}
@@ -187,7 +202,8 @@ export default function PlanIntake({ projectId, storeyHeight, onChanged, compact
             <button className="secondary small" onClick={() => setShowAll(!showAll)}>
               {showAll ? 'Yalnızca tanınan paftaları göster' : `Tüm paftaları göster (${picker.sheets.length})`}
             </button>
-            <button className="secondary small" onClick={() => setPicks(Object.fromEntries(Object.entries(picks).map(([k, p]) => [k, { ...p, checked: true }])))}>Tümünü seç</button>
+            <button className="secondary small" title="Antet ve boş çerçeveler dışında kalan paftaların hepsi"
+              onClick={() => setPicks(Object.fromEntries(Object.entries(picks).map(([k, p]) => [k, { ...p, checked: notPlan.has(Number(k)) ? p.checked : true }])))}>Tümünü seç</button>
             <button className="secondary small" onClick={() => setPicks(Object.fromEntries(Object.entries(picks).map(([k, p]) => [k, { ...p, checked: false }])))}>Seçimi temizle</button>
           </div>
           <div style={{ overflowX: 'auto' }}>
@@ -204,6 +220,7 @@ export default function PlanIntake({ projectId, storeyHeight, onChanged, compact
                       <td><input type="checkbox" checked={!!p?.checked} onChange={(e) => setPick(s.index, { checked: e.target.checked })} /></td>
                       <td>
                         {s.title}{!s.titled && <span className="muted"> {s.fragment ? '(başlıksız küçük parça: detay / tablo; plan değil)' : '(başlık bulunamadı)'}</span>}
+                        {s.kind_note && <div className="muted" style={{ fontSize: 12 }}>{s.kind === 'cetvel' ? '📋' : '⊘'} {s.kind_note}</div>}
                         {alt && <div className="muted" style={{ fontSize: 12 }}>paftada: {alt}</div>}
                       </td>
                       <td>

@@ -197,3 +197,28 @@ def test_title_inside_block_definition_and_stream_hatch(tmp_path):
     dr = load_dxf(str(da))
     polys = [e for e in dr.entities if e.layer == "brn_hatch_gazbeton" and e.kind == "polygon"]
     assert len(polys) == 1 and abs(abs((polys[0].points[1][0] - polys[0].points[0][0]) * (polys[0].points[2][1] - polys[0].points[1][1])) - 0.02) < 1e-6   # 20 × 10 cm
+
+
+def test_kaynak_kopyalari_suresi_dolunca_silinir(tmp_path, monkeypatch):
+    """Çok paftalı her yükleme dosyanın tam bir kopyasını bırakır; süresi dolanlar süpürülmezse
+    klasör sınırsız büyür (gerçek kurulumda 34 artık kopya, 1,9 GB birikmişti)."""
+    import os, time
+    from app.api import drawings as api
+
+    monkeypatch.setattr(api, "UPLOAD_DIR", tmp_path)
+    eski = tmp_path / "src_0123456789_eski.dxf"
+    eski.write_bytes(b"x" * 1000)
+    onbellek = tmp_path / "src_0123456789_eski.dxf.sheets.json"
+    onbellek.write_text("{}")
+    yeni = tmp_path / "src_abcdefabcd_yeni.dxf"
+    yeni.write_bytes(b"y" * 10)
+    cizim = tmp_path / "1_abc_pafta1_plan.dxf"      # kırpılmış pafta: kaynak değil, silinmemeli
+    cizim.write_bytes(b"z" * 10)
+    old = time.time() - 48 * 3600
+    for f in (eski, onbellek):
+        os.utime(f, (old, old))
+
+    n, size = api.sweep_sources(ttl_hours=24)
+    assert n == 2 and size == 1002   # 1000 baytlık kopya + 2 baytlık önbellek
+    assert not eski.exists() and not onbellek.exists()
+    assert yeni.exists() and cizim.exists()

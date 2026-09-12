@@ -313,6 +313,9 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("XPS", "IZO", "XPS ısı yalıtımı", "area", "kalınlık (cm)", "KSF-IZO-XPS-5"),
     _i("EPS", "IZO", "EPS ısı yalıtımı", "area", "kalınlık (cm)", "KSF-IZO-EPS-5"),
     _i("TASYUNU", "IZO", "Taşyünü", "area", "kalınlık (cm)", "KSF-IZO-TASYUNU-5"),
+    # Kavisli / kemerli doğrama ve özel cephe detaylarında taşıyıcı yüzey: çimento esaslı levha
+    _i("BOARDEX", "IZO", "Boardex / çimento esaslı levha", "area", "kalınlık (mm)", "KSF-IZO-BOARDEX-12",
+       recipe=[_c("DUBEL_VIDA", 10.0), _c("YALITIM_ISCILIK", 0.35)]),
     _i("SU_YALITIM_MEMBRAN", "IZO", "Su yalıtım membranı", "area", "tip (BITUMLU_3MM)", "KSF-IZO-SU_YALITIM_MEMBRAN-BITUMLU_3MM"),
     _i("SURME_IZOLASYON", "IZO", "Sürme izolasyon", "area", "tip", "KSF-IZO-SURME_IZOLASYON"),
     _i("BUHAR_KESICI", "IZO", "Buhar kesici", "area", "tip", "KSF-IZO-BUHAR_KESICI"),

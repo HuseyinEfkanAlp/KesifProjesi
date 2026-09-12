@@ -8,6 +8,7 @@ from __future__ import annotations
 from html import escape
 
 from ..parser.loader import Drawing
+from ..quantity.grouping import group_key, section_label
 
 COLORS = {
     "pipe": "#2a9d8f", "duct": "#8ab17d", "mech_fixture": "#e9c46a",
@@ -89,10 +90,12 @@ def render_svg(drawing: Drawing, elements: list[dict], width: int = 1200) -> str
             continue
         color = COLORS.get(el.get("etype", ""), "#333")
         pts = " ".join(f"{_fmt(x)},{_fmt(Y(y))}" for x, y in pts_list)
-        title = escape(f"{el.get('name') or ''} {el.get('etype')} ({el.get('layer')})")
+        # tıklama grubu: aynı tip + aynı kesitteki bütün parçalar tek seçim (185 kolon yerine "42 adet 100/100")
+        grp = group_key(el)
+        title = escape(f"{el.get('name') or ''} {el.get('etype')} {section_label(el)} ({el.get('layer')})".strip())
         parts.append(
-            f'<polygon class="el el-{el.get("etype")}" data-id="{el.get("id")}" points="{pts}" '
-            f'fill="{color}" stroke="{color}"><title>{title}</title></polygon>'
+            f'<polygon class="el el-{el.get("etype")}" data-id="{el.get("id")}" data-group="{escape(grp, quote=True)}" '
+            f'points="{pts}" fill="{color}" stroke="{color}"><title>{title}</title></polygon>'
         )
     parts.append("</g>")
 

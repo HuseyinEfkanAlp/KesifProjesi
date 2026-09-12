@@ -3,7 +3,7 @@ kesit "Parapet (b/h)" etiketinden (b genişlik, h yükseklik, cm). Çift çizgi 
 Beton = b × h × L, kalıp = 2 × h × L (engine). Etiket yoksa varsayılan 20/15 cm (uyarı, düşük güven)."""
 from __future__ import annotations
 
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import LineString
 
 from ..geometry import polyline_length
 from ..loader import Drawing

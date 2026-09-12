@@ -419,6 +419,15 @@ Güven paketi sonrası (9 Eyl 2026; `find_parallel_pairs` çoklu eşleme ile ayn
 | Döşeme | 368 çokgen (1.349 parça) | 3.128 | 21.106 | 272,3 | tablo |
 | **Toplam** | | **14.918** (14.815) | **44.611** (43.348) | **2.163** (2.156) | |
 
+**Bu tablonun tekrarlanma koşulu: proje kat yüksekliği H = 0** (kotlardan otomatik). A4-A5'te kat yükseklikleri
+2,50 / 3,95 / 2,70 / 5,00 m olarak değişir; yeni proje formunun varsayılanı olan H = 3,0 m bütün paftalara
+uygulanınca beton 14.900 → 14.542 m³, kalıp 44.541 → 43.045 m² olur (demir etkilenmez, tablodan / pozdan gelir).
+Bu durum artık kontrol özetinde `storey_height_override` uyarısı olarak bildirilir.
+
+11 Eyl 2026'da proje beş DXF'ten API üzerinden yeniden kuruldu: 51 kutu tarandı, 50'si plan olarak tanınıp elle
+düzeltme olmadan analiz edildi, 1 tanesi ("VAZİYET PLANI", 11 nesnelik şablon çerçevesi) boş çerçeve olarak elendi.
+Sonuç bu tabloyla %0,2 içinde örtüştü (14.900 / 44.541 / 2.163,1).
+
 Demir çap bazında sapma −0,4% ile +0,2% arasında; tablo ve poz kaynaklı 2.145,5 t birebir aynı, oranla tahmin
 edilen yalnız 17,6 t (perde + parapet, ikisi de uyarıyla). Beton +0,7%, kalıp +2,9%: kalıp farkı kiriş yan kalıbının
 yüksekliğini belirleyen döşeme kalınlığından gelir (beton d'den bağımsız olduğu için birebir aynı kaldı).
@@ -426,6 +435,50 @@ Döşeme "adet"i düştü çünkü kirişlerle bölünmüş aynı döşemenin bi
 (`parser/merge.py`); alan ve beton değişmez.
 
 Çap bazında: Ø8 154 t, Ø10 200 t, Ø12 367 t, Ø14 268 t, Ø16 82 t, Ø20 596 t, Ø26 481 t.
+
+## Sessizce kaybolan miktar ve yanlış alarm (12 Eyl 2026)
+
+Kontrol listesinin işe yaraması, "eksik" dediğinin gerçekten eksik olmasına bağlı. İki yönde de ölçüldü.
+
+**Yanlış alarm kalktı: tekrarlanan marka eksik sayılmıyor.** Aynı döşeme / kiriş markası plan boyunca defalarca
+yazılır — A4-A5'in temel kalıp paftasında tek `D1000` markası **528 kez** geçiyor ve 26 döşemeye atanmış. Kalan
+kopyalar "kapalı bir hücreye düşmedi" diye engelleyici eksik sayılıyor, dört kalıp paftasını da kilitliyordu.
+Artık önce **adın ölçülen bir elemanda geçip geçmediğine** bakılır (`analyzer._unclaimed_labels`); geçiyorsa
+eksik yoktur. Geçmiyorsa ikinci soru: etiketin 1,5 m yakınında **etiketin kendi kesitiyle** (b/h sırası önemsiz)
+ölçülmüş bir eleman var mı? Varsa miktar sayılmış, yalnız ad eşleşmemiştir (uzun kiriş hattı komşu markayı almış
+olur) — inceleme notu; yoksa eleman gerçekten kaçmıştır — eksik.
+
+A4-A5'in dört kalıp paftasında ölçülen sonuç (**miktarlar birebir aynı kaldı**: 1.760 kiriş, 3.589,9 m³,
+17.742,2 m² kiriş kalıbı, 368 döşeme, 21.106,1 m²):
+
+| | önce | sonra |
+|---|---:|---|
+| Döşeme "eksik" uyarısı | 4 pafta (engelleyici) | **0** — hepsi yanlış alarmdı |
+| Kiriş etiketi uyarısı | 45 ad (engelleyici) | **12 gerçek boşluk** + 33 "ad eşleşmedi" (inceleme) |
+
+Yani daha önce "≈95 m³ eksik beton" diye okunan 45 kiriş etiketinin 33'ünde beton zaten ölçülmüştü; kaybolan
+miktar değil, addı.
+
+**Sessizce kaybolan miktar görünür oldu.** B2 BLOK'un "BİRİNCİ KAT PLANI" paftasında `FB_Prekast` katmanı
+**177.592 nesne** tutuyor (paftanın %94'ü) ve hiçbir keşif kalemi üretmiyordu; uyarı listesinde 3 nesnelik
+katmanlarla yan yana, sayısız duruyordu. İki kural eklendi:
+
+- **Eşlenmemiş katmanlar nesne sayısıyla ve çoktan aza sıralı** yazılır; bir katman tek başına paftanın
+  nesnelerinin %30'undan çoğunu tutuyorsa ayrı bir **engelleyici** uyarı çıkar (`analyzer._dominant_unmapped`):
+  "paftanın asıl içeriği burada olabilir, bu katmanı bir katalog kalemine ve ölçüm kuralına eşleyin".
+- **`label_count` kuralı yazı ister**; katmanda panel kodu yazısı yok ama geometri varsa o geometri sessizce
+  düşüyordu. Artık kaç nesnenin ölçülmeden kaldığı yazılır (`standard.measure_layer`) ve bu da engelleyicidir —
+  prekast paftasında 5.692, görünüş paftasında 286.734 nesne.
+
+**Kat yüksekliği farkı artık m³ / m² olarak yazılır.** `storey_height_override` uyarısı "kotların yerine
+kullanıldı" demekle kalmıyor; elemanların kesit alanı ve çevresinden **farkın bedelini** hesaplıyor. A4-A5'te
+üretilen cümle: *"Okunan yükseklikler kat kat değişiyor (2,5–5 m), tek bir H hiçbir katta doğru olamaz.
+Kotlardan hesaplansaydı kolon + perde betonu +358 m³, kalıbı +1.497 m² değişirdi."* — bağımsız ölçülen gerçek
+bedelle (358 m³ / 1.496 m²) birebir. Yükseklikler kat kat ayrışıyorsa uyarı **engelleyici** olur ve kontrol
+listesinde **tek tıkla düzeltme** düğmesi çıkar (proje H'sini 0 yapar; `QualitySummary`, `issue.fix`).
+
+Testler: `backend/tests/test_unmeasured.py` (tekrarlanan marka, ad eşleşmesi, gerçek boşluk, baskın katman,
+yazısız `label_count`, engelleyici sınıflandırma), `backend/tests/test_levels.py` (farkın m³ / m² bedeli).
 
 ## Demir: donatı paftası tabloları, kat bazında metraj, sarf kalemleri
 
@@ -701,6 +754,447 @@ gereklilik (`required` / `optional`), `analyze` (kesit / detay: yüklenir ama me
 (plan başlığı kesit / detay başlığına tercih edilir); `discipline_from_layers()` katman sayımından baskın disiplini bulur;
 `resolve_plan()` ikisini birleştirir. `plan_check()` projenin çizimlerine göre durum listesi ve uyarıları üretir.
 Yeni bir plan tipi eklemek `PLAN_TYPES` listesine bir satırdır.
+
+## Cephe: ön / arka / sağ / sol ayrı ayrı (`services.footprint_sides`)
+
+Cephe tek bir "brüt alan" değildir; her yönün kendi işi vardır (kaplama, boya, söve, denizlik, korkuluk,
+prekast). Bina dış hattının **her kenarı, dışa bakan normaline göre** dört yönden birine yazılır:
+
+```
++X sağdaki cephe   −X soldaki cephe   +Y üstteki cephe   −Y alttaki cephe
+```
+
+Yönler **çizim eksenidir**, pusula değil: çizimin kuzeyi bilinmez, hangi cephenin "ön" olduğunu kullanıcı
+söyler. Görünüş paftasındaki `ÖN / ARKA / SAĞ / SOL GÖRÜNÜŞ` başlıkları bu eşlemeyi kurmak için okunur.
+
+**Kendi sağlaması var:** dik kenarlı bir binada dört yönün toplamı dış çevreye **eşittir**. Eğik kenarda
+izdüşümlerin toplamı kenar boyunu aşar (45°'de 1,41 katı) — çünkü eğik yüzey iki görünüşte birden yer alır;
+bu fazlalık `egik_fazla` ile ayrıca bildirilir.
+
+Alan / çevre ve kenarlar **aynı çokgenden** türer (`footprint_polygon`). Ayrı hesaplanırken kenar toplamı
+40 m, çevre 163 m çıkıyordu — concave hull ve pay yalnız birinde uygulanıyordu.
+
+B2 BLOK'ta ölçülen (kat planı dış hattı × kat yüksekliği × kat sayısı):
+
+| | m² |
+|---|---:|
+| Sağdaki cephe (+X) | 287 |
+| Soldaki cephe (−X) | 287 |
+| Üstteki cephe (+Y) | 579 |
+| Alttaki cephe (−Y) | 579 |
+| **Toplam** | **1.732** |
+
+### Görünüş paftasında ne var, ne yok
+
+B2 BLOK'un `GÖRÜNÜŞLER` paftası ölçüldü: dört başlık (ÖN / SAĞ / ARKA / SOL) 2×2 düzende duruyor ve
+paftanın 273.000 nesnesinin neredeyse tamamı `FB_Prekast` katmanında. Ama bu geometri **bina silueti değil**:
+yoğunluk haritası 55 m × 2,5 m'lik iki yatay bant gösteriyor — prekast panel bandı. Bina dış hattını
+çizebilecek diğer katmanlarda toplam 1.183 m çizgi var, dört cepheyi kapatmaya yetmiyor.
+
+Bu yüzden cephe alanı **görünüşten değil kat planı dış hattından** ölçülüyor. Görünüşten ölçüm, ancak siluet
+çizili bir sette (ya da katman eşlemesi yapılmış bir görünüşte) mümkün olur.
+
+### Cephe sistemi yön yön kalem üretir
+
+Cephe sistemi seçilince (mantolama / kompozit / cephe taşı / prekast) keşifte **her cephe ayrı satır** olur:
+
+```
+Mantolama sistemi (katmanlı) — Üstteki cephe (+Y)     449,6 m²
+Mantolama sistemi (katmanlı) — Alttaki cephe (−Y)     449,6 m²
+Mantolama sistemi (katmanlı) — Sağdaki cephe (+X)     222,6 m²
+Mantolama sistemi (katmanlı) — Soldaki cephe (−X)     222,6 m²
+```
+
+Her cephenin kendi işi, kendi iskelesi, kendi teslim sırası vardır; tek satır bunu gizliyordu. Toplamları
+net cephe alanına eşittir (1.344 m²) ve katmanlı sistem bileşenleri (EPS, file, sıva, boya, dübel) proje
+toplamı üzerinden açılır — malzeme siparişi toplamdan verilir.
+
+**Cam dağıtımı bir kabuldür ve öyle yazılır:** doğrama pozları proje toplamıdır, hangi doğramanın hangi
+cephede olduğu bilinmez; cam her cepheye brüt payıyla dağıtılır ve kalemin notunda bu açıkça geçer.
+Dış hat okunamazsa yön ayrımı yapılmaz, tek satır kalır — uydurma yön üretilmez.
+
+Sistem paneli tek sistem görür: bölünmüş satırların miktarı toplanır, parçalar `parcalar` alanında taşınır.
+
+Testler: `backend/tests/test_cephe.py` (12 test; dikdörtgen / çıkıntılı / eğik bina, yön ayrımı, cam kabulü,
+yön çıkmazsa tek satır).
+
+## Doğrama zinciri: cam → doğrama → körkasa (12 Eyl 2026)
+
+İlke: **varlık ile ölçü ayrı şeylerdir.** Bir yerde cam varsa orada doğrama da, körkasa da vardır; ölçüsü
+okunamadı diye kalem silinmez — adet keşifte kalır, eksik olan **ölçü** açıkça bildirilir.
+
+Zincir katalog reçetesinden gelir (`catalog.DEFAULT_RECIPES: DOGRAMA`) ve poz **türüne göre** ayrışır:
+
+| poz türü | alt işler |
+|---|---|
+| pencere | körkasa ($SIZE), körkasa profili (çevre), körkasa montajı, cam fitili, silikon, mastik, denizlik (genişlik), dübel |
+| kapı | kapı kasası ($SIZE), pervaz (çevre), menteşe ×3, kilit, kol, stoper, eşik (genişlik), dübel, silikon |
+
+B2 BLOK'ta 170 doğramanın 147'si pencere (körkasa), 23'ü kapı (kapı kasası) — toplam tutuyor.
+
+### Camlı kapı artık cam üretiyor
+
+"KAPI" geçen poz camsız sayılıyordu; oysa **fotoselli / vitrin / giyotin kapı neredeyse tamamen camdır**
+(`services.GLAZED_WORDS`). AVM girişindeki bütün cam keşiften düşüyordu. Düzeltmeden sonra cam
+306,9 → **328,0 m²**.
+
+### Cam dökümü: hangi ölçüden ne kadar, hangi pozdan
+
+Cam **ölçüye göre** birleşir (sipariş ölçü bazında verilir) ama hangi pozlardan geldiği artık etikette:
+
+```
+Cam 140×190 cm (EMP1 82)              218,5 m²    82 adet
+Cam 120×150 cm (EMP7 34)               61,2 m²    34 adet
+Cam 120×100 cm (EMP9 14, EMP9B 1)      18,0 m²    15 adet
+Cam 150×205 cm (EMP4A 2, EMP5 3)       15,4 m²     5 adet
+Cam 150×250 cm (EMP4 4)                15,0 m²     4 adet
+```
+
+Daha önce etiket tek poz yazdığı için "EMP5 camı 5 adet ama doğrama 3" gibi görünüyordu — miktar doğruydu,
+etiket yanıltıyordu (EMP4A da 150×205).
+
+### Ölçüsü bulunamayan doğrama artık kaybolmuyor
+
+```
+17 adet doğramanın ölçüsü çizimde bulunamadı (EMP8 13 adet, EMP2 2 adet, EMP1A 1 adet, EMP6 1 adet).
+Adetleri keşifte var ama camı ve ölçüye bağlı alt işleri hesaplanamadı; ölçüleri doğrama paftasından girin.
+```
+
+Ölçüler plan paftalarındaki poz yazılarının yanından toplanıyor; doğrama paftasında ölçü tablosu yoksa bu
+pozlar ölçüsüz kalır. Adet ve körkasa yine sayılır, yalnız cam ve denizlik hesaplanamaz.
+
+### Kavisli / kemerli doğrama
+
+Kemer kuşağında taşıyıcı profil, **boardex** ve taşyünü olur. Kemer yüksekliği çizimde yazmadığı için çevre
+hesaplanamaz — **miktar uydurulmaz**, kalem eksik olarak bildirilir (`kavisli_dograma`, required).
+`BOARDEX` katalog kalemi eklendi (m², reçetesi dübel + yalıtım işçiliği) ki elle girilebilsin.
+B2 BLOK'ta kavis yazısı yok, bu yüzden bu uyarı çıkmıyor.
+
+Testler: `backend/tests/test_dograma.py` (9 test).
+
+## Plandan donatı metrajı: tabloya bakmadan kilogram (`parser/rebar_plan.py`)
+
+Demirin %99'u donatı tablolarından geliyordu; tablosu olmayan projede geriye `beton × kg/m³` oranı kalıyordu
+(A4-A5'te tablosuz sonuç −%24). Bu modül demiri **çizimin kendisinden** ölçer.
+
+### 1) Adetli çağrı × çizilen kol boyu — döşeme, temel, ilave donatı
+
+Donatı planında her donatı grubu bir çağrı yazısıyla anlatılır **ve çubuğun kendisi çizilir**:
+
+```
+çağrı   "21ƒ10/18"                  21 adet Ø10, 18 cm aralıkla
+çizgi   donatı katmanında 4,95 m    çubuğun boyu (kırık çubukta her kol ayrı çizgi)
+ağırlık = 21 × 4,95 m × 0,617 kg/m = 64,2 kg
+```
+
+Boy **ölçülür**, tahmin edilmez. Her çubuk parçası en yakın çağrıya bağlanır; 3 m'den uzak parça hiçbir
+çağrıya bağlanmaz (yoksa aks ve çerçeve çizgileri demire dönüşür). Marka / poz / grup katmanlarındaki
+çizgiler çubuk sayılmaz.
+
+**A4-A5'in 11 donatı paftasında, müellifin poz tablolarına karşı:**
+
+| | plandan (bizim) | tablodan (müellif) | fark |
+|---|---:|---:|---:|
+| Temel X / Y / ilave | 635.737 kg | 635.545 kg | +%0,0 |
+| Döşeme (8 pafta) | 270.767 kg | 272.346 kg | −%0,6 |
+| **Toplam** | **906.504 kg** | **907.891 kg** | **−%0,2** |
+
+Pafta bazında en kötü sapma %2,8. Yani tablo olmadan da aynı sayıya varıyoruz; tablo artık kaynak değil,
+**doğrulama**. Tablo varsa iki sonuç karşılaştırılıp uyarı olarak yazılır; tablo yoksa plan hesabı demirin
+kaynağı olur (`kaynak: plan`).
+
+### 2) Etriye — kesit ve boy biliniyorsa
+
+```
+adet   = boy / aralık + 1
+çevre  = 2 × (b + h) − 8 × paspayı + 2 × kanca
+80/30 kolon, H = 3,95 m, Ø12/10  ->  40 adet × 2,20 m × 0,888 = 78,1 kg
+```
+
+Aralık yazısı önce elemanın yakınında, yoksa paftanın baskın etriye tarifinde aranır. Yalnız **ETR** geçen
+yazılar etriye sayılır — `ƒ12/15` tek başına döşeme donatısı da olabilir. Yazı bulunamazsa hesap yapılmaz:
+uydurulmuş bir aralıkla tonaj üretmek, hesap yapmamaktan kötüdür.
+
+### Birim sağlaması: çizim kendi birimini ele veriyor
+
+Donatı planı çubuk boylarını **cm** olarak yazar (`VM Poz Kollar`: `495`). Ölçülen boy bu sayıyı vermiyorsa
+`$INSUNITS` yanılıyor demektir — ve bu, yazı yüksekliği tahmininden **daha güçlü** bir kanıttır: tahmin değil,
+çizimin kendi beyanı.
+
+Bu sağlama gerçek bir hata buldu: A4-A5'in **8 donatı paftası "mm" yazıyor ama cm çizilmiş** (oran tam 10,0,
+1.731 örnek). Tablo değerleri kg olduğu için metraj bozulmamıştı, ama plandan ölçüm imkânsız hale geliyordu.
+Artık `suggested_unit` ile düzeltiliyor. Kanıt temiz bir kat sayısı vermiyorsa hesap **yapılmaz** —
+yanlış birimle üretilen tonaj, hesap yapmamaktan çok daha zararlıdır.
+
+Testler: `backend/tests/test_rebar_plan.py` (16 test; sayılar elle sağlanabilir seçildi).
+
+## Kanıt sıralaması: çelişkide hangi sayının esas alınacağı (`services.storey_heights`)
+
+Bir çelişki iki sayının birlikte duramayacağını söyler; hangisinin yanlış olduğunu söylemez — **girdilerinin
+kanıt gücü farklı olmadıkça**. Kanıt sırası:
+
+| | örnek | güç |
+|---|---|---|
+| Çizimden doğrudan okunan | donatı tablosu, kesit etiketi, kolon çokgeni, kot yazısı | en güçlü |
+| Çizimden türetilen | kot farkından kat yüksekliği | güçlü |
+| Kullanıcının paftaya girdiği | o paftanın yüksekliği | açık karar, korunur |
+| Projeye girilen tek değer / form varsayılanı | H = 3,0 m | en zayıf |
+
+**Uygulanan kural:** projeye girilen tek bir H, çizimden okunan kotlar kat kat değişiyorsa (yayılım > 0,30 m)
+uygulanmaz — çünkü tek bir sayı değişken katlı bir binanın hiçbir katında doğru olamaz. Her pafta kendi
+kotundan hesaplanır. Bu bir tahmin değil, zayıf kanıtın yerine güçlü kanıtın konmasıdır.
+
+Sınırlar, kullanıcının kararını korumak için:
+
+- **Paftaya elle girilen yükseklik her zaman kazanır** — kullanıcının pafta bazındaki kararına dokunulmaz.
+- **Kotlar sabitse proje H'si korunur.** Düzeltme yalnız gerçek çelişki varken devreye girer; "H 2,80 ama
+  kotlar 3,00 diyor" durumunda karar kullanıcınındır, fark bildirilir ve tek tıkla düzeltme sunulur.
+- **Girilen değer silinmez**, yalnız uygulanmaz; ne yapıldığı ve H uygulansaydı miktarın ne olacağı yazılır
+  (`storey_height_auto_applied`, inceleme notu).
+
+### A4-A5'te etkisi
+
+H = 3,0 m girili, çizimdeki kotlar 2,50 / 3,95 / 2,70 / 5,00 m. Düzeltme öncesi ve sonrası:
+
+| | önce (H = 3,0 uygulanıyordu) | sonra (kotlar esas) | bağımsız doğrulanmış |
+|---|---:|---:|---:|
+| Beton | 14.542 m³ | **14.900,2** | 14.900 |
+| Kalıp | 43.045 m² | **44.541,4** | 44.541 |
+| Demir | 2.160,3 t | **2.163,1** | 2.163,1 |
+| Kolon donatı oranı | 462 kg/m³ ✗ | **370 kg/m³ ✓** | ölçülen 374 |
+| Kendini kontrol | 15 destekliyor · **1 çelişiyor** | **16 destekliyor · 0 çelişiyor** | |
+
+Yani fizikten gelen çelişki (`selfcheck`), kotlardan gelen kanıtla (`storey_heights`) kapandı ve sonuç
+bağımsız olarak doğrulanmış değerlere birebir oturdu.
+
+Testler: `backend/tests/test_levels.py` — değişken katta H uygulanmaz, sabit katta kullanıcının değeri
+korunur, paftaya elle girilen her zaman kazanır, düzeltme sessiz yapılmaz.
+
+## Kendini yanlışlayan kontroller (`app/selfcheck.py`)
+
+Kontrol listesi (`quality.py`) "ne eksik" diye sorar: pafta okundu mu, katman eşleşti mi. Bu modül başka bir
+şey sorar: **ürettiğimiz sayı kendi içinde tutarlı mı?** Aynı büyüklüğe iki bağımsız yoldan bakar ve ikisini
+çarpıştırır. Amaç sonucu savunmak değil, **çürütmeye çalışmak**.
+
+### Tek kural: dairesel kontrol hiçbir şey kanıtlamaz
+
+Demiri `beton × 140` ile bulup sonra "demir/beton 140 çıktı, demek doğru" demek bir doğrulama değil, aynı
+sayıyı iki kez yazmaktır. Böyle bir kontrol asla `destekliyor` demez — `kararsiz` der ve sebebini yazar
+(`bagimsizlik: "YOK — demir zaten beton × oran ile bulundu"`). Bir kontrolün değeri girdilerinin
+bağımsızlığından gelir:
+
+    demir  ←  donatı tablosu / poz yazısı    (çizimdeki yazılar)
+    beton  ←  eleman geometrisi × yükseklik   (çizimdeki çizgiler)
+
+İkisi birbirini hiç görmez. Oranları ise fizikle ve yönetmelikle sınırlıdır — bu yüzden bant dışına çıkmak
+**gerçek bir çelişkidir**. Sonuç üç değerlidir, "doğru" yoktur: `destekliyor` / `celisiyor` / `kararsiz`.
+
+### Kontroller
+
+| Kod | Ne çarpıştırır | Bant nereden |
+|---|---|---|
+| `demir_orani` | demir (yazılardan) ÷ beton (geometriden) | TS500 / TBDY donatı oranı: kolonda ρ ≤ %4 → 314 kg/m³ + etriye ≈ **400 tavan** |
+| `doseme_kalinlik` | beton ÷ kalıp = kalınlık | fiziksel döşeme kalınlığı 7–45 cm |
+| `kalip_beton` | yüzey ÷ hacim | elemanın kendi geometrisi (döşemede tam olarak 1/t) |
+| `cap_tutarliligi` | keşifteki çaplar ↔ planda yazan çaplar | çizimde hiç yazmayan çap sipariş edilemez |
+| `kat_tutarliligi` | her katın betonu ↔ katların medyanı | her kat ayrı paftadan, ayrı geometriden |
+| `toplam_saglama` | grup toplamı ↔ proje toplamı | aritmetik; tutmazsa hata **bizdedir** |
+
+### Gerçek projede ne buldu
+
+A4-A5'te 18 kontrol çalıştı: **15 destekliyor, 1 çelişiyor, 2 kararsız**. Çelişen:
+
+> **Donatı oranı — Kolon:** 462 kg/m³ bandın üstünde (100–400). İki sayıdan biri yanlış: ya kolon betonu az
+> ölçüldü (kat yüksekliği / eleman sayısı), ya da demir fazla toplandı (çift sayım / eksik kat).
+> *Bağımsızlık: demir tablo kaynağından (çizim yazıları), beton eleman geometrisinden — birbirini görmüyor.*
+
+Bu, `storey_height_override` uyarısının bulduğu H = 3,0 m sorununun **tamamen farklı bir yoldan** bulunmuş
+hâlidir: biri kotları karşılaştırarak, diğeri fizikle. Doğru kat yükseklikleriyle (H = 0) kolon betonu
+1.370 → 1.708 m³ olur, oran **370 kg/m³**'e iner ve çelişki kapanır — 370, bu projede bağımsız olarak ölçülen
+374 kg/m³ ile uyuşuyor.
+
+Kararsız kalan ikisi perde ve parapet: demirleri oranla bulunduğu için kontrol dairesel olurdu. Sistem bunu
+"eşleşti" diye raporlamak yerine açıkça "bu kontrol bir şey kanıtlamaz" diyor.
+
+Çelişen bir kontrol keşifte **engelleyici** (`selfcheck_conflict`) olarak görünür ve durum `incomplete` olur.
+Hepsinin desteklemesi ise doğruluk kanıtı değildir; raporun kendi cümlesi: *"yalnız bilinen çelişkilerin
+bulunmadığını gösterir."*
+
+Testler: `backend/tests/test_selfcheck.py` (15 test). En önemlisi `test_dairesel_kontrol_asla_desteklemez` —
+sistemin kendini kandırmadığının testi.
+
+## Poz bedeliyle fiyatlandırma: birim fiyat listesini bir kez yapıştır (`cost/pozbook.py`)
+
+Canlı kullanımda asıl tıkanma metraj değil **fiyat girişidir**: keşifte 100+ kalem çıkar, hepsine elle fiyat
+girmek kimsenin yapmayacağı bir iştir; program 0 ₺ gösterir. Ama kalemlerin çoğunda **ÇŞB poz numarası**
+zaten var (A4-A5'te 78 kalemin 47'si) ve her müteahhitte o yılın birim fiyat listesi bulunur.
+
+`POST /api/pricebook/poz-import` bir metin alır, poz numarasına göre fiyat bankasına yazar; yeni projeler de
+bu bankadan dolar. Gerçek listeler tek biçimde olmadığı için ayraca güvenilmez — satırdaki **poz numarası ve
+son sayı** aranır, aradaki metin addır. Dört ayraç da çalışır (sekme, `;`, `|`, hizalama boşluğu), sayı
+Türkçedir (binlik nokta, ondalık virgül), birim normalleştirilir (`m2` → `m²`, `TON` → `ton`).
+
+### Poz bedeli her şey dahildir
+
+ÇŞB birim fiyatı malzeme + işçilik + makine + yüklenici kârını kapsar. Bu yüzden `PriceItem.poz_price`
+doluysa malzeme ve işçiliğin **yerine geçer**, üstüne eklenmez — toplanırsa bedel iki kez sayılır.
+
+### Birim uyumu: sessiz geçilemeyecek tek şey
+
+Demir keşifte **kg**, ÇŞB pozunda **ton**'dur. Çevrilmezse tutar **1000 kat** çıkar; gerçek projede ölçüldü:
+
+```
+çevirmeden:  Demir Ø20  595.492,7 kg × 27.400 ₺  =  16.316.499.980 ₺     (16 milyar)
+çevirerek:   Demir Ø20  595.492,7 kg × 27,400 ₺  =      16.316.500 ₺     (16 milyon)
+```
+
+`unit_factor` bilinen dönüşümleri uygular (kg↔ton, m↔km, L↔m³); **çeviremediğinde fiyatı hiç uygulamaz** ve
+sebebini bildirir. m² fiyatını m³ kalemine tahminle uydurmaktansa o kalemi fiyatsız bırakmak doğrudur.
+
+### A4-A5'te uçtan uca
+
+Örnek bir liste (beton 3.250 ₺/m³, kalıp 485,50 ₺/m², demir 27.400–27.850 ₺/ton) yapıştırıldığında:
+
+| kalem | miktar | birim fiyat | tutar |
+|---|---:|---:|---:|
+| Beton — Radye | 6.185,7 m³ | 3.250,00 | 20.103.671 ₺ |
+| Demir Ø20 | 595.492,7 kg | 27,400 | 16.316.500 ₺ |
+| Demir Ø26 | 478.886,9 kg | 27,400 | 13.121.501 ₺ |
+| Kalıp — Döşeme | 21.106,1 m² | 485,50 | 10.246.995 ₺ |
+| **Genel toplam (KDV hariç)** | | | **132.889.198 ₺** |
+
+43 kalem poz bedeliyle fiyatlandı; kalan 35 işçilik ve 30 malzeme satırı hâlâ kullanıcıdan bekleniyor
+(reçete alt işleri ve pozu olmayan kalemler). Program artık 0 ₺ değil, eksiği sayılabilir bir tutar veriyor.
+
+Testler: `backend/tests/test_pozbook.py` (27 test; sayı biçimi, dört ayraç, birim normalleştirme, birim
+dönüşümü, uçtan uca liste → banka → keşif).
+
+## Süre: ekip normu ayrı, ekip sayısı kullanıcının kararı (`standard/rules.py: CREW_SIZE`)
+
+Süre "169.173 adam-saat → 21.146 adam-gün" diye çıkıyordu; bu kullanıcıya hiçbir şey söylemez. Sebep ekip
+sayısının 1 varsayılmasıydı. Ayrım şudur:
+
+- **Bir ekipteki kişi sayısı bir normdur** — kalıpta 2 marangoz + 1 amele, sıvada usta + yardımcı, beton
+  dökümünde pompa başında kalabalık ekip. `CREW_SIZE` bunu verir (tanınmayan işte usta + yardımcı = 2).
+- **Kaç ekibin aynı anda çalışacağı saha kararıdır** — proje parametresi `crew_count` (varsayılan 1).
+
+Ekip = kişi/ekip × eşzamanlı ekip sayısı. A4-A5'te (169.173 saat):
+
+| eşzamanlı ekip | takvim (paralel) | gereken ortalama kişi |
+|---:|---:|---:|
+| 1 | 5.107 gün | 4 |
+| 5 | 1.022 gün | 21 |
+| 10 | **511 gün** | **42** |
+
+Süreyle birlikte **`implied_headcount`** yazılır: *bu takvim süresi için sahada ortalama kaç kişi gerekir.*
+14.900 m³ betonluk bir AVM'yi 17 ayda bitirmek için 42 kişi — kullanıcı gerçekçiliği bu sayıdan görür ve
+ekip sayısını ona göre değiştirir. Norm bir program varsayılanıdır, kullanıcı girişi değildir: normdan gelen
+kalemler `norm_crew` ile ayrıca listelenir.
+
+## Eksik fiyatlar etki sırasına göre (`cost/pricing.py: _missing_ranked`)
+
+"Fiyatı girilmemiş 65 kalem var" cümlesi kullanılabilir değildir. Sıralama uydurma fiyata dayanmaz, bildiğimiz
+büyüklükleri kullanır: işçilik satırında miktarın kendisi adam-saattir, diğerlerinde hesaplanan adam-saat,
+o da yoksa kendi türü içinde miktar. Ürünler ürün bazında toplanır (aynı demir birçok kalemde geçer).
+
+A4-A5'te ilk 8 işçilik satırı toplam saatin **%90'ını** tutuyor:
+
+```
+Demir yerleştirme - bağlama        35.986 saat
+Kalıp kurma                        30.349 saat
+Demir kesme - bükme                18.781 saat
+Sıva işçiliği                      17.809 saat
+…
+```
+
+Maliyet ekranında "Önce hangilerini doldurmalı?" başlığı altında görünür; kullanıcı 65 satır yerine üstteki
+birkaçını doldurup tutarın çoğunu çıkarır.
+
+## Kalibrasyon döngüsü: ölç → doğru metrajla karşılaştır → farkı sebebe bağla (`app/calib`)
+
+Metrajın doğruluğu tek dosyada denenerek artmaz: bir kuralı bir çizimde düzeltmek başka çizimde bozabilir
+(bkz. pafta bölme, 10 Eyl). Bu yüzden düzeltme değil **ölçüm** kalıcıdır. `app/calib` bir korpusu (paftalar +
+bilinen doğru metraj) çalıştırır, farkı kalem kalem çıkarır, **farkı sebebe bağlar** ve önceki tabanla kıyaslar.
+
+```
+python -m app.calib               bütün korpusu ölç, farkı ve teşhisi yaz, tabanla kıyasla (gerileme varsa çıkış 1)
+python -m app.calib --kaydet      bu koşuyu taban yap
+python -m app.calib --korpus X    yalnız bir proje
+```
+
+### Doğru metraj nereden geliyor
+
+Web'de (çizim + doğrulanmış metraj) eşleşmiş açık veri seti yok. Ama **gerek de yok**: Türk statik ofisleri
+kendi icmallerini paftaya çiziyor. B Blok'ta `TABLE4` katmanı müellifin kat bazında KALIP (m²) / BETON (m³)
+tablosu; A4-A5'te `VM-METRAJ` katmanı donatı metraj tablosu (zaten okuyoruz — demirin %99,3'ü buradan geliyor).
+Yani **her proje dosyası kendi cevap anahtarını taşıyor**. Referansın güveni her zaman kayıtlı (`guven`):
+
+| | anlamı |
+|---|---|
+| `cizimden` | çizimin kendi metraj tablosundan okundu |
+| `aktarim` | tablodan elle aktarıldı, bağımsız ölçülmedi |
+| `bagimsiz` | bağımsız ölçüm / hakediş icmali |
+
+**"Eşleşti" ≠ "doğru".** Müellifin tablosuyla aynı sonucu vermek, ikimizin de aynı kabulü kullandığını gösterir.
+
+### Teşhis: hangi değişken suçlu
+
+Fark yüzdesi tek başına işe yaramaz; `diagnose.py` farkı formülün kendisinden geri hesaplar. Kolon/perde betonu
+ve kalıbı **farklı** yükseklik kullandığı için hangisinin saptığı doğrudan suçluyu gösterir:
+
+    beton = alan × Hk        Hk = H (net döşeme) ya da H − d
+    kalıp = çevre × Hf       Hf = H − kattaki baskın kiriş yüksekliği
+
+Geometri doğruysa oran doğrudan yüksekliğe düşer: `h_doğru = h_kullanılan × referans / bizim`. Geri hesaplanan
+yükseklik formüldeki adaylardan (H, H − d, H − kiriş) birine denk düşüyorsa suçlu bir **kabuldür**; hiçbirine
+denk düşmüyorsa suçlu yükseklik değil **eleman tespitidir**.
+
+### İlk koşu (B Blok, TABLE4 referansı)
+
+| Kat | Beton m³ (bizim / ref) | % | Kalıp m² (bizim / ref) | % |
+|---|---|---:|---|---:|
+| Bodrum | 1.500,0 / 1.443,7 | +3,90 | 6.380,7 / 6.367,8 | +0,20 |
+| Zemin | 728,4 / 731,3 | −0,40 | 2.932,6 / 2.996,3 | −2,13 |
+| Birinci kat | 709,2 / 677,3 | +4,71 | 2.843,7 / 2.802,0 | +1,49 |
+
+Genel ortalama mutlak sapma **%2,14**, en kötü %4,71. (Kalıp eskiden %15–25 fazlaydı; kiriş altı düzeltmesinin
+işe yaradığını bu koşu bağımsız olarak doğruluyor.)
+
+Teşhisin bulduğu: bodrum ve birinci katta kalıp eşleşirken beton sapıyor, ve geri hesaplanan beton yüksekliği
+**tam olarak H − d**'ye denk düşüyor (3,21 ≈ 3,18 ve 3,53 ≈ 3,55) — yani müellif kolon betonunu brüt döşeme
+kabulüyle hesaplamış, biz net kabulüyle. **Ama zemin katı bu hipotezi yalanlıyor** (H ile eşleşiyor) ve A4-A5
+net kabulüyle %0,7'de tutuyor. Tek dosyaya bakıp kural değiştirmenin tuzağı tam burada: hipotez birden çok
+katta ve projede tekrarlanmadan kural değişmez. Korpus büyüdükçe bu soru kendiliğinden cevaplanacak.
+
+### Gerileme kapısı
+
+Taban kaydedildikten sonra her koşu kıyaslanır. Kasten sokulan bir hata (kolon kalıbı `Hf` yerine `H`) ile
+denendi:
+
+```
+b_blok: %2.14 → %7.46  ↑ GERİLEME
+    bodrum/kolon_perde_kalip_m2: %+0.20 → %+11.46
+    zemin/kolon_perde_kalip_m2:  %-2.13 → %+9.93
+    birinci kat/kolon_perde_kalip_m2: %+1.49 → %+14.38
+```
+
+Çıkış kodu 1 döner; CI'da doğrudan kullanılabilir. Testler: `backend/tests/test_calib.py` (13 test — korpus
+okuma, fark hesabı, altı teşhis dalı, bozuk / boş pafta, tanınmayan ölçü).
+
+### Korpusa proje eklemek
+
+`backend/calib/corpus/<ad>.json` — bir dosya, bir proje; katlara bölünür çünkü referans metraj hemen her zaman
+kat bazındadır. Kat yüksekliği korpusta **açıkça** yazılır (tahmin edilmez): kalibrasyonun en sık yanıltıcı
+değişkeni budur.
+
+```json
+{ "proje": "…", "kaynak": "TABLE4", "guven": "aktarim",
+  "katlar": [{ "ad": "zemin", "kat_yuksekligi": 3.80,
+               "paftalar": ["samples/b_blok/crop_zemin.dxf"],
+               "referans": {"kolon_perde_beton_m3": 731.31, "kolon_perde_kalip_m2": 2996.27} }] }
+```
+
+Karşılaştırılabilen ölçüler `calib/corpus.py: MEASURES`; tanınmayan bir anahtar sessizce 0 sayılmaz, hata verir.
 
 ## Yol haritası
 

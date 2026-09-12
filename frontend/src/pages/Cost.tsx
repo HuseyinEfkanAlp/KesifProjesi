@@ -1,8 +1,10 @@
+import QualitySummary from '../components/QualitySummary'
+import type { QualityReport } from '../types'
 import { useEffect, useState } from 'react'
 import Loading from '../components/Loading'
 import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
-import type { CostResult, Project } from '../types'
+import type { CostResult, MissingRanked, Project } from '../types'
 import ProjectNav from './ProjectNav'
 
 export default function Cost() {
@@ -10,10 +12,11 @@ export default function Cost() {
   const [project, setProject] = useState<Project | null>(null)
   const [cost, setCost] = useState<CostResult | null>(null)
   const [error, setError] = useState('')
+  const [quality, setQuality] = useState<QualityReport | null>(null)
 
   useEffect(() => {
     Promise.all([Api.projects.get(pid), Api.cost.get(pid)])
-      .then(([p, c]) => { setProject(p); setCost(c.cost) })
+      .then(([p, c]) => { setProject(p); setCost(c.cost); setQuality(c.quality) })
       .catch((e) => setError(e.message))
   }, [pid])
 
@@ -26,23 +29,30 @@ export default function Cost() {
   return (
     <>
       <ProjectNav id={pid} name={project.name} />
+      <QualitySummary report={quality} projectId={pid} />
       {error && <div className="error">{error}</div>}
       <div className="cards">
         <div className="card"><div className="label">Malzeme</div><div className="value">{money(cost.material_subtotal)}</div></div>
         <div className="card"><div className="label">İşçilik</div><div className="value">{money(cost.labor_subtotal)}</div></div>
-        <div className="card"><div className="label">Genel toplam {cost.vat_rate ? `(KDV %${Math.round(cost.vat_rate * 100)} dahil)` : '(KDV hariç)'}</div><div className="value">{money(cost.grand_total)}</div></div>
+        <div className="card"><div className="label">Hesaplanan tutar (taslak) {cost.vat_rate ? `(KDV %${Math.round(cost.vat_rate * 100)} dahil)` : '(KDV hariç)'}</div><div className="value">{money(cost.grand_total)}</div></div>
         <div className="card">
-          <div className="label">Süre (disiplinler paralel)</div>
+          <div className="label">Süre senaryosu (tahmini)</div>
           <div className="value">{fmt(dur.parallel_days, 1)} gün</div>
-          <div className="muted">ardışık: {fmt(dur.sequential_days, 1)} gün · {fmt(dur.total_hours, 0)} adam-saat ({fmt(dur.man_days, 0)} adam-gün) · {dur.hours_per_day} saat/gün</div>
+          <div className="muted">ardışık: {fmt(dur.sequential_days, 1)} gün · {fmt(dur.total_hours, 0)} adam-saat · {dur.hours_per_day} saat/gün</div>
+          {dur.implied_headcount > 0 && <div className="muted">
+            bu süre için sahada ortalama <b>{fmt(dur.implied_headcount, 0)} kişi</b>
+            {dur.crew_count > 1 && ` (${dur.crew_count} eşzamanlı ekip)`} gerekir — gerçekçi değilse ekip sayısını değiştirin
+          </div>}
         </div>
       </div>
-      {(cost.missing_prices.length > 0 || dur.missing_rates.length > 0 || dur.missing_crew.length > 0) && (
+      {(cost.missing_prices.length > 0 || cost.missing_labor.length > 0 || dur.missing_rates.length > 0 || dur.missing_crew.length > 0) && (
         <div className="warn">
           {cost.missing_materials.length > 0 && <div>Fiyatı girilmemiş {cost.missing_materials.length} ürün var; bunları kullanan {cost.missing_prices.length} kalem toplama 0 olarak girdi. </div>}
           {cost.missing_labor.length > 0 && <div>İşçilik fiyatı girilmemiş {cost.missing_labor.length} kalem var. </div>}
           {dur.missing_rates.length > 0 && <div>Adam-saat girilmemiş {dur.missing_rates.length} kalem süreye katılmadı. </div>}
           {dur.missing_crew.length > 0 && <div>Ekip girilmemiş {dur.missing_crew.length} kalemde gün, tek kişilik <b>adam-gün</b>dür; takvim günü için işçilik satırlarına ekip sayısı girin. </div>}
+          {(dur.norm_crew?.length ?? 0) > 0 && <div>{dur.norm_crew!.length} kalemde ekip büyüklüğü <b>program normundan</b> geldi (kullanıcı girişi değil); kendi ekip kuruluşunuzla karşılaştırın. </div>}
+          {cost.missing_ranked && <MissingRankedPanel m={cost.missing_ranked} pid={pid} />}
           <Link to={`/projects/${pid}/prices`}>Birim fiyatlara git</Link>
         </div>
       )}
@@ -157,4 +167,47 @@ export default function Cost() {
       </div>
     </>
   )
+}
+
+
+/** Eksik fiyatlar etki sırasına göre: 65 satırlık düz liste kullanılabilir değil; üstteki birkaç satır tutarın çoğunu belirler. */
+function MissingRankedPanel({ m, pid }: { m: MissingRanked; pid: number }) {
+  const [hepsi, setHepsi] = useState(false)
+  const n = hepsi ? 999 : 8
+  const toplamSaat = m.labor.reduce((s, r) => s + (r.hours || 0), 0)
+  const ustSaat = m.labor.slice(0, 8).reduce((s, r) => s + (r.hours || 0), 0)
+  return <details style={{ marginTop: 10 }}>
+    <summary><strong>Önce hangilerini doldurmalı?</strong> — {m.labor.length} işçilik, {m.materials.length} ürün</summary>
+    <p className="muted hint">{m.notice}</p>
+    {m.labor.length > 0 && <>
+      <div className="row between" style={{ marginTop: 8 }}>
+        <strong>İşçilik fiyatı girilmemiş</strong>
+        {toplamSaat > 0 && <span className="muted">ilk 8 satır toplam saatin %{Math.round(100 * ustSaat / toplamSaat)}'i</span>}
+      </div>
+      <div style={{ overflowX: 'auto' }}><table className="table-compact">
+        <thead><tr><th>Kalem</th><th>Tür</th><th className="num">Miktar</th><th className="num">Adam-saat</th></tr></thead>
+        <tbody>{m.labor.slice(0, n).map((r) => <tr key={r.key}>
+          <td><Link to={`/projects/${pid}/prices`}>{r.label}</Link></td>
+          <td className="muted">{r.kind_label}</td>
+          <td className="num">{fmt(r.quantity, 1)} {r.unit}</td>
+          <td className="num">{r.hours > 0 ? fmt(r.hours, 0) : '—'}</td>
+        </tr>)}</tbody>
+      </table></div>
+    </>}
+    {m.materials.length > 0 && <>
+      <div style={{ marginTop: 12 }}><strong>Ürün fiyatı girilmemiş</strong> <span className="muted">(ürün bazında toplanmış)</span></div>
+      <div style={{ overflowX: 'auto' }}><table className="table-compact">
+        <thead><tr><th>Ürün</th><th className="num">Toplam miktar</th><th className="num">Kaç kalemde</th></tr></thead>
+        <tbody>{m.materials.slice(0, n).map((r) => <tr key={r.key}>
+          <td><Link to={`/projects/${pid}/prices`}>{r.name}</Link></td>
+          <td className="num">{fmt(r.quantity, 1)} {r.unit}</td>
+          <td className="num">{r.kalem}</td>
+        </tr>)}</tbody>
+      </table></div>
+    </>}
+    {(m.labor.length > 8 || m.materials.length > 8) &&
+      <button className="link" onClick={() => setHepsi(!hepsi)} style={{ marginTop: 8 }}>
+        {hepsi ? 'İlk 8 satırı göster' : `Hepsini göster (${m.labor.length + m.materials.length})`}
+      </button>}
+  </details>
 }

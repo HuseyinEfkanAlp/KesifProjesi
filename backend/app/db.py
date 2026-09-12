@@ -36,6 +36,8 @@ def init_db() -> None:
 
 # Sonradan eklenen sütunlar: (tablo, sütun, SQL tipi). create_all var olan tabloya sütun eklemez.
 _ADDED_COLUMNS = [
+    ("priceitem", "poz_price", "FLOAT DEFAULT 0"),
+    ("pricebookitem", "poz", "VARCHAR DEFAULT ''"),
     ("drawing", "storey_height", "FLOAT"),
     ("drawing", "discipline", "VARCHAR DEFAULT 'structural'"),
     ("project", "params", "JSON"),

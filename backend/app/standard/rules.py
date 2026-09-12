@@ -284,3 +284,33 @@ def formwork_labor_norms(etype: str = "", material: str = "", reuse: float = 1.0
     return {"imalat": round(base["imalat"] * fac["imalat"] / n, 4),
             "kurma": round(base["kurma"] * fac["kurma"], 4),
             "sokum": round(base["sokum"] * fac["sokum"], 4)}
+
+
+# ---------------------------------------------------------------- ekip büyüklüğü
+
+# **Bir ekipteki kişi sayısı** — bu bir norm, saha kararı değil. Kaç ekibin aynı anda çalışacağı projenin
+# kendi kararıdır (`params.crew_count`), o yüzden ayrı tutulur: ekip = kişi/ekip × eşzamanlı ekip sayısı.
+#
+# Değerler Türkiye'de yaygın ekip kuruluşudur: kalıpta 2 marangoz + 1 amele, sıvada 1 usta + 1 amele,
+# beton dökümünde pompa başında kalabalık ekip. ÇŞB analizlerinden doğrulanmadı; katalogdan düzenlenir.
+CREW_SIZE: dict[str, float] = {
+    # demir
+    "demir_hazirlik": 3.0, "demir_montaj": 4.0, "demir_tasima": 3.0,
+    # kalıp
+    "kalip_imalat": 3.0, "kalip_kurma": 3.0, "kalip_sokum": 3.0,
+    # beton
+    "beton_iscilik": 6.0, "beton_pompaj": 4.0, "vibrator": 2.0, "beton_kur": 2.0,
+    # duvar ve ince işler
+    "duvar_iscilik": 2.0, "siva_iscilik": 2.0, "boya_iscilik": 2.0, "sap_iscilik": 3.0,
+    "seramik_iscilik": 2.0, "yalitim_iscilik": 2.0, "cati_iscilik": 3.0,
+    # doğrama / cephe / tesisat
+    "dograma_montaj": 2.0, "korkasa_montaj": 2.0, "cam_montaj": 2.0, "cephe_montaj": 3.0,
+    "prekast_montaj": 4.0, "kanal_montaj": 2.0, "boru_montaj": 2.0, "cihaz_montaj": 2.0,
+    "vitrifiye_montaj": 2.0, "armatur_montaj": 2.0, "kablo_montaj": 2.0,
+}
+CREW_DEFAULT = 2.0        # tanınmayan işçilik kalemi: usta + yardımcı
+
+
+def crew_size(kind: str) -> float:
+    """Bir ekipteki kişi sayısı (norm). Eşzamanlı ekip sayısı ayrıdır."""
+    return CREW_SIZE.get(kind, CREW_DEFAULT)

@@ -159,7 +159,10 @@ def test_labor_hours_come_from_recipe_without_price_entry():
     assert cost["duration"]["total_hours"] == pytest.approx(1170.0)
     assert cost["duration"]["man_days"] == pytest.approx(1170.0 / 8, abs=0.2)
     assert "kalip_kurma:*" not in cost["duration"]["missing_rates"]
-    assert "kalip_kurma:*" in cost["duration"]["missing_crew"]                # takvim günü için ekip gerekir
+    # Ekip artık programın normundan gelir (rules.CREW_SIZE: kalıp ekibi 3 kişi); kullanıcı girişi değildir,
+    # o yüzden "norm_crew" listesinde görünür ve doğrulanması beklenir.
+    assert "kalip_kurma:*" not in cost["duration"]["missing_crew"]
+    assert "kalip_kurma:*" in cost["duration"]["norm_crew"]
 
     # ekip girilince gün takvim günüdür
     prices = default_price_items(items)

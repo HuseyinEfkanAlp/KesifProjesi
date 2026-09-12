@@ -6,7 +6,8 @@ from sqlmodel import Session
 from ..db import get_session
 from ..models import Drawing
 from ..parser.rebar_mix import normalize as normalize_mix
-from ..services import boq_payload, project_boq, project_params, project_quantities, project_rebar_mix
+from ..quantity import headline, rebar_report
+from ..services import boq_payload, project_boq, project_params, project_quantities, project_rebar_mix, project_quality
 from .projects import get_project
 
 router = APIRouter(prefix="/api/projects", tags=["quantities"])
@@ -20,11 +21,16 @@ def read_quantities(project_id: int, session: Session = Depends(get_session)):
     items = project_boq(p, session, summary)
     return {
         "summary": summary,
+        "quality": project_quality(p, session, items, summary),
         "lines": [{**ln.to_dict(), **{k: v for k, v in info.get(ln.element_id, {}).items() if k != "warnings"},
                    "warnings": info.get(ln.element_id, {}).get("warnings", [])} for ln in lines],
         "boq": boq_payload(items),
         "params": {"storey_height": p.storey_height, "slab_thickness": p.slab_thickness, **project_params(p)},
         "rebar_mix": rebar_mix_out(p, session),
+        # demir siparişi: çap bazında metraj + oran + fire, işçilik saatleriyle
+        "rebar": rebar_report.build(items, summary),
+        # ana kalemler: beton / kalıp / demir / duvar — toplam, ayrıştırma, döküm
+        "headline": headline.build(items, summary),
     }
 
 

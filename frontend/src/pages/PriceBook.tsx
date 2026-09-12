@@ -2,9 +2,9 @@ import { Fragment, useEffect, useState } from 'react'
 import Loading from '../components/Loading'
 import { Api, fmt } from '../api/client'
 import Icon from '../components/Icon'
-import type { PriceBook, PriceBookIn, PriceBookProduct, Supplier, SupplierIn } from '../types'
+import type { PozBook, PozImportResult, PriceBook, PriceBookIn, PriceBookProduct, Supplier, SupplierIn } from '../types'
 
-type Tab = 'material' | 'labor' | 'suppliers'
+type Tab = 'material' | 'labor' | 'poz' | 'suppliers'
 type Edit = { price?: number | string; brand?: string; supplier_id?: number | null; hours_per_unit?: number | string; crew_size?: number | string }
 
 const GROUP_ORDER = ['KABA', 'INCE', 'MEK', 'ELK', 'ALT']
@@ -29,7 +29,7 @@ export default function PriceBook() {
   const load = (s: 'material' | 'labor' = scope) => Promise.all([Api.pricebook.get(s), Api.suppliers.list()])
     .then(([b, sup]) => { setBook(b); setSuppliers(sup); setEdited({}) })
     .catch((e) => setError(e.message))
-  useEffect(() => { load(scope) }, [scope]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab !== 'poz') load(scope) }, [scope, tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (key: string, field: keyof Edit, value: string) => {
     setSaved(false)
@@ -114,10 +114,13 @@ export default function PriceBook() {
         <div className="chips" style={{ margin: 0 }}>
           <button className={`chip-btn${tab === 'material' ? ' on' : ''}`} onClick={() => setTab('material')}>Malzeme (ürün)</button>
           <button className={`chip-btn${tab === 'labor' ? ' on' : ''}`} onClick={() => setTab('labor')}>İşçilik</button>
+          <button className={`chip-btn${tab === 'poz' ? ' on' : ''}`} onClick={() => setTab('poz')}>Birim fiyat listesi (poz)</button>
           <button className={`chip-btn${tab === 'suppliers' ? ' on' : ''}`} onClick={() => setTab('suppliers')}>Tedarikçiler ({suppliers.length})</button>
         </div>
       </div>
       {error && <div className="error">{error}</div>}
+
+      {tab === 'poz' && <PozPanel />}
 
       {tab === 'suppliers' && (
         <div className="panel">
@@ -153,7 +156,7 @@ export default function PriceBook() {
         </div>
       )}
 
-      {tab !== 'suppliers' && (
+      {tab !== 'suppliers' && tab !== 'poz' && (
         <div className="panel">
           <div className="row between sticky-bar">
             <div className="row" style={{ gap: 12 }}>
@@ -280,4 +283,82 @@ export default function PriceBook() {
       )}
     </>
   )
+}
+
+
+/** ÇŞB / firma birim fiyat listesi: bir kez yapıştırılır, poz numarasından bütün keşfe uygulanır. */
+function PozPanel() {
+  const [book, setBook] = useState<PozBook | null>(null)
+  const [text, setText] = useState('')
+  const [res, setRes] = useState<PozImportResult | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  const load = () => Api.pricebook.pozList().then(setBook).catch((e) => setErr((e as Error).message))
+  useEffect(() => { load() }, [])
+
+  const submit = async () => {
+    setBusy(true); setErr(''); setRes(null)
+    try {
+      setRes(await Api.pricebook.pozImport(text))
+      setText('')
+      await load()
+    } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
+  }
+
+  const clear = async () => {
+    if (!confirm('İçeri alınmış bütün poz fiyatları silinecek. Devam edilsin mi?')) return
+    setBusy(true); setErr('')
+    try { await Api.pricebook.pozClear(); setRes(null); await load() }
+    catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
+  }
+
+  return <>
+    <div className="panel">
+      <h3 style={{ marginTop: 0 }}>Birim fiyat listesini yapıştırın</h3>
+      <p className="muted hint">
+        Keşifteki kalemlerin çoğunda ÇŞB poz numarası var; liste bir kez yapıştırılınca bütün projelere uygulanır.
+        Satır düzeni serbest — her satırda bir <strong>poz numarası</strong> (15.150.1006) ve bir <strong>fiyat</strong>
+        olması yeterli. Ayraç sekme, noktalı virgül, dikey çizgi ya da hizalama boşluğu olabilir.
+      </p>
+      <p className="muted hint">
+        <strong>Poz bedeli her şey dahildir</strong> (malzeme + işçilik + makine + yüklenici kârı): keşifte malzeme ve
+        işçiliğin yerine geçer, üstüne eklenmez. Birim uyuşmazlığı çevrilir (ton ↔ kg); çevrilemezse fiyat uygulanmaz.
+      </p>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={8} spellCheck={false}
+                style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
+                placeholder={'15.150.1006;Beton santralinde üretilen C 30/37;m³;3.250,00\n15.180.1003  Ahşap kalıp yapılması  m2  485,50\n15.160.1004 | Nervürlü çelik Ø14-Ø28 | ton | 27.400,00'} />
+      <div className="row" style={{ marginTop: 10 }}>
+        <button onClick={submit} disabled={busy || !text.trim()}>{busy ? 'Okunuyor…' : 'Listeyi içeri al'}</button>
+        {!!book?.rows.length && <button className="secondary" onClick={clear} disabled={busy}>Listeyi temizle ({book.rows.length})</button>}
+      </div>
+      {err && <div className="error" style={{ marginTop: 8 }}>{err}</div>}
+      {res && <div className="warn" style={{ marginTop: 10 }}>
+        <strong>{res.okunan} poz okundu</strong> — {res.yeni} yeni, {res.guncellenen} güncellendi
+        {res.atlanan > 0 && `, ${res.atlanan} satır atlandı (poz ya da fiyat bulunamadı)`}
+        {res.tekrar > 0 && `, ${res.tekrar} tekrar eden poz (sonuncusu geçerli)`}.
+        <div className="muted hint">{res.notice}</div>
+      </div>}
+    </div>
+
+    <div className="panel">
+      <div className="row between"><h3 style={{ margin: 0 }}>Yüklü poz fiyatları</h3>
+        <span className="muted">{book?.rows.length ?? 0} satır</span></div>
+      {book && book.rows.length === 0 && <p className="muted">Henüz liste yüklenmedi; maliyet 0 ₺ görünüyorsa sebebi budur.</p>}
+      {!!book?.rows.length && <>
+        <p className="muted hint">{book.notice}</p>
+        <div style={{ overflowX: 'auto', maxHeight: 420 }}>
+          <table className="table-compact">
+            <thead><tr><th>Poz</th><th>Tanım</th><th>Birim</th><th className="num">Birim fiyat ₺</th><th>Tedarikçi</th></tr></thead>
+            <tbody>{book.rows.map((r) => <tr key={r.id}>
+              <td style={{ fontFamily: 'ui-monospace, monospace' }}>{r.poz}</td>
+              <td>{r.name}</td><td>{r.unit}</td>
+              <td className="num">{fmt(r.price, 2)}</td>
+              <td className="muted">{r.supplier_name}</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+      </>}
+    </div>
+  </>
 }

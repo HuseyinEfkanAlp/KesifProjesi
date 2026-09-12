@@ -24,10 +24,11 @@ from .detectors.standard import detect_mapped, detect_standard, standard_layers
 from .detectors.walls import detect_walls
 from .merge import merge_area_elements
 from .geometry import polygon_area
+from shapely.geometry import Point as SPoint, Polygon
 from .layer_profile import (ALL_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, MAPPED_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE,
                             STRUCTURAL_TYPES, LayerProfile, ksf_spec_dims, ksf_structural_type, types_for)
 from .levels import parse_levels
-from .rebar_tables import kot_from_label, parse_rebar_label_groups, parse_rebar_labels, parse_rebar_tables, target_from_label
+from .rebar_tables import kot_from_label, parse_rebar_label_groups, parse_rebar_tables, target_from_label
 from .loader import UNIT_SCALE, Drawing, load_dxf
 from .materials import scan_materials
 from .blocks import own_block_of_drawing, scan_drawing as scan_blocks
@@ -181,20 +182,65 @@ def _structural(drawing: Drawing, layers_by_type: dict[str, list[str]], params: 
         result.warnings.append("Temel paftası: kolon/perde izleri metraj dışı bırakıldı (kat kalıp planında sayılırlar).")
     if any(e.subtype == "net" for e in slabs):
         result.warnings.append("Döşemeler kiriş ağından türetildi (kirişler arası net alan); kiriş betonu tam yükseklikle hesaplanır.")
-    # kullanıcıya iş bırakan boşluklar: hiçbir kirişe atanmamış kiriş etiketleri (kiriş kaçmış olabilir)
-    unused_beams = [lab.name for i, (_, lab) in enumerate(labels.items)
-                    if lab.type_hint == "beam" and lab.name and lab.has_dims and i not in labels.claimed]
-    if beams and unused_beams:
-        names = sorted(set(unused_beams))
-        result.warnings.append(f"{len(names)} kiriş etiketi hiçbir kirişe atanmadı (kiriş çizgisi bulunamadı ya da etiket uzak): "
-                               + ", ".join(names[:12]) + ("…" if len(names) > 12 else "") + " — eksikse elle ekleyin")
-    unused_slabs = [lab.name for i, (_, lab) in enumerate(labels.items)
-                    if lab.type_hint == "slab" and lab.name and i not in labels.claimed]
-    if slabs and unused_slabs:
-        names = sorted(set(unused_slabs))
-        result.warnings.append(f"{len(names)} döşeme etiketi kapalı bir hücreye düşmedi (kiriş / perde çizgileri hücreyi kapatmıyor): "
-                               + ", ".join(names[:12]) + ("…" if len(names) > 12 else "") + " — bu döşemeleri elle ekleyin")
+    # kullanıcıya iş bırakan boşluklar: hiçbir elemana atanmamış etiketler.
+    if beams:
+        gap, renamed = _unclaimed_labels(labels, beams, "beam", require_dims=True)
+        if gap:
+            result.warnings.append(f"{len(gap)} kiriş etiketi hiçbir kirişe atanmadı (kiriş çizgisi bulunamadı ya da etiket uzak): "
+                                   + _names(gap) + " — eksikse elle ekleyin")
+        if renamed:
+            result.warnings.append(f"{len(renamed)} kiriş etiketi bir kirişe bağlanamadı ama yanında aynı kesitle ölçülmüş kiriş var "
+                                   f"(miktar sayıldı, ad eşleşmedi): " + _names(renamed) + " — kesitleri Elemanlar ekranından doğrulayın")
+    if slabs:
+        gap, renamed = _unclaimed_labels(labels, slabs, "slab")
+        if gap:
+            result.warnings.append(f"{len(gap)} döşeme etiketi kapalı bir hücreye düşmedi (kiriş / perde çizgileri hücreyi kapatmıyor): "
+                                   + _names(gap) + " — bu döşemeleri elle ekleyin")
     return columns + walls + beams + slabs + founds + parapets
+
+
+def _names(names: list[str], limit: int = 12) -> str:
+    return ", ".join(names[:limit]) + ("…" if len(names) > limit else "")
+
+
+def _unclaimed_labels(labels: LabelIndex, elements: list[DetectedElement], type_hint: str,
+                      require_dims: bool = False, radius: float = 1.5) -> tuple[list[str], list[str]]:
+    """Hiçbir elemana atanmamış etiketleri ikiye ayırır: (gerçek boşluk, yalnız adı eşleşmemiş).
+
+    Aynı marka planda defalarca tekrar yazılır — A4-A5'in kalıp paftasında tek "D1000" döşeme markası 528 kez
+    geçiyor ve 26 döşemeye atanmış; kalan kopyalar "hücreye düşmedi" diye eksiklik sayılıyordu. Bu yüzden önce
+    adın ölçülen bir elemanda geçip geçmediğine bakılır: geçiyorsa ortada eksik miktar yoktur.
+
+    Adı hiç geçmeyen etiket için ikinci soru: yakınında (radius m) etiketin kendi kesitiyle ölçülmüş bir eleman
+    var mı? Varsa miktar sayılmış, yalnız ad eşleşmemiştir (uzun bir kiriş hattı komşu markayı almış olur);
+    yoksa eleman gerçekten kaçmıştır ve elle eklenmelidir."""
+    used = {e.name for e in elements if e.name}
+    gap, renamed = set(), set()
+    for i, (ent, lab) in enumerate(labels.items):
+        if lab.type_hint != type_hint or not lab.name or i in labels.claimed:
+            continue
+        if (require_dims and not lab.has_dims) or lab.name in used:
+            continue
+        pt = ent.points[0] if getattr(ent, "points", None) else None
+        (renamed if pt and _section_measured_near(pt, lab, elements, radius) else gap).add(lab.name)
+    return sorted(gap), sorted(renamed - gap)
+
+
+def _section_measured_near(pt, lab, elements: list[DetectedElement], radius: float) -> bool:
+    """Etiketin yakınında, etiketin kesitiyle (b/h sırası önemsiz) ölçülmüş bir eleman var mı."""
+    if not getattr(lab, "has_dims", False) or lab.b is None or lab.h is None:
+        return False
+    want = {round(float(lab.b), 2), round(float(lab.h), 2)}
+    p = SPoint(pt[0], pt[1])
+    for e in elements:
+        if len(e.points or []) < 3 or {round(e.b or 0.0, 2), round(e.h or 0.0, 2)} != want:
+            continue
+        try:
+            if Polygon(e.points).distance(p) <= radius:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 MIN_PLAN_GEOMETRY = 60   # bu kadar az çizgi / çokgen olan mimari paftada plan çizilmemiştir (yalnız yazı / xref izi)
@@ -296,6 +342,14 @@ def analyze_rebar(drawing: Drawing, label: str = "", rebar_target: str | None = 
     infos = [LayerInfo(name, counts.get(name, 0), None) for name in drawing.layers]
     result = AnalysisResult(unit=drawing.unit, scale=drawing.scale, unit_detected=drawing.unit_detected,
                             discipline=REBAR_DISCIPLINE, layers=infos, warnings=list(drawing.warnings))
+    # Birim kanıtı: donatı planı çubuk boylarını cm yazar. $INSUNITS yanılıyorsa (A4-A5'te 8 pafta "mm"
+    # yazıyor ama cm çizilmiş) bunu çizimin kendi beyanından anlarız; yazı yüksekliği tahmininden güçlüdür.
+    from .rebar_plan import plan_bar_groups, suggested_unit as rebar_unit
+    birim = rebar_unit(drawing)
+    if birim and birim != drawing.unit:
+        result.suggested_unit = birim
+        result.warnings.append(f"Çizim birimi '{drawing.unit}' yazılı ama donatı boyu yazıları '{birim}' ile "
+                               f"uyuşuyor (çubukların yazılı boyu ölçülen boyla ancak böyle tutuyor).")
     tables = parse_rebar_tables(drawing)
     source = "REBAR_TABLE"
     if not tables:
@@ -328,10 +382,36 @@ def analyze_rebar(drawing: Drawing, label: str = "", rebar_target: str | None = 
                        "target": target, "kot": kot, "table": ti + 1, "source": src_label,
                        "declared_kg": t.total_kg_declared, "table_kg": round(t.total_kg, 1)}
             result.elements.append(el)
-    if not tables:
-        result.warnings.append("Donatı metraj tablosu bulunamadı (başlıkta Ø10 / Ø12 … çap sütunları ve AĞIRLIK satırı aranır) "
-                               "ve adetli poz yazısı ('P45 4Ø14 l=160') yok.")
-    else:
+    # Plandan kendi hesabımız: adetli çağrı × çizilen kol boyu. Tablo varsa bağımsız çapraz kontroldür
+    # (A4-A5'in 11 donatı paftasında toplam fark %0,2); tablo yoksa demirin **kaynağı** olur.
+    plan = plan_bar_groups(drawing)
+    result.warnings.extend(plan.warnings)
+    if plan.groups:
+        if tables:
+            tablo_kg = sum(t.total_kg for t in tables)
+            fark = 100.0 * (plan.toplam_kg - tablo_kg) / tablo_kg if tablo_kg else 0.0
+            result.warnings.append(
+                f"Plandan bağımsız hesap (adetli çağrı × çizilen kol boyu): {plan.toplam_kg:,.0f} kg — "
+                f"tablonun {tablo_kg:,.0f} kg değerinden %{fark:+.1f} farklı. "
+                + ("İki bağımsız yol aynı sonucu veriyor." if abs(fark) <= 5 else
+                   "Fark büyük: tabloyu ve çağrı / çubuk eşleşmesini kontrol edin."))
+        else:
+            for d, kg in sorted(plan.by_dia().items()):
+                boy = sum(g.toplam_boy_m for g in plan.groups if g.dia_mm == d)
+                el = DetectedElement(etype="rebar", layer="(plan çağrıları)", points=[(0.0, 0.0), (0.3, 0.0), (0.3, 0.3), (0.0, 0.3)],
+                                     name=f"Ø{d}", subtype=f"Ø{d}", count=1, length=boy, b=d / 1000.0,
+                                     source="REBAR_PLAN", confidence=0.85)
+                el.label_raw = f"plan çağrıları: {kg:.0f} kg"
+                el.meta = {"dia_mm": d, "weight_kg": round(kg, 1), "length_m": round(boy, 2),
+                           "target": default_target, "kot": kot, "source": "plan"}
+                result.elements.append(el)
+            result.warnings.append(
+                f"Metraj tablosu yok; demir **plandan** hesaplandı: {len(plan.groups)} donatı grubu, "
+                f"{plan.toplam_kg:,.0f} kg (adet çağrıdan, boy çizilen çubuktan ölçüldü).")
+    if not tables and not plan.groups:
+        result.warnings.append("Donatı metraj tablosu bulunamadı (başlıkta Ø10 / Ø12 … çap sütunları ve AĞIRLIK satırı aranır), "
+                               "adetli poz yazısı ('P45 4Ø14 l=160') ve plandan ölçülebilir donatı çağrısı da yok.")
+    if tables:
         from .layer_profile import STRUCTURAL_TYPES
         what = f"{len(tables)} metraj tablosu okundu" if source == "REBAR_TABLE" else "poz yazılarından hesaplandı"
         split = "; ".join(f"{STRUCTURAL_TYPES.get(k, k)} {v:,.0f} kg" for k, v in sorted(by_target.items(), key=lambda kv: -kv[1]))
@@ -593,12 +673,17 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
         result.warnings.append(f"Bu paftada {DISCIPLINES.get(d, d)} katmanları da var ({n} nesne): aynı paftada birden çok disiplin "
                                f"çizilmişse çizim ayarlarından ek disiplin olarak açın{note}.")
 
-    unmapped = [li.name for li in layer_infos if li.etype is None and li.count > 0]
+    # Eşlenmemiş katmanlar nesne sayısıyla ve çoktan aza sıralı bildirilir: 177.595 nesnelik bir katmanla
+    # 3 nesnelik bir katman aynı listede aynı görünüyordu, paftanın tamamını tutan katman gözden kaçıyordu.
+    unmapped = sorted((li for li in layer_infos if li.etype is None and li.count > 0),
+                      key=lambda li: -li.count)
     if unmapped:
         result.warnings.append(
-            "Eşlenmemiş katmanlar (eleman sayılmadı): " + ", ".join(unmapped[:15])
+            "Eşlenmemiş katmanlar (eleman sayılmadı): "
+            + ", ".join(f"{li.name} ({li.count:,})".replace(",", ".") for li in unmapped[:15])
             + (" ..." if len(unmapped) > 15 else "")
         )
+        result.warnings.extend(_dominant_unmapped(unmapped, layer_infos))
     for d in discs:
         for etype, lbl in types_for(d).items():
             if etype == "hole":
@@ -606,6 +691,31 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
             if etype in layers_by_disc[d] and not result.by_type(etype):
                 result.warnings.append(f"{lbl} katmanı var ama eleman tespit edilemedi: {', '.join(layers_by_disc[d][etype])}")
     return result
+
+
+# Bu orandan büyük bir payı tek başına tutan eşlenmemiş katman, paftanın asıl içeriğidir: sessizce atlanmamalı.
+DOMINANT_LAYER_SHARE = 0.30
+
+
+def _dominant_unmapped(unmapped: list, layer_infos: list) -> list[str]:
+    """Paftanın nesnelerinin büyük bölümünü tek başına tutan eşlenmemiş katmanları ayrıca bildirir.
+
+    B2 BLOK'un "BİRİNCİ KAT PLANI" paftasında FB_Prekast katmanı 177.595 nesne tutuyor (paftanın %94'ü) ve
+    hiçbir kalem üretmiyordu; uyarı listesinde 3 nesnelik katmanlarla yan yana durduğu için keşfin dışında
+    kaldığı fark edilmiyordu. Böyle bir katman keşfin kapsamını belirler, uyarısı da ona göre olmalı."""
+    total = sum(li.count for li in layer_infos if li.count > 0)
+    if total <= 0:
+        return []
+    out = []
+    for li in unmapped:
+        share = li.count / total
+        if share < DOMINANT_LAYER_SHARE:
+            break                      # liste çoktan aza sıralı
+        out.append(f"'{li.name}' katmanı bu paftanın nesnelerinin %{share * 100:.0f}'ini tutuyor "
+                   f"({li.count:,} nesne) ama hiçbir keşif kalemi üretmedi. ".replace(",", ".")
+                   + "Paftanın asıl içeriği burada olabilir: Elemanlar sayfasında bu katmanı bir katalog "
+                     "kalemine ve ölçüm kuralına (adet / m / m²) eşleyin ya da 'ölçülmez' yapın.")
+    return out
 
 
 def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectParams | None = None,

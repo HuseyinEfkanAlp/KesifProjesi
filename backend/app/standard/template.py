@@ -6,7 +6,6 @@ Birim: mm ($INSUNITS = 4). Özellik alanı katman adının sonuna eklenir (KSF-H
 from __future__ import annotations
 
 from io import StringIO
-from pathlib import Path
 
 import ezdxf
 
@@ -60,7 +59,3 @@ def build_template(catalog: Catalog) -> bytes:
     return sbuf.getvalue().encode("utf-8")
 
 
-def save_template(catalog: Catalog, path: str | Path) -> Path:
-    path = Path(path)
-    path.write_bytes(build_template(catalog))
-    return path

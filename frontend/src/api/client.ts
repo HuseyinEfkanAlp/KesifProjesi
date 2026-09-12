@@ -1,4 +1,4 @@
-import type { Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, LayerCheck, MaterialIn, MaterialOptions, MaterialPrice, PlanCheck, PlanLevel, PlanType, PriceBook, PriceBookIn, PriceIn, PriceItem, Project, ProjectSystems, Supplier, SupplierIn, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
+import type { QualityReport, Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, LayerCheck, MaterialIn, MaterialOptions, MaterialPrice, PlanCheck, PlanLevel, PlanType, PozBook, PozImportResult, PriceBook, PriceBookIn, PriceIn, PriceItem, Project, ProjectSystems, Supplier, SupplierIn, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
@@ -119,6 +119,11 @@ export const Api = {
     get: (scope: 'material' | 'labor' = 'material') => request<PriceBook>(`/api/pricebook?scope=${scope}`),
     save: (rows: PriceBookIn[]) => request<PriceBook>('/api/pricebook', { method: 'PUT', body: json(rows) }),
     remove: (rowId: number) => request<void>(`/api/pricebook/${rowId}`, { method: 'DELETE' }),
+    /** İçeri alınmış ÇŞB / firma birim fiyat listesi (poz bedelleri) */
+    pozList: () => request<PozBook>('/api/pricebook/poz'),
+    pozImport: (text: string, supplier_id?: number | null, note = '') =>
+      request<PozImportResult>('/api/pricebook/poz-import', { method: 'POST', body: json({ text, supplier_id: supplier_id ?? null, note }) }),
+    pozClear: () => request<void>('/api/pricebook/poz', { method: 'DELETE' }),
     /** bankadaki güncel fiyatları bir projeye uygula */
     applyTo: (pid: number, overwrite = false) =>
       request<{ materials: number; labor: number }>(`/api/projects/${pid}/apply-pricebook?overwrite=${overwrite}`, { method: 'POST' }),
@@ -130,7 +135,7 @@ export const Api = {
     remove: (id: number) => request<void>(`/api/suppliers/${id}`, { method: 'DELETE' }),
   },
   cost: {
-    get: (pid: number) => request<{ summary: QuantitySummary; boq: Boq; cost: CostResult }>(`/api/projects/${pid}/cost`),
+    get: (pid: number) => request<{ summary: QuantitySummary; boq: Boq; cost: CostResult; quality: QualityReport }>(`/api/projects/${pid}/cost`),
     excelUrl: (pid: number) => `/api/projects/${pid}/cost.xlsx`,
   },
   catalog: {

@@ -25,9 +25,12 @@ export default function Elements() {
   const [elements, setElements] = useState<Element[]>([])
   const [svg, setSvg] = useState('')
   const [selected, setSelected] = useState<number | null>(null)
+  // Önizlemede ve özet tablosunda seçim eleman değil **grup** üzerinden yürür ("column|100/100")
+  const [selGroup, setSelGroup] = useState<string>('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [filter, setFilter] = useState<EType | ''>('')
+  const [groupFilter, setGroupFilter] = useState<string>('')
   const [limit, setLimit] = useState(60)
   const [showList, setShowList] = useState(false)
   const svgRef = useRef<HTMLDivElement>(null)
@@ -48,13 +51,17 @@ export default function Elements() {
   }, [drawingId])
   useEffect(() => { load() }, [load])
 
-  // SVG üzerinde tıklama -> satır seç
+  // Önizlemede tıklama tek parçayı değil **grubu** seçer. Bir temel kirişlerle bölünmüş 8 çokgen olarak
+  // çizilebilir; keşifte tek kalemdir, o yüzden 8 ayrı tıklama alanı değil tek grup gibi davranır.
   useEffect(() => {
     const root = svgRef.current
     if (!root) return
     const handler = (ev: MouseEvent) => {
       const t = (ev.target as SVGElement).closest('polygon.el') as SVGElement | null
-      if (t) setSelected(Number(t.dataset.id))
+      if (!t) return
+      const g = t.dataset.group ?? ''
+      setSelected(Number(t.dataset.id))
+      setSelGroup((cur) => (cur === g ? '' : g))
     }
     root.addEventListener('click', handler)
     return () => root.removeEventListener('click', handler)
@@ -63,8 +70,11 @@ export default function Elements() {
     const root = svgRef.current
     if (!root) return
     root.querySelectorAll('polygon.el.selected').forEach((n) => n.classList.remove('selected'))
-    if (selected !== null) root.querySelector(`polygon.el[data-id="${selected}"]`)?.classList.add('selected')
-  }, [selected, svg])
+    root.classList.toggle('has-sel', !!selGroup)
+    if (!selGroup) return
+    const esc = selGroup.replace(/["\\]/g, '\\$&')
+    root.querySelectorAll(`polygon.el[data-group="${esc}"]`).forEach((n) => n.classList.add('selected'))
+  }, [selGroup, svg])
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true); setError('')
@@ -121,26 +131,25 @@ export default function Elements() {
   const extras = (drawing.disciplines ?? []) as Discipline[]
   const layerTypes = layerTypeLabels(discipline, extras)
   const isElec = discipline === 'electrical'
-  const filtered = elements.filter((e) => !filter || e.etype === filter)
+  // Grup anahtarı ve etiketi sunucudan gelir (quantity/grouping.py); önizlemedeki data-group ile birebir aynı
+  // olmak zorunda, yoksa tabloya tıklayınca çizimde başka şey seçilir.
+  const keyOf = (e: Element) => e.group ?? `${e.etype}|`
+  const sectionOf = (e: Element) => e.section ?? (e.subtype || '')
+  const filtered = elements.filter((e) => (groupFilter ? keyOf(e) === groupFilter : !filter || e.etype === filter))
   const shown = filtered.slice(0, limit)
-  // aynı tip + aynı kesit / malzeme: tek satır özet (98 kiriş 30x60 -> 1 satır, toplam uzunluk)
-  const sectionOf = (e: Element) => {
-    const cm = (v: number | null | undefined) => (v ? Math.round(v * 100) : null)
-    if (e.etype === 'column' || e.etype === 'beam' || e.etype === 'door' || e.etype === 'window') return cm(e.b) && cm(e.h) ? `${cm(e.b)}x${cm(e.h)}` : (e.subtype ?? '')
-    if (e.etype === 'shear_wall' || e.etype === 'wall' || e.etype === 'tray') return [cm(e.b) ? `${cm(e.b)} cm` : '', e.subtype ?? ''].filter(Boolean).join(' ')
-    if (e.etype === 'slab' || e.etype === 'foundation') return cm(e.thickness) ? `${cm(e.thickness)} cm` : (e.subtype ?? '')
-    return e.subtype ?? e.name ?? ''
-  }
-  const groupsMap = new Map<string, { etype: string; section: string; count: number; length: number; area: number; excluded: number }>()
+  // aynı tip + aynı kesit: tek satır (185 kolon yerine "42 adet 100/100"); parts = çizimdeki parça sayısı
+  const groupsMap = new Map<string, { key: string; etype: string; section: string; count: number; parts: number; length: number; area: number; excluded: number }>()
   for (const e of elements) {
-    const sec = sectionOf(e)
-    const key = `${e.etype}|${sec}`
-    const g = groupsMap.get(key) ?? { etype: e.etype, section: sec, count: 0, length: 0, area: 0, excluded: 0 }
-    if (e.included) { g.count += e.count; g.length += (e.length || 0) * e.count; g.area += (e.area || 0) * e.count } else g.excluded += e.count
+    const key = keyOf(e)
+    const g = groupsMap.get(key) ?? { key, etype: e.etype, section: sectionOf(e), count: 0, parts: 0, length: 0, area: 0, excluded: 0 }
+    if (e.included) { g.count += e.count; g.parts += 1; g.length += (e.length || 0) * e.count; g.area += (e.area || 0) * e.count } else g.excluded += e.count
     groupsMap.set(key, g)
   }
   const groups = Array.from(groupsMap.values()).sort((a, b) => ETYPES.indexOf(a.etype) - ETYPES.indexOf(b.etype) || b.count - a.count)
   const counts = ETYPES.map((t) => [t, elements.filter((e) => e.etype === t).length] as const)
+  const selInfo = groups.find((g) => g.key === selGroup)
+  const pickGroup = (key: string) => { setSelGroup(selGroup === key ? '' : key); setGroupFilter(''); setLimit(60) }
+  const openGroupList = (key: string) => { setGroupFilter(key); setFilter(''); setSelGroup(key); setShowList(true); setLimit(60) }
   const subtypeText = (el: Element) => (el.subtype ? (SUBTYPE_LABELS[el.subtype] ?? el.subtype) : '')
   const mt = manual.etype as EType
   // pafta metrajı: tür toplamı + kalemler; tür sırası keşif listesindeki gibi
@@ -148,7 +157,7 @@ export default function Elements() {
   const etypeOfItem = (kind: string, group: string) => KIND_ETYPE[kind] ?? (['beton', 'kalip', 'demir'].includes(kind) ? group.split(':')[0] : kind)
   const boqKinds = (boq?.kind_totals ?? []).map((t) => ({ ...t, rows: (boq?.items ?? []).filter((i) => i.kind === t.kind && i.quantity > 0) })).filter((t) => t.rows.length > 0)
   const qty = (v: number, unit: string) => fmt(v, unit === 'adet' || unit === 'kg' ? 0 : 2)
-  const pickType = (t: string) => { if (ETYPES.includes(t)) { setFilter(t as EType); setShowList(true) } }
+  const pickType = (t: string) => { if (ETYPES.includes(t)) { setFilter(t as EType); setGroupFilter(''); setSelGroup(''); setShowList(true) } }
 
   return (
     <>
@@ -211,11 +220,50 @@ export default function Elements() {
       <div className="grid2 align-top">
         <div className="panel sticky-panel">
           <h3>Plan önizleme</h3>
-          <div className="legend">{ETYPES.map((t) => <span key={t}><i style={{ background: colorOf(t) }} />{labelOf(t)}</span>)}<span className="muted">— tıklayınca tabloda seçilir</span></div>
+          <div className="legend">
+            {ETYPES.map((t) => <span key={t}><i style={{ background: colorOf(t) }} />{labelOf(t)}</span>)}
+            <span className="muted">— tıklayınca aynı kesitteki elemanların hepsi işaretlenir</span>
+          </div>
           <div className="svg-wrap" ref={svgRef} dangerouslySetInnerHTML={{ __html: svg }} />
+          <p className="muted hint" style={{ marginBottom: 0 }}>
+            {selInfo
+              ? <><b>{labelOf(selInfo.etype)} {selInfo.section}</b> — {selInfo.count} adet{selInfo.parts !== selInfo.count ? `, planda ${selInfo.parts} parça` : ''}.
+                {' '}<button className="secondary small" onClick={() => openGroupList(selInfo.key)}>Bu grubun listesini aç</button>
+                {' '}<button className="secondary small" onClick={() => { setSelGroup(''); setGroupFilter('') }}>Seçimi bırak</button></>
+              : 'Bir eleman tipine tıklayın; o kesitteki bütün elemanlar birlikte seçilir, yandaki özette satırı işaretlenir.'}
+          </p>
         </div>
         <div className="panel">
-          <h3>{isMapped ? 'Katman → katalog kalemi eşleme' : isStd ? 'Katmanlar (KSF standardı)' : 'Katman eşleme'}</h3>
+          <h3>Eleman özeti <span className="muted" style={{ fontWeight: 400 }}>· aynı tip ve kesitteki elemanlar tek satır</span></h3>
+          {groups.length === 0 ? <p className="muted">Bu paftada eleman bulunamadı.</p> : (
+            <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
+            <table className="table-compact">
+              <thead><tr><th>Tip</th><th>Kesit / ölçü</th><th className="num">Adet</th><th className="num">Uzunluk (m)</th><th className="num">Alan (m²)</th><th className="num">Metraj dışı</th></tr></thead>
+              <tbody>
+                {groups.map((g) => (
+                  <tr key={g.key} className={selGroup === g.key ? 'selected' : ''} style={{ cursor: 'pointer' }}
+                    onClick={() => pickGroup(g.key)} title="Planda işaretle">
+                    <td><span className="badge" style={{ background: colorOf(g.etype) }}>{labelOf(g.etype)}</span></td>
+                    <td><b>{g.section || '-'}</b>{g.parts > g.count && <span className="muted"> · planda {g.parts} parça</span>}</td>
+                    <td className="num"><b>{g.count}</b></td>
+                    <td className="num">{g.length ? fmt(g.length, 1) : '-'}</td>
+                    <td className="num">{g.area ? fmt(g.area, 1) : '-'}</td>
+                    <td className="num muted">{g.excluded || ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+          )}
+          <p className="muted hint" style={{ marginBottom: 0 }}>
+            Satıra tıklayınca grup planda işaretlenir. Tek tek düzeltme / silme için satırın "listesini aç" düğmesini ya da aşağıdaki eleman listesini kullanın.
+          </p>
+        </div>
+      </div>
+
+      <details className="section" open={isMapped}>
+        <summary>{isMapped ? 'Katman → katalog kalemi eşleme' : isStd ? 'Katmanlar (KSF standardı)' : 'Katman eşleme'} <span className="muted">· hangi katman hangi elemanı çiziyor</span></summary>
+        <div className="panel">
           {isMapped ? (
             <p className="muted">Her katmanı ölçülecek bir katalog kalemine ve ölçüm kuralına atayın (kapalı çokgen / tarama → m², çizgi → m, blok → adet).
               Katman adından üretilen öneriler <b>öneri</b> düğmesiyle tek tıkla uygulanır. Eşlenmeyen katman metraja girmez. <Link to="/standard">Katalog</Link></p>
@@ -284,40 +332,20 @@ export default function Elements() {
             </table>
           </div>
         </div>
-      </div>
-
-      {groups.length > 0 && (
-        <details className="section">
-          <summary>Eleman özeti <span className="muted">· aynı tip ve kesitteki elemanlar tek satır: adet, uzunluk, alan</span></summary>
-          <div className="panel">
-          <table className="table-compact">
-            <thead><tr><th>Tip</th><th>Kesit / malzeme / ölçü</th><th className="num">Adet</th><th className="num">Toplam uzunluk (m)</th><th className="num">Toplam alan (m²)</th><th className="num">Metraj dışı</th></tr></thead>
-            <tbody>
-              {groups.map((g) => (
-                <tr key={`${g.etype}|${g.section}`} style={{ cursor: 'pointer' }} onClick={() => { setFilter(g.etype as EType); setShowList(true) }} title="Bu tipin listesini aç">
-                  <td><span className="badge" style={{ background: colorOf(g.etype) }}>{labelOf(g.etype)}</span></td>
-                  <td><b>{g.section || '-'}</b></td>
-                  <td className="num"><b>{g.count}</b></td>
-                  <td className="num">{g.length ? fmt(g.length, 1) : '-'}</td>
-                  <td className="num">{g.area ? fmt(g.area, 1) : '-'}</td>
-                  <td className="num muted">{g.excluded || ''}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="muted hint" style={{ marginBottom: 0 }}>Satıra tıklayınca aşağıda o tipin eleman listesi açılır; tek tek düzeltme ve silme orada.</p>
-          </div>
-        </details>
-      )}
+      </details>
 
       <div className="panel">
         <div className="row between sticky-bar">
           <h3 style={{ margin: 0 }}>Eleman listesi <span className="count-pill">{filtered.length}</span>
+            {groupFilter && <span className="muted" style={{ fontWeight: 400, marginLeft: 8 }}>
+              yalnız {labelOf(groupFilter.split('|')[0])} {groupFilter.split('|')[1]}
+              {' '}<button className="secondary small" onClick={() => setGroupFilter('')}>filtreyi kaldır</button>
+            </span>}
             <button className="secondary small" style={{ marginLeft: 10 }} onClick={() => setShowList(!showList)}>{showList ? 'Listeyi gizle' : 'Listeyi göster'}</button>
           </h3>
           <div className="chips">
-            <button className={`chip-btn${filter === '' ? ' on' : ''}`} onClick={() => { setFilter(''); setLimit(60) }}>Tümü ({elements.length})</button>
-            {counts.map(([t, n]) => <button key={t} className={`chip-btn${filter === t ? ' on' : ''}`} onClick={() => { setFilter(t as EType); setLimit(60) }}><i className="dot" style={{ background: colorOf(t) }} />{labelOf(t)} ({n})</button>)}
+            <button className={`chip-btn${filter === '' && !groupFilter ? ' on' : ''}`} onClick={() => { setFilter(''); setGroupFilter(''); setLimit(60) }}>Tümü ({elements.length})</button>
+            {counts.map(([t, n]) => <button key={t} className={`chip-btn${filter === t && !groupFilter ? ' on' : ''}`} onClick={() => { setFilter(t as EType); setGroupFilter(''); setLimit(60) }}><i className="dot" style={{ background: colorOf(t) }} />{labelOf(t)} ({n})</button>)}
           </div>
         </div>
         <p className="muted hint">

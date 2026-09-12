@@ -27,6 +27,9 @@ from statistics import median
 import ezdxf
 import numpy as np
 
+from .schedules import parse_schedule_text
+from .titleblock import TitleBlock, is_titleblock_layer, label_points, read_texts
+
 # Pafta başlığı sayılan yazılar
 TITLE_RE = re.compile(r"PLAN|KES[İI]T|DETAY|APL[İI]KASYON|G[ÖO]R[ÜU]N[ÜU]Ş|Ç[İI]Z[İI]M|CIZIM", re.IGNORECASE)
 # "A-A KESİTİ", "K1-K1 KESITI": paftanın **içindeki** kesit işareti; pafta başlığı değildir. Kiriş detay
@@ -37,8 +40,26 @@ CODEPAGES = {"ANSI_1254": "cp1254", "ANSI_1252": "cp1252", "ANSI_1250": "cp1250"
 BIG_FILE_BYTES = 40 * 1024 * 1024
 # Pafta tespiti değiştikçe artar: eski .sheets.json önbellekleri yok sayılır (yoksa kullanıcı eski, bozuk
 # pafta listesini görmeye devam eder).
-SCAN_VERSION = 2
+SCAN_VERSION = 4
 MIN_SHEET_ENTITIES = 5
+# "Boş çerçeve": başlığı olduğu için listeye giren ama ölçülecek hiçbir şey taşımayan kutu — ruhsat antedinin
+# çerçevesi, şablondan kalmış boş pafta ("VAZİYET PLANI" yazan 11 nesnelik kutu). Eşik **göreli**: aynı
+# dosyadaki paftaların medyan geometrisinin bu kadarının altında kalmalı. Mutlak eşik olsaydı küçük tek katlı
+# bir projenin gerçek paftaları da boş sayılırdı.
+BOS_SHARE = 0.05
+BOS_MAX_ENTITIES = 40   # göreli eşik geçse de bu kadar nesne taşıyan kutu boş sayılmaz
+
+# "Cetvel": planın yanındaki ürün / poz listesi ya da lejant. Geometrisi yoktur (boş çerçeve gibi görünür) ama
+# **yazıları veridir**: "Poz: EMP1  82 adet", "LEJANT ▬ 20 cm tuğla". Boş sayılıp elenirse o bilgi de kaybolur —
+# B2 blokta doğrama cetveli 14 poz / 170 adet taşıyor. Bu yüzden cetvel, boş çerçeveden önce gelir: listeye
+# girer ve okunur, yalnız "geometrisi ölçülmez" diye işaretlenir.
+CETVEL_RE = re.compile(r"LEJAN[TD]|G[ÖO]STER[İI]M|SEMBOL|MAHAL L[İI]STES[İI]|"
+                       r"(?:L[İI]STES[İI]|TABLOSU|CETVEL[İI]?|[ÇC][İI]ZELGES[İI])\b", re.IGNORECASE)
+CETVEL_MIN_ROWS = 3     # bu kadar tanınan satır / başlık görülürse kutu cetveldir
+# Bir kutuyu **antet** (proje bilgi tablosu) saymak için içinde bulunması gereken tanınmış etiket sayısı.
+# Katman adına bakılmaz: pafta çerçevesi de çoğu projede "ANTET" katmanında çizilir, o yüzden katman adı
+# antet kanıtı değildir. Kanıt, kutunun içindeki "TEMEL TİPİ / MALZEME / KAT ADEDİ" gibi etiketlerdir.
+ANTET_MIN_LABELS = 4
 # Başlıksız bir kutu ancak paftaların ortalamasının bu kadarını taşıyorsa gerçek paftadır; altındakiler
 # "sadece yazı olan pafta", "üç çizgilik artık" gibi seçilebilir çöp satırlarıdır.
 JUNK_SHARE = 0.02
@@ -84,17 +105,20 @@ class Sheet:
     source: str = "frame"     # frame | cluster
     titles: list[str] = field(default_factory=list)   # paftadaki diğer başlık adayları (büyükten küçüğe)
     layers: dict[str, int] = field(default_factory=dict)   # paftadaki katmanlar -> nesne sayısı (en kalabalık 40)
+    # İçerik türü: "plan" ölçülecek çizim; "antet" proje bilgi tablosu; "bos" başlığı olan ama geometrisi
+    # olmayan çerçeve. Yalnız "plan" metraja girer, ötekiler listede işaretsiz ve etiketli gelir.
+    kind: str = "plan"
 
     def to_dict(self) -> dict:
         return {"index": self.index, "title": self.title, "bbox": [round(v, 3) for v in self.bbox],
                 "entity_count": self.entity_count, "text_count": self.text_count, "titled": self.titled,
-                "source": self.source, "titles": list(self.titles), "layers": dict(self.layers)}
+                "source": self.source, "titles": list(self.titles), "layers": dict(self.layers), "kind": self.kind}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Sheet":
         return cls(int(d["index"]), d["title"], tuple(d["bbox"]), int(d["entity_count"]),
                    int(d.get("text_count", 0)), bool(d.get("titled", True)), d.get("source", "frame"),
-                   list(d.get("titles", [])), dict(d.get("layers", {})))
+                   list(d.get("titles", [])), dict(d.get("layers", {})), d.get("kind", "plan"))
 
 
 @dataclass
@@ -110,12 +134,15 @@ class SheetScan:
     text_height: float = 0.0            # medyan yazı yüksekliği (çizim birimi)
     dropped: int = 0                    # pafta sayılmayıp listeden çıkarılan artık küme sayısı
     strays: int = 0                     # pafta düzeninin dışına kaçmış, sınır kutusunu şişiren nesne sayısı
+    # Ruhsat antedinden okunanlar (beton / donatı sınıfı, temel tipi, kat adedi...). Antet pafta değildir ama
+    # taşıdığı veri projenin elle girilen parametrelerinin önerisi olur.
+    titleblock: TitleBlock = field(default_factory=TitleBlock)
 
     @property
     def multi_sheet(self) -> bool:
-        """Pafta seçimi gerektirir mi: en az iki **başlıklı** pafta. Başlıksız kümeler (plan + görünüş + notlar yan yana
-        tek pafta) bölünmez; tek çizim olarak alınır."""
-        return sum(1 for s in self.sheets if s.titled) >= 2
+        """Pafta seçimi gerektirir mi: en az iki **başlıklı plan**. Antet ve boş çerçeve sayılmaz; başlıksız
+        kümeler (plan + görünüş + notlar yan yana tek pafta) bölünmez, tek çizim olarak alınır."""
+        return sum(1 for s in self.sheets if s.titled and s.kind == "plan") >= 2
 
     @property
     def unit(self) -> str | None:
@@ -138,7 +165,7 @@ class SheetScan:
                 "extent": list(self.extent) if self.extent else None, "sheets": [s.to_dict() for s in self.sheets],
                 "titles": list(self.titles), "layers": dict(self.layers),
                 "suggested_unit": self.suggested_unit, "text_height": self.text_height,
-                "dropped": self.dropped, "strays": self.strays}
+                "dropped": self.dropped, "strays": self.strays, "titleblock": self.titleblock.to_dict()}
 
     @classmethod
     def from_dict(cls, d: dict) -> "SheetScan":
@@ -146,7 +173,8 @@ class SheetScan:
                    tuple(d["extent"]) if d.get("extent") else None, [Sheet.from_dict(s) for s in d.get("sheets", [])],
                    list(d.get("titles", [])), dict(d.get("layers", {})),
                    d.get("suggested_unit") or None, float(d.get("text_height", 0.0) or 0.0),
-                   int(d.get("dropped", 0) or 0), int(d.get("strays", 0) or 0))
+                   int(d.get("dropped", 0) or 0), int(d.get("strays", 0) or 0),
+                   TitleBlock.from_dict(d.get("titleblock")))
 
     def cache_path(self) -> Path:
         return _cache_path(self.path)
@@ -841,9 +869,37 @@ def segmentation_score(sheets: list[Sheet]) -> float:
     return titled - 0.3 * blank - 2.0 * over
 
 
-def finalize_sheets(sheets: list[Sheet]) -> tuple[list[Sheet], int]:
+def classify_sheets(sheets: list[Sheet], antet_pts: list[tuple[float, float]] | None = None,
+                    cetvel_pts: list[tuple[float, float]] | None = None) -> None:
+    """Her paftanın içerik türünü belirler: "plan" | "antet" | "bos" (yerinde yazar).
+
+    Ruhsat dosyasındaki her çerçeve ölçülecek çizim değildir. Proje bilgi tablosu (antet) etiket–değer
+    listesidir: başlığı vardır, çerçevesi vardır, metraja girecek geometrisi yoktur. Boş çerçeveler de öyle
+    ("VAZİYET PLANI" yazan 11 nesnelik şablon kutusu). Plan sanılıp analiz edilirlerse hem kullanıcıyı
+    yanıltır hem sahte metraj üretirler."""
+    geo = [sum(sh.layers.values()) for sh in sheets]
+    ref = median(geo) if geo else 0.0
+    pts = antet_pts or []
+    for sh, n in zip(sheets, geo):
+        x0, y0, x1, y1 = sh.bbox
+        labels = sum(1 for x, y in pts if x0 <= x <= x1 and y0 <= y <= y1)
+        bos = ref > 0 and n < BOS_SHARE * ref and n < BOS_MAX_ENTITIES
+        rows = sum(1 for x, y in (cetvel_pts or []) if x0 <= x <= x1 and y0 <= y <= y1)
+        if labels >= ANTET_MIN_LABELS and (ref <= 0 or n < ref):
+            sh.kind = "antet"
+        elif bos and rows >= CETVEL_MIN_ROWS:
+            sh.kind = "cetvel"        # geometrisi yok ama yazıları veri: poz listesi, lejant
+        elif bos:
+            sh.kind = "bos"
+        else:
+            sh.kind = "plan"
+
+
+def finalize_sheets(sheets: list[Sheet], antet_pts: list[tuple[float, float]] | None = None,
+                    cetvel_pts: list[tuple[float, float]] | None = None) -> tuple[list[Sheet], int]:
     """Artıkları ayıklar, sıra numarasını verir, başlıksız paftaları içeriğiyle adlandırır."""
     sheets, dropped = prune_sheets(sheets)
+    classify_sheets(sheets, antet_pts, cetvel_pts)
     for i, sh in enumerate(sheets):
         sh.index = i
         if not sh.titled:
@@ -928,6 +984,8 @@ def scan_sheets(path: str | Path) -> SheetScan:
     block_texts: list[tuple[float, float, float, str]] = []      # antet bloğu içinden gelen başlıklar (yedek)
     texts: list[tuple[float, float, float, str]] = []
     other_texts: list[tuple[float, float, float, str]] = []   # başlık deseni geçmeyen yazılar (başlık satırı tamamlama)
+    antet_texts: list[tuple[float, float, float, str, str]] = []   # antet katmanlarındaki yazılar (x, y, h, katman, metin)
+    cetvel_texts: list[tuple[float, float]] = []   # poz / lejant satırı gibi okunan yazıların konumu
     layer_ids = array("i")
     is_text = array("b")                  # kümelenen nesne yazı mı (katman sayımı yalnız geometriyi sayar)
     layer_names: list[str] = []
@@ -985,6 +1043,13 @@ def scan_sheets(path: str | Path) -> SheetScan:
                     heights.append(h)
                     if len(txt) <= 120:
                         (texts if TITLE_RE.search(txt) else other_texts).append((ent["xs"][0], ent["ys"][0], h, txt))
+                if txt and is_titleblock_layer(lname):
+                    # antet yazıları: pafta bölmeye katılmaz, ayrıca okunur (beton sınıfı, temel tipi...)
+                    antet_texts.append((ent["xs"][0], ent["ys"][0], h, lname, txt))
+                if txt and (CETVEL_RE.search(txt) or parse_schedule_text(txt)):
+                    cetvel_texts.append((ent["xs"][0], ent["ys"][0]))
+    antet_pts = label_points(antet_texts)
+    cetvel_pts = cetvel_texts
     npx = np.frombuffer(xs, dtype="d").copy() if len(xs) else np.zeros(0)
     npy = np.frombuffer(ys, dtype="d").copy() if len(ys) else np.zeros(0)
     if len(npx) == 0:
@@ -1099,7 +1164,7 @@ def scan_sheets(path: str | Path) -> SheetScan:
                 inside = pick_title(inside)
                 one.title, one.titled = inside[0][3], True
                 one.titles = [t[3] for t in inside[1:] if t[3] != inside[0][3]][:6]
-        return finalize_sheets(sh)
+        return finalize_sheets(sh, antet_pts, cetvel_pts)
 
     # Üç bölümleme birden denenir — çerçeveler, nesne kümeleri, başlık bantları — ve çizimi en iyi açıklayan
     # seçilir: başlığı okunan pafta iyi, "başlıksız artık" kötü. Tek yönteme bağlı kalınca bir dosyada doğru
@@ -1125,7 +1190,7 @@ def scan_sheets(path: str | Path) -> SheetScan:
         if len(top) >= 8:
             break
     return SheetScan(str(path), insunits, count, extent_box, sheets, top, _top_layers(npl[geom], layer_names),
-                     suggested_unit, float(med), dropped, strays)
+                     suggested_unit, float(med), dropped, strays, read_texts(antet_texts))
 
 
 # ---------- Kırpma ----------
@@ -1172,11 +1237,6 @@ class _Target:
                 if y0 < oy1 <= cy0:      # komşu altta
                     y0 = oy1
         self.box = (x0, y0, x1, y1)
-
-
-def crop_sheet(src: str | Path, bbox: Bbox, dest: str | Path, margin_ratio: float = 0.02) -> int:
-    """bbox içindeki nesneleri yeni bir DXF'e yazar; yazılan nesne sayısını döndürür."""
-    return crop_sheets(src, [(bbox, dest)], margin_ratio)[0]
 
 
 BLOCK_PASS_MAX_BYTES = 500 * 1024 * 1024   # blok / tarama içeriği için ezdxf ile ikinci geçiş yapılacak en büyük dosya

@@ -1,0 +1,223 @@
+[
+ {
+  "korpus": "b_blok",
+  "proje": "B Blok ruhsat projesi (REV01)",
+  "guven": "aktarim",
+  "saniye": 37.2,
+  "skor": {
+   "kolon_perde_beton_m3": {
+    "ortalama_mutlak_yuzde": 3.0,
+    "en_kotu_yuzde": 4.71,
+    "kat_sayisi": 3
+   },
+   "kolon_perde_kalip_m2": {
+    "ortalama_mutlak_yuzde": 1.27,
+    "en_kotu_yuzde": 2.13,
+    "kat_sayisi": 3
+   },
+   "_genel": {
+    "ortalama_mutlak_yuzde": 2.14,
+    "en_kotu_yuzde": 4.71,
+    "kat_sayisi": 6
+   }
+  },
+  "katlar": [
+   {
+    "kat": "bodrum",
+    "kat_yuksekligi": 3.33,
+    "doseme_kalinligi": 0.15,
+    "kiris_yuksekligi": 0.5,
+    "net_doseme": true,
+    "elemanlar": {
+     "column": 387,
+     "shear_wall": 147,
+     "beam": 910,
+     "slab": 566,
+     "parapet": 72
+    },
+    "olculen": {
+     "kolon_perde_beton_m3": 1499.98,
+     "kolon_perde_kalip_m2": 6380.66,
+     "kiris_beton_m3": 2797.7,
+     "kiris_kalip_m2": 9283.6,
+     "doseme_beton_m3": 1176.43,
+     "doseme_kalip_m2": 7842.86,
+     "temel_beton_m3": 0.0,
+     "beton_m3": 5479.45,
+     "kalip_m2": 23560.53
+    },
+    "farklar": [
+     {
+      "olcu": "kolon_perde_beton_m3",
+      "birim": "m³",
+      "bizim": 1499.98,
+      "referans": 1443.68,
+      "fark": 56.3,
+      "yuzde": 3.9
+     },
+     {
+      "olcu": "kolon_perde_kalip_m2",
+      "birim": "m²",
+      "bizim": 6380.66,
+      "referans": 6367.84,
+      "fark": 12.82,
+      "yuzde": 0.2
+     }
+    ],
+    "teshis": [
+     "Kalıp eşleşiyor (%+0.2) ama beton sapıyor (%+3.9): geometri doğru, suçlu **beton yüksekliği**. Referansla eşleşen beton yüksekliği Hk 3.21 m; bu tam olarak **H − d (brüt döşeme kabulü)** = 3.18 m. Biz 3.33 m kullandık. Fark geometriden değil **kabulden** geliyor — referans da müellifin kabulüdür, hangisinin doğru olduğunu tek başına söylemez; aynı hipotez birden çok katta ve projede çıkmadan kural değiştirilmemeli.",
+     "Not: birim doğrulanmadı (crop_bodrum01a.dxf, 'cm' kullanıldı); miktarlar tutuyorsa birim de doğrudur.",
+     "Not: birim doğrulanmadı (crop_bodrum01b.dxf, 'cm' kullanıldı); miktarlar tutuyorsa birim de doğrudur."
+    ],
+    "paftalar": [
+     {
+      "dosya": "/Users/huseyinefkanalp/Desktop/kesifProjesicld/samples/b_blok/crop_bodrum01a.dxf",
+      "birim": "cm",
+      "birim_dogrulandi": false,
+      "elemanlar": {
+       "column": 195,
+       "shear_wall": 86,
+       "beam": 409,
+       "slab": 228,
+       "parapet": 22
+      },
+      "hata": ""
+     },
+     {
+      "dosya": "/Users/huseyinefkanalp/Desktop/kesifProjesicld/samples/b_blok/crop_bodrum01b.dxf",
+      "birim": "cm",
+      "birim_dogrulandi": false,
+      "elemanlar": {
+       "column": 192,
+       "shear_wall": 61,
+       "beam": 501,
+       "slab": 338,
+       "parapet": 50
+      },
+      "hata": ""
+     }
+    ]
+   },
+   {
+    "kat": "zemin",
+    "kat_yuksekligi": 3.8,
+    "doseme_kalinligi": 0.15,
+    "kiris_yuksekligi": 0.5,
+    "net_doseme": true,
+    "elemanlar": {
+     "column": 182,
+     "shear_wall": 51,
+     "beam": 397,
+     "slab": 200
+    },
+    "olculen": {
+     "kolon_perde_beton_m3": 728.4,
+     "kolon_perde_kalip_m2": 2932.57,
+     "kiris_beton_m3": 987.47,
+     "kiris_kalip_m2": 3544.17,
+     "doseme_beton_m3": 455.0,
+     "doseme_kalip_m2": 2980.91,
+     "temel_beton_m3": 0.0,
+     "beton_m3": 2170.87,
+     "kalip_m2": 9457.64
+    },
+    "farklar": [
+     {
+      "olcu": "kolon_perde_beton_m3",
+      "birim": "m³",
+      "bizim": 728.4,
+      "referans": 731.31,
+      "fark": -2.91,
+      "yuzde": -0.4
+     },
+     {
+      "olcu": "kolon_perde_kalip_m2",
+      "birim": "m²",
+      "bizim": 2932.57,
+      "referans": 2996.27,
+      "fark": -63.7,
+      "yuzde": -2.13
+     }
+    ],
+    "teshis": [
+     "Beton eşleşiyor (%-0.4) ama kalıp sapıyor (%-2.1): geometri doğru, suçlu **kalıp yüksekliği**. Referansla eşleşen kalıp yüksekliği Hf 3.37 m (biz 3.30 m kullandık, fark -0.07 m). Formüldeki adayların hiçbirine denk düşmüyor (H=3.80, H − d=3.65, H − kiriş=3.30): suçlu yükseklik değil, eleman tespiti olabilir.",
+     "Not: birim doğrulanmadı (crop_zemin.dxf, 'cm' kullanıldı); miktarlar tutuyorsa birim de doğrudur."
+    ],
+    "paftalar": [
+     {
+      "dosya": "/Users/huseyinefkanalp/Desktop/kesifProjesicld/samples/b_blok/crop_zemin.dxf",
+      "birim": "cm",
+      "birim_dogrulandi": false,
+      "elemanlar": {
+       "column": 182,
+       "shear_wall": 51,
+       "beam": 397,
+       "slab": 200
+      },
+      "hata": ""
+     }
+    ]
+   },
+   {
+    "kat": "birinci kat",
+    "kat_yuksekligi": 3.7,
+    "doseme_kalinligi": 0.15,
+    "kiris_yuksekligi": 0.5,
+    "net_doseme": true,
+    "elemanlar": {
+     "column": 182,
+     "shear_wall": 51,
+     "beam": 410,
+     "slab": 209
+    },
+    "olculen": {
+     "kolon_perde_beton_m3": 709.23,
+     "kolon_perde_kalip_m2": 2843.7,
+     "kiris_beton_m3": 1001.4,
+     "kiris_kalip_m2": 3650.82,
+     "doseme_beton_m3": 422.29,
+     "doseme_kalip_m2": 2812.36,
+     "temel_beton_m3": 0.0,
+     "beton_m3": 2132.92,
+     "kalip_m2": 9306.88
+    },
+    "farklar": [
+     {
+      "olcu": "kolon_perde_beton_m3",
+      "birim": "m³",
+      "bizim": 709.23,
+      "referans": 677.31,
+      "fark": 31.92,
+      "yuzde": 4.71
+     },
+     {
+      "olcu": "kolon_perde_kalip_m2",
+      "birim": "m²",
+      "bizim": 2843.7,
+      "referans": 2802.0,
+      "fark": 41.7,
+      "yuzde": 1.49
+     }
+    ],
+    "teshis": [
+     "Kalıp eşleşiyor (%+1.5) ama beton sapıyor (%+4.7): geometri doğru, suçlu **beton yüksekliği**. Referansla eşleşen beton yüksekliği Hk 3.53 m; bu tam olarak **H − d (brüt döşeme kabulü)** = 3.55 m. Biz 3.70 m kullandık. Fark geometriden değil **kabulden** geliyor — referans da müellifin kabulüdür, hangisinin doğru olduğunu tek başına söylemez; aynı hipotez birden çok katta ve projede çıkmadan kural değiştirilmemeli.",
+     "Not: birim doğrulanmadı (crop_kat1.dxf, 'cm' kullanıldı); miktarlar tutuyorsa birim de doğrudur."
+    ],
+    "paftalar": [
+     {
+      "dosya": "/Users/huseyinefkanalp/Desktop/kesifProjesicld/samples/b_blok/crop_kat1.dxf",
+      "birim": "cm",
+      "birim_dogrulandi": false,
+      "elemanlar": {
+       "column": 182,
+       "shear_wall": 51,
+       "beam": 410,
+       "slab": 209
+      },
+      "hata": ""
+     }
+    ]
+   }
+  ]
+ }
+]

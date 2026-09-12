@@ -77,7 +77,13 @@ def measure_layer(drawing: Drawing, layer: str, code: str, item, measure: str | 
                                             label_raw=e.text, meta=meta))
             n += 1
         if not n:
-            warnings.append(f"{layer}: etiket sayımı için yazı yok")
+            # Etiket kuralı yazı ister; katmanda yazı yoksa ama geometri varsa o geometri sessizce düşer.
+            # (B2 BLOK prekast paftasında FB_Prekast katmanı 37.462 nesne tutuyor, tek panel kodu yazısı yok.)
+            geo = sum(1 for e in ents if e.kind != "text")
+            warnings.append(f"{layer}: etiket sayımı için yazı yok" + (
+                f"; buna karşılık {geo:,} çizim nesnesi ölçülmeden kaldı — bu katman panel kodu yerine "
+                f"geometriyle çizilmişse Elemanlar sayfasında ölçüm kuralını adet / m / m² olarak değiştirin.".replace(",", ".")
+                if geo else ""))
         return elements, warnings
     for e in ents:
         if e.kind == "text":

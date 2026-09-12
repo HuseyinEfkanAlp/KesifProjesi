@@ -78,7 +78,10 @@ td input.wide { width: 110px; }
 .svg-wrap svg { width: 100%; height: auto; display: block; }
 .svg-wrap polygon.el { cursor: pointer; }
 .svg-wrap polygon.el:hover { fill-opacity: .6; }
-.svg-wrap polygon.el.selected { fill-opacity: .8; stroke: #000; }
+.svg-wrap polygon.el.selected { fill-opacity: .85; stroke: #000; }
+/* bir grup seçiliyken grup dışındaki parçalar soluklaşır: "temelde neden birden fazla yer tıklanıyor"
+   sorusunun cevabı görünür olsun — tıklanan kesitin bütün parçaları birlikte yanar */
+.svg-wrap.has-sel polygon.el:not(.selected) { fill-opacity: .12; stroke-opacity: .3; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
 .card .label { font-size: 12px; color: var(--muted); }
@@ -392,3 +395,34 @@ details.catalog-group table { border-radius: 0 0 var(--r-md) var(--r-md); }
 .totals-table td { padding: 4px 6px; border-bottom: 1px solid #eef1f6; }
 .totals-table tr:last-child td { border-bottom: 0; }
 tr.subtotal td { background: #f3f6fb; border-top: 1px solid #dfe5ee; font-size: 13px; }
+
+/* Demir paneli: "toplamda kaç ton, hangi çaptan kaç kilo" — metraj sayfasının ilk cevabı */
+.rebar-panel { border-left: 4px solid #b3453a; }
+.rebar-head { display: flex; gap: 36px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 14px; }
+.rebar-head .label { color: var(--muted); font-size: 13px; }
+.rebar-head button { margin-left: auto; align-self: center; }
+.rebar-big { font-size: 32px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.rebar-big span { font-size: 16px; font-weight: 500; color: var(--muted); }
+.rebar-table tr.total td { border-top: 2px solid var(--border); font-weight: 700; }
+
+/* Ana kalemler: her kalemin toplamı kart, tıklanınca dökümü açılır */
+.headline-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+/* <button> içindeki blokların satır satır dizilmesi için açık flex: buton kendi düzen bağlamını kurar,
+   display verilmezse çocuk div'ler yan yana akıp kartları taşırır. */
+.headline-card { display: flex; flex-direction: column; align-items: stretch; gap: 1px;
+  text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 12px 14px; cursor: pointer; min-width: 0; overflow-wrap: anywhere; }
+.headline-card:hover { background: var(--primary-soft); }
+.headline-card.on { border-color: var(--primary); background: var(--primary-soft); box-shadow: inset 0 -3px 0 var(--primary); }
+.headline-card .label { font-size: 13px; color: var(--muted); font-weight: 600; }
+.headline-card .value { font-size: 26px; font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.headline-card .value span { font-size: 14px; font-weight: 500; color: var(--muted); }
+.headline-card .split, .headline-card .est, .headline-card .hours { font-size: 12px; color: var(--muted); }
+.headline-card .est { color: #8a6d1f; }
+.headline-card .hours { margin-top: 4px; }
+
+/* Kontrol listesindeki tek tıkla düzeltme: metnin içinde bağlantı gibi durur, düğme gibi davranır */
+button.link { background: none; border: 0; color: var(--primary); padding: 0; min-height: 0; font: inherit;
+  font-weight: 600; text-decoration: underline; cursor: pointer; }
+button.link:hover { background: none; color: var(--primary-hover); }
+button.link:disabled { opacity: .5; text-decoration: none; }

@@ -32,9 +32,11 @@ def _autosize(ws) -> None:
 
 
 def build_workbook(project: dict, lines: list[QuantityLine], summary: dict, cost: dict,
-                   element_info: dict | None = None, boq: list[dict] | None = None) -> bytes:
+                   element_info: dict | None = None, boq: list[dict] | None = None, quality: dict | None = None,
+                   rebar: dict | None = None, headline: list | None = None) -> bytes:
     """element_info: element_id -> {"drawing": str, "layer": str, "b":..., "h":..., ...} (isteğe bağlı).
-    boq: keşif kalemleri (tüm disiplinler)."""
+    boq: keşif kalemleri (tüm disiplinler). rebar: çap bazında demir raporu (quantity/rebar_report).
+    headline: ana kalemler (quantity/headline)."""
     element_info = element_info or {}
     boq = boq or []
     wb = Workbook()
@@ -67,6 +69,28 @@ def build_workbook(project: dict, lines: list[QuantityLine], summary: dict, cost
             ws.append([t[0], t[1], t[2], round(t[3], 3), t[4]])
     _autosize(ws)
 
+    if quality:
+        ws["A3"] = "HESAP TASLAĞI — " + quality["label"] + "; Kontrol sayfasını inceleyin."
+        ws["A3"].font = Font(bold=True, color="9C2B1B")
+        review = wb.create_sheet("Kontrol", 0)
+        review.append(["HESAP TASLAĞI", quality["label"]])
+        review.append([quality["notice"]])
+        _header(review, 4, ["Önem", "Pafta", "Kontrol"])
+        for issue in quality["issues"]:
+            review.append(["Eksik" if issue["severity"] == "blocking" else "İncelenmeli",
+                           issue["drawing"] or "Proje", issue["message"]])
+        review.append([])
+        review.append(["PARAMETRE", "DEĞER", "KAYNAK"])
+        for assumption in quality["assumptions"]:
+            review.append([assumption["label"], assumption["value"],
+                           {"user": "Kullanıcı girişi", "drawing": "Kotlardan türetildi"}.get(assumption["source"], "Program varsayılanı")])
+        _autosize(review)
+        review.column_dimensions["C"].width = 100
+        for row in review:
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+        review.freeze_panes = "A5"
+
     # ---- Statik Metraj Özeti ----
     if summary.get("groups"):
         ws1 = wb.create_sheet("Statik Özet")
@@ -78,6 +102,81 @@ def build_workbook(project: dict, lines: list[QuantityLine], summary: dict, cost
         for c in ws1[ws1.max_row]:
             c.font = BOLD
         _autosize(ws1)
+
+    # ---- Ana kalemler (beton / kalıp / demir / duvar / sıva / boya) ----
+    # "Ne kadar, neyden, ne kadarı ölçüldü" — keşif listesinin 70+ satırı arasında kaybolmasın.
+    if headline:
+        wsh = wb.create_sheet("Ana Kalemler", 1)
+        wsh["A1"] = "Ana kalemler"
+        wsh["A1"].font = Font(bold=True, size=13)
+        _header(wsh, 3, ["Kalem", "Toplam", "Birim", "Ölçülen", "Oranla tahmin", "Fire",
+                         "Brüt (duvar)", "Düşülen boşluk", "Çizimde kesilmiş", "İşçilik (saat)"])
+        for h in headline:
+            wsh.append([h["label"], round(h["total"], 2), h["unit"], round(h["net"], 2),
+                        round(h.get("estimated") or 0, 2) or None, round(h.get("waste") or 0, 2) or None,
+                        round(h["gross"], 2) if h.get("gross") is not None else None,
+                        round(h["deducted"], 2) if h.get("deducted") is not None else None,
+                        round(h["already_net"], 2) if h.get("already_net") else None,
+                        round(h.get("labour_hours") or 0, 1) or None])
+        for h in headline:
+            wsh.append([])
+            wsh.append([f"{h['label']} dökümü"])
+            wsh[wsh.max_row][0].font = BOLD
+            if h["kind"] == "duvar":
+                _header(wsh, wsh.max_row + 1, ["Malzeme / kalınlık", f"Net ({h['unit']})", "Brüt", "Düşülen boşluk", "Çizimde kesilmiş"])
+                for r in h["rows"]:
+                    wsh.append([r["label"], round(r["quantity"], 2), r.get("gross_m2"),
+                                r.get("openings_m2") or None, r.get("already_net_m2") or None])
+            else:
+                _header(wsh, wsh.max_row + 1, ["Kalem", f"Miktar ({h['unit']})", "Adet"])
+                for r in h["rows"]:
+                    wsh.append([r["label"], round(r["quantity"], 2), round(r.get("count") or 0) or None])
+            for l in h.get("labour", []):
+                wsh.append([f"  işçilik: {l['label']}", round(l["hours"], 1), "saat"])
+            for e in h.get("extras", []):
+                wsh.append([f"  sarf: {e['label']}", round(e["quantity"], 2), e["unit"]])
+        _autosize(wsh)
+
+    # ---- Demir (çap bazında sipariş + işçilik) ----
+    # Sahada en çok sorulan sayı: "toplam kaç ton, hangi çaptan kaç kilo". Keşif sayfasında satırlar arasında
+    # kaybolmasın diye kendi sayfası var.
+    if rebar and rebar.get("rows"):
+        wsr = wb.create_sheet("Demir")
+        wsr["A1"] = "Demir siparişi ve işçiliği"
+        wsr["A1"].font = Font(bold=True, size=13)
+        tr = rebar["totals"]
+        wsr["A2"] = (f"Sipariş (fire dahil): {tr['order_kg'] / 1000:,.1f} ton   "
+                     f"Metraj: {tr['metraj_kg'] / 1000:,.1f} t   Oranla tahmin: {tr['ratio_kg'] / 1000:,.1f} t   "
+                     f"Fire: {tr['fire_kg'] / 1000:,.1f} t")
+        _header(wsr, 4, ["Çap", "Sipariş (kg)", "Sipariş (ton)", "Metraj (kg)", "Oranla (kg)", "Fire (kg)",
+                         "Uzunluk (m)", "Nerede", "Kaynak"])
+        for r in rebar["rows"]:
+            wsr.append([f"Ø{r['dia_mm']}", round(r["order_kg"], 1), round(r["order_kg"] / 1000, 3), round(r["metraj_kg"], 1),
+                        round(r["ratio_kg"], 1) or None, round(r["fire_kg"], 1) or None, round(r["length_m"], 1) or None,
+                        "; ".join(f"{k} {v / 1000:,.1f} t" for k, v in sorted(r["targets"].items(), key=lambda kv: -kv[1])),
+                        "; ".join(f"{k} {v / 1000:,.1f} t" for k, v in r["sources"].items())])
+        u = rebar.get("unsized")
+        if u:
+            wsr.append(["çapsız", round(u["metraj_kg"] + u["ratio_kg"] + u["fire_kg"], 1), None, round(u["metraj_kg"], 1),
+                        round(u["ratio_kg"], 1) or None, round(u["fire_kg"], 1) or None, None,
+                        "çizimde donatı yazısı yok, çapa bölünemedi", "; ".join(u["groups"])])
+        wsr.append(["TOPLAM", round(tr["order_kg"], 1), round(tr["order_kg"] / 1000, 3), round(tr["metraj_kg"], 1),
+                    round(tr["ratio_kg"], 1) or None, round(tr["fire_kg"], 1) or None])
+        for c in wsr[wsr.max_row]:
+            c.font = BOLD
+        wsr.append([])
+        _header(wsr, wsr.max_row + 1, ["Demir işçiliği", "Saat"])
+        for l in rebar.get("labour", []):
+            wsr.append([l["label"], round(l["hours"], 1)])
+        wsr.append(["TOPLAM", round(rebar.get("labour_hours", 0), 1)])
+        for c in wsr[wsr.max_row]:
+            c.font = BOLD
+        if rebar.get("extras"):
+            wsr.append([])
+            _header(wsr, wsr.max_row + 1, ["Demire bağlı sarf", "Miktar", "Birim"])
+            for e in rebar["extras"]:
+                wsr.append([e["label"], e["quantity"], e["unit"]])
+        _autosize(wsr)
 
     # ---- Kat (çizim) bazında ----
     if summary.get("by_drawing"):

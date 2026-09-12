@@ -1,8 +1,10 @@
+import QualitySummary from '../components/QualitySummary'
+import type { QualityReport } from '../types'
 import { Fragment, useEffect, useState } from 'react'
 import Loading from '../components/Loading'
 import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
-import { ETYPE_LABELS, SUBTYPE_LABELS, type Boq, type Project, type QuantityLine, type QuantitySummary } from '../types'
+import { ETYPE_LABELS, SUBTYPE_LABELS, type Boq, type HeadlineSection, type Project, type QuantityLine, type QuantitySummary } from '../types'
 import ProjectNav from './ProjectNav'
 import SystemsPanel from '../components/SystemsPanel'
 
@@ -47,7 +49,11 @@ export default function Quantities() {
   const [lines, setLines] = useState<QuantityLine[]>([])
   const [boq, setBoq] = useState<Boq | null>(null)
   const [rebarMix, setRebarMix] = useState<Record<string, { dia_mm: number; share: number }[]>>({})
+  const [headline, setHeadline] = useState<HeadlineSection[]>([])
+  // Ana kalemlerden hangisinin dökümü açık; ilk yüklemede en büyüğü (demir) açılır
+  const [openKind, setOpenKind] = useState('demir')
   const [error, setError] = useState('')
+  const [quality, setQuality] = useState<QualityReport | null>(null)
   const [showLines, setShowLines] = useState(false)
   // Keşif listesinde tür (beton, kalıp, demir…) önce toplamıyla görünür; kalem ayrıntısı katlanır.
   const [openKinds, setOpenKinds] = useState<Record<string, boolean>>({})
@@ -55,17 +61,19 @@ export default function Quantities() {
 
   useEffect(() => {
     Promise.all([Api.projects.get(pid), Api.quantities(pid)])
-      .then(([p, q]) => { setProject(p); setSummary(q.summary); setLines(q.lines); setBoq(q.boq); setRebarMix(q.rebar_mix ?? {}) })
+      .then(([p, q]) => { setProject(p); setSummary(q.summary); setLines(q.lines); setBoq(q.boq); setQuality(q.quality); setRebarMix(q.rebar_mix ?? {}); setHeadline(q.headline ?? []) })
       .catch((e) => setError(e.message))
   }, [pid, refresh])
 
   if (!project || !summary || !boq) return <Loading error={error} />
+  const open1 = headline.find((h) => h.kind === openKind) ?? null
   const hasStructural = summary.groups.length > 0
   const wallH = project.params?.wall_height
 
   return (
     <>
       <ProjectNav id={pid} name={project.name} />
+      <QualitySummary report={quality} projectId={pid} />
       {error && <div className="error">{error}</div>}
 
       {boq.items.length === 0 && (
@@ -75,6 +83,106 @@ export default function Quantities() {
           <Link className="btn" to={`/projects/${pid}`}>Plan yükle</Link>
         </div>
       )}
+      {headline.length > 0 && (
+        <div className="panel headline-panel">
+          <h3 style={{ marginTop: 0 }}>Ana kalemler <span className="muted" style={{ fontWeight: 400 }}>· ne kadar, neyden, ne kadarı ölçüldü</span></h3>
+          <div className="headline-cards">
+            {headline.map((h) => (
+              <button key={h.kind} className={`headline-card${openKind === h.kind ? ' on' : ''}`}
+                onClick={() => setOpenKind(openKind === h.kind ? '' : h.kind)}>
+                <div className="label">{h.label}</div>
+                <div className="value">{fmt(h.total, h.unit === 'kg' ? 0 : 1)} <span>{h.unit}</span></div>
+                <div className="split">
+                  {h.waste > 0 && <>ölçülen {fmt(h.net, h.unit === 'kg' ? 0 : 1)} + fire {fmt(h.waste, h.unit === 'kg' ? 0 : 1)}</>}
+                  {h.kind === 'duvar' && <>brüt {fmt(h.gross ?? 0, 1)} − düşülen {fmt(h.deducted ?? 0, 1)}</>}
+                  {h.waste === 0 && h.kind !== 'duvar' && <>tamamı ölçüldü</>}
+                </div>
+                {(h.estimated ?? 0) > 0 && <div className="est">bunun {fmt(h.estimated ?? 0, 0)} {h.unit}'ı oranla tahmin</div>}
+                {(h.already_net ?? 0) > 0 && <div className="est">boşluk çizimde kesilmiş: {fmt(h.already_net ?? 0, 1)} m²</div>}
+                <div className="hours">{fmt(h.labour_hours, 0)} saat işçilik</div>
+              </button>
+            ))}
+          </div>
+
+          {open1 && (
+            <div style={{ overflowX: 'auto', marginTop: 14 }}>
+              {open1.kind === 'demir' ? (
+                <table className="table-compact rebar-table">
+                  <thead><tr><th>Çap</th><th className="num">Sipariş (kg)</th><th className="num">ton</th>
+                    <th className="num">Ölçülen (kg)</th><th className="num">Oranla (kg)</th><th className="num">Fire (kg)</th>
+                    <th className="num">Uzunluk (m)</th><th>Nerede</th></tr></thead>
+                  <tbody>
+                    {open1.rows.map((r) => (
+                      <tr key={r.label}>
+                        <td><b>{r.label}</b></td>
+                        <td className="num"><b>{fmt(r.order_kg ?? r.quantity, 0)}</b></td>
+                        <td className="num"><b>{fmt((r.order_kg ?? r.quantity) / 1000, 1)}</b></td>
+                        <td className="num">{fmt(r.metraj_kg ?? 0, 0)}</td>
+                        <td className="num muted">{r.ratio_kg ? fmt(r.ratio_kg, 0) : '-'}</td>
+                        <td className="num muted">{r.fire_kg ? fmt(r.fire_kg, 0) : '-'}</td>
+                        <td className="num muted">{r.length_m ? fmt(r.length_m, 0) : '-'}</td>
+                        <td className="muted">{Object.entries(r.targets ?? {}).sort((a, b) => b[1] - a[1])
+                          .map(([k, v]) => `${k} ${fmt(v / 1000, 1)} t`).join(' · ') || '-'}</td>
+                      </tr>
+                    ))}
+                    {open1.unsized && (
+                      <tr><td><b>çapsız</b></td>
+                        <td className="num"><b>{fmt(open1.unsized.metraj_kg + open1.unsized.ratio_kg + open1.unsized.fire_kg, 0)}</b></td>
+                        <td className="num"></td><td className="num">{fmt(open1.unsized.metraj_kg, 0)}</td>
+                        <td className="num muted">{fmt(open1.unsized.ratio_kg, 0)}</td>
+                        <td className="num muted">{fmt(open1.unsized.fire_kg, 0)}</td><td className="num muted">-</td>
+                        <td className="muted">çapa bölünemedi: {open1.unsized.groups.join(', ')}</td></tr>
+                    )}
+                    <tr className="total"><td>TOPLAM</td><td className="num">{fmt(open1.total, 0)}</td>
+                      <td className="num">{fmt(open1.total / 1000, 1)}</td><td className="num">{fmt(open1.net - (open1.estimated ?? 0), 0)}</td>
+                      <td className="num">{fmt(open1.estimated ?? 0, 0)}</td><td className="num">{fmt(open1.waste, 0)}</td>
+                      <td className="num"></td><td></td></tr>
+                  </tbody>
+                </table>
+              ) : open1.kind === 'duvar' ? (
+                <table className="table-compact rebar-table">
+                  <thead><tr><th>Malzeme / kalınlık</th><th className="num">Net (m²)</th><th className="num">Brüt (m²)</th>
+                    <th className="num">Düşülen boşluk</th><th className="num">Çizimde kesilmiş</th><th></th></tr></thead>
+                  <tbody>
+                    {open1.rows.map((r) => (
+                      <tr key={r.label}>
+                        <td>{r.label}</td>
+                        <td className="num"><b>{fmt(r.quantity, 1)}</b></td>
+                        <td className="num">{fmt(r.gross_m2 ?? 0, 1)}</td>
+                        <td className="num muted">{r.openings_m2 ? fmt(r.openings_m2, 1) : '-'}</td>
+                        <td className="num muted">{r.already_net_m2 ? fmt(r.already_net_m2, 1) : '-'}</td>
+                        <td className="muted">{r.review ? '⚠ boşluk eşleşmesi kontrol edilmeli' : ''}</td>
+                      </tr>
+                    ))}
+                    <tr className="total"><td>TOPLAM</td><td className="num">{fmt(open1.net, 1)}</td>
+                      <td className="num">{fmt(open1.gross ?? 0, 1)}</td><td className="num">{fmt(open1.deducted ?? 0, 1)}</td>
+                      <td className="num">{fmt(open1.already_net ?? 0, 1)}</td><td></td></tr>
+                  </tbody>
+                </table>
+              ) : (
+                <table className="table-compact rebar-table">
+                  <thead><tr><th>Kalem</th><th className="num">Miktar ({open1.unit})</th><th className="num">Adet</th></tr></thead>
+                  <tbody>
+                    {open1.rows.map((r) => (
+                      <tr key={r.label}><td>{r.label}</td><td className="num"><b>{fmt(r.quantity, 1)}</b></td>
+                        <td className="num muted">{r.count ? fmt(r.count, 0) : ''}</td></tr>
+                    ))}
+                    {open1.waste > 0 && <tr><td className="muted">Fire</td><td className="num muted">{fmt(open1.waste, 1)}</td><td></td></tr>}
+                    <tr className="total"><td>TOPLAM</td><td className="num">{fmt(open1.total, 1)}</td><td></td></tr>
+                  </tbody>
+                </table>
+              )}
+              <p className="muted hint">
+                {open1.labour.length > 0 && <>İşçilik: {open1.labour.map((l) => `${l.label} ${fmt(l.hours, 0)} saat`).join(' · ')}. </>}
+                {open1.extras.length > 0 && <>Bağlı sarf: {open1.extras.map((e) => `${e.label} ${fmt(e.quantity, 0)} ${e.unit}`).join(' · ')}. </>}
+                {open1.kind === 'demir' && <><b>Ölçülen</b> donatı tablosundan / poz yazılarından okunur; <b>oranla</b> donatı paftası olmayan elemanın beton × kg/m³ tahminidir; <b>fire</b> kesim artığıdır.</>}
+                {open1.kind === 'duvar' && <><b>Net</b> = brüt − düşülen boşluk. "Çizimde kesilmiş", kapı / pencerenin duvar parçaları arasındaki açıklıkta gösterildiği, yani alanın <b>zaten</b> net olduğu anlamına gelir; ikinci kez düşülmez.</>}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
 
       {Object.keys(rebarMix).length > 0 && (
         <div className="panel" style={{ paddingTop: 10, paddingBottom: 10 }}>

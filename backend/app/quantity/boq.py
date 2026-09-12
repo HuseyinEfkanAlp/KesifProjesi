@@ -44,6 +44,9 @@ KIND_META: dict[str, tuple[str, str, str]] = {
 }
 
 DEFAULT_PARAMS: dict[str, Any] = {
+    # Aynı anda çalışan ekip sayısı: bir ekipteki kişi sayısı normdur (rules.CREW_SIZE), kaç ekip
+    # çalışacağı saha kararıdır. 1 = tek ekip; büyük şantiyede 5-10 ekip olur.
+    "crew_count": 1,
     "wall_height": None,          # m; None -> kat yüksekliği − döşeme kalınlığı
     "plaster_sides": 2,           # sıva yüzü sayısı (0 = sıva yok)
     "paint_sides": 2,             # boya yüzü sayısı
@@ -215,7 +218,8 @@ def structural_items(summary: dict, params: dict[str, Any] | None = None,
         lay = layers_of(etype)
         parts = split_by_dia(kg, mix_of(etype))
         if not parts:
-            acc.add("demir", group, label, kg, count=count, note=note, **({"rebar_layers": lay} if lay else {}))
+            acc.add("demir", group, label, kg, count=count, note=note, rebar_source="oran",
+                    **({"rebar_layers": lay} if lay else {}))
             if lay:
                 acc.items[f"demir:{group}"].notes.append(lay_note(lay))
             return
@@ -223,7 +227,7 @@ def structural_items(summary: dict, params: dict[str, Any] | None = None,
         for dia, part in parts:
             acc.add("demir", f"{group}:o{dia}", f"{label} Ø{dia}", part, count=0,
                     note=f"{note}; çizimdeki donatı yazılarının çap dağılımına göre bölündü ({mnote})",
-                    **({"rebar_layers": lay} if lay else {}))
+                    rebar_source="oran", **({"rebar_layers": lay} if lay else {}))
             if lay:
                 acc.add("demir", f"{group}:o{dia}", "", 0.0, note=lay_note(lay))
     for g in summary.get("groups", []):
@@ -249,7 +253,7 @@ def structural_items(summary: dict, params: dict[str, Any] | None = None,
         lay = layers_of(main)
         acc.add("demir", f"o{d['dia_mm']}", f"Demir Ø{d['dia_mm']}", d["weight_kg"], count=0,
                 note=f"Kaynak: {src}; {tg}" + (f"; {lay_note(lay)}" if lay else ""),
-                length_m=d["length_m"], **({"rebar_layers": lay} if lay else {}))
+                length_m=d["length_m"], rebar_source="olculen", **({"rebar_layers": lay} if lay else {}))
     tot = summary.get("totals", {})
     conc = float(tot.get("concrete_m3") or 0.0)
     form = float(tot.get("formwork_m2") or 0.0)
@@ -292,10 +296,36 @@ def _fmt_cm(v: float | None) -> str:
     return f"{round(v * 100):.0f}" if v else "?"
 
 
+def _opening_audit(item, drawing, allocations, issues, multiplier):
+    """Her boşluk–duvar ilişkisini görünür tutar; sipariş adetlerini değiştirmez.
+
+    "already_net" bir sorun değil bir bulgudur: duvar boşlukta kesilerek çizilmişse alan zaten nettir ve
+    boşluk tekrar düşülmez. Bunu "kontrol edilmeli" diye bildirmek kullanıcıyı yanıltır — doğru olan sayıyı
+    şüpheli gösterir."""
+    audit = item.detail.setdefault("opening_audit", [])
+    audit.append({"drawing": drawing.get("label", ""), "drawing_id": drawing.get("id"),
+                  "storey_count": multiplier, "matches": [m for a in allocations for m in a["matches"]],
+                  "issues": issues})
+    net_area = sum(a.get("already_net", 0.0) for a in allocations) * multiplier
+    if net_area > 0:
+        item.detail["openings_already_net_m2"] = round(item.detail.get("openings_already_net_m2", 0.0) + net_area, 2)
+        note = ("Kapı / pencere boşlukları çizimde duvar kesilerek gösterilmiş: alan zaten net, boşluk "
+                "ikinci kez düşülmedi.")
+        if note not in item.notes:
+            item.notes.append(note)
+    review = [i for i in issues if i.get("reason") != "already_net"]
+    if review:
+        item.detail["openings_review_required"] = True
+        note = "Boşluk-duvar eşleşmesi kontrol edilmeli; eşleşmeyen boşluklar düşülmedi, ilgili alan brüt kalabilir."
+        if note not in item.notes:
+            item.notes.append(note)
+
+
 def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_poz: set[str] | None = None) -> list[BoqItem]:
     """drawings: [{"label", "storey_count", "storey_height", "slab_thickness", "elements": [Element-benzeri]}]
     schedule_poz: doğrama poz listesinde geçen pozlar; plandan sayılan bu pozlu boşluklar duvardan düşülür ama adet ve
     cam poz listesinden (proje toplamı) gelir, burada tekrar yazılmaz."""
+    from .openings import allocate_openings
     acc = _Acc()
     schedule_poz = schedule_poz or set()
     for d in drawings:
@@ -306,6 +336,8 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
         elements = [e for e in d["elements"] if _g(e, "etype") in ("wall", "door", "window")]
         wall_groups: dict[str, float] = {}      # anahtar -> brüt alan (tek kat)
         wall_labels: dict[str, str] = {}
+        walls = []
+        openings = []
         for e in elements:
             if _g(e, "etype") != "wall":
                 continue
@@ -317,6 +349,7 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
             mat_label = WALL_MATERIALS.get(mat, (mat.capitalize(),))[0] if mat != "duvar" else "Duvar (malzeme belirsiz)"
             wall_groups[key] = wall_groups.get(key, 0.0) + length * h * (_g(e, "count") or 1)
             wall_labels[key] = f"{mat_label} {_fmt_cm(b)} cm"
+            walls.append({"element": e, "key": key, "gross": length * h * (_g(e, "count") or 1)})
         opening_area = 0.0        # duvardan düşülen boşluk (0,10 m² ve üstü; ÇŞB 15.225)
         opening_all = 0.0         # sıva / boyadan düşülen boşluk (tümü; ÇŞB 15.280 / 15.540)
         small_openings = 0
@@ -327,6 +360,7 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
             b, h = _g(e, "b") or 0.0, _g(e, "h") or 0.0
             n = _g(e, "count") or 1
             area = b * h * n
+            openings.append({"element": e, "width": b, "height": h, "count": n})
             opening_all += area
             if deductible_opening(b * h):
                 opening_area += area
@@ -344,13 +378,17 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
                 acc.add("cam", slug(size), f"Cam {_fmt_cm(b)}×{_fmt_cm(h)} cm ({name})", area * mult, count=n * mult,
                         note="Pencere genişlik × yükseklik; doğrama payı düşülmedi", size=size)
         gross = sum(wall_groups.values())
-        # boşluklar duvar gruplarından alanlarıyla orantılı düşülür (0,10 m² altı boşluk düşülmez: ÇŞB 15.225)
+        allocations, issues = allocate_openings(walls, openings, deductible_opening)
+        group_deductions = {}
+        for wall, allocation in zip(walls, allocations):
+            group_deductions[wall['key']] = group_deductions.get(wall['key'], 0.0) + min(wall['gross'], allocation['deducted'])
         net_total = 0.0
         for key, area in wall_groups.items():
-            share = opening_area * (area / gross) if gross > 0 else 0.0
+            share = group_deductions.get(key, 0.0)
             net = max(area - share, 0.0) * mult
             net_total += net
             it = acc.add("duvar", key, wall_labels[key], net, gross_m2=area * mult, openings_m2=share * mult)
+            _opening_audit(it, d, [a for w, a in zip(walls, allocations) if w["key"] == key], issues, mult)
             # pafta bazlı döküm nota değil ayrıntıya yazılır (not sütunu kural ve uyarı için)
             it.detail.setdefault("by_drawing", []).append(
                 {"drawing": d.get("label", ""), "gross_m2": round(area * mult, 2), "openings_m2": round(share * mult, 2), "net_m2": round(net, 2)})
@@ -363,12 +401,14 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
                 it.detail["small_openings"] = it.detail.get("small_openings", 0) + small_openings
         if gross > 0:
             # sıva ve boya: tüm boşluklar düşülür (küçükler dahil), yüz sayısı ile çarpılır
-            finish_net = max(gross - opening_all, 0.0) * mult
+            finish_net = sum(max(w["gross"] - a["all"], 0.0) for w, a in zip(walls, allocations)) * mult
             ps, bs = float(params.get("plaster_sides") or 0), float(params.get("paint_sides") or 0)
             if ps > 0 and finish_net > 0:
-                acc.add("siva", "*", f"Sıva ({ps:g} yüz)", finish_net * ps, note=RULES["plaster_openings"].text + "; × yüz sayısı")
+                finish = acc.add("siva", "*", f"Sıva ({ps:g} yüz)", finish_net * ps, note=RULES["plaster_openings"].text + "; × yüz sayısı")
+                _opening_audit(finish, d, allocations, issues, mult)
             if bs > 0 and finish_net > 0:
-                acc.add("boya", "*", f"Boya ({bs:g} yüz)", finish_net * bs, note=RULES["paint_openings"].text + "; × yüz sayısı")
+                finish = acc.add("boya", "*", f"Boya ({bs:g} yüz)", finish_net * bs, note=RULES["paint_openings"].text + "; × yüz sayısı")
+                _opening_audit(finish, d, allocations, issues, mult)
     return list(acc.items.values())
 
 
@@ -414,12 +454,14 @@ def _g(o: Any, k: str, default=None):
 def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalog) -> list[BoqItem]:
     """Standart çizim elemanları: katman adından kalem + özellik, katalogdan ölçüm kuralı.
     Disiplin anahtarı 'ksf:<KOD>' (ör. ksf:HAV) — sezgisel disiplinlerle çakışmaz."""
+    from .openings import allocate_openings
     acc = _Acc()
     per_project: dict[str, dict] = {}     # proje geneli kalemler (asansör, kazan…): paftalar arası en büyük adet, kat çarpanı yok
     ps, bs = float(params.get("plaster_sides") or 0), float(params.get("paint_sides") or 0)
     for d in drawings:
         mult = int(d.get("storey_count") or 1)
         wall_h_default = params.get("wall_height") or max((d.get("storey_height") or 3.0) - (d.get("slab_thickness") or 0.0), 0.0)
+        openings = []
         pending_walls: list[dict] = []      # bu paftanın KSF duvarları: boşluklar düşüldükten sonra yazılır
         open_ded = 0.0                      # ≥ 0,10 m² boşluklar (duvardan düşülür, ÇŞB 15.225)
         open_all = 0.0                      # tüm boşluklar (sıva / boyadan düşülür)
@@ -490,6 +532,7 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
                     if kind == "dograma":
                         note = f"{_fmt_cm(b)}×{_fmt_cm(h)} cm ({'kapı' if okind == 'door' else 'pencere / vitrin'}); ölçü görünüş / doğrama paftasından"
                     # KSF duvarlarından düşülecek boşluk (kat çarpanı duvarla birlikte uygulanır)
+                    openings.append({"element": e, "width": b, "height": h, "count": n})
                     open_all += b * h * n
                     if deductible_opening(b * h):
                         open_ded += b * h * n
@@ -503,24 +546,33 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
                 rec["per_drawing"][dl] = rec["per_drawing"].get(dl, 0) + n     # pafta içinde toplanır, paftalar arasında en büyük alınır
                 continue
             if measure == "wall_area":
-                pending_walls.append({"kind": kind, "group": group, "label": label, "gross": qty, "n": n, "note": note,
+                pending_walls.append({"element": e, "kind": kind, "group": group, "label": label, "gross": qty, "n": n, "note": note,
                                       "meta": (kname, unit, disc_key, catalog.discipline_name(p.discipline)), "poz": (item.poz if item else ""),
                                       "extra": extra, "plaster": "ALCIPAN" not in kind.upper()})
                 continue
             acc.add(kind, group, label, qty * mult, count=n * mult, note=note,
                     meta=(kname, unit, disc_key, catalog.discipline_name(p.discipline)), poz=(item.poz if item else ""), **extra)
-            if b and h and ((kind == "dograma" and meta.get("opening_kind", "window") == "window") or kind == "pencere"):
-                acc.add("cam", slug(f"{_fmt_cm(b)}x{_fmt_cm(h)}"), f"Cam {_fmt_cm(b)}×{_fmt_cm(h)} cm ({spec})", b * h * n * mult, count=n * mult,
-                        note="Adet × doğrama ölçüsü (genişlik × yükseklik); kapı pozları hariç, doğrama payı düşülmedi",
-                        size=f"{_fmt_cm(b)}x{_fmt_cm(h)}")
-        # KSF duvarları: boşluklar alanla orantılı düşülür (ÇŞB 15.225: 0,10 m² altı düşülmez); sıva / boya tüm boşluk düşülerek
+            camli = meta.get("glazed", meta.get("opening_kind", "window") == "window")
+            if b and h and ((kind == "dograma" and camli) or kind == "pencere"):
+                kapi = meta.get("opening_kind") == "door"
+                # Cam ölçüye göre birleşir (sipariş ölçü bazında verilir); ama hangi pozlardan geldiği
+                # kaybolmamalı — aynı ölçüde birden çok poz olabilir (EMP5 ve EMP4A ikisi de 150×205).
+                cam = acc.add("cam", slug(f"{_fmt_cm(b)}x{_fmt_cm(h)}"), f"Cam {_fmt_cm(b)}×{_fmt_cm(h)} cm", b * h * n * mult, count=n * mult,
+                              note="Adet × doğrama ölçüsü (genişlik × yükseklik); doğrama payı düşülmedi"
+                                   + ("; camlı kapı pozu (fotoselli / vitrin)" if kapi else ""),
+                              size=f"{_fmt_cm(b)}x{_fmt_cm(h)}")
+                dokum = cam.detail.setdefault("poz_dokum", {})
+                if spec:
+                    dokum[spec] = dokum.get(spec, 0) + n * mult
+        # Her boşluk yalnız geometrik olarak eşleştiği duvarın malzemesinden düşülür.
+        allocations, issues = allocate_openings(pending_walls, openings, deductible_opening)
         gross = sum(w["gross"] for w in pending_walls)
-        finish_gross = sum(w["gross"] for w in pending_walls if w["plaster"])
-        for w in pending_walls:
-            share = open_ded * (w["gross"] / gross) if gross > 0 else 0.0
+        for w, allocation in zip(pending_walls, allocations):
+            share = min(w["gross"], allocation["deducted"])
             net = max(w["gross"] - share, 0.0) * mult
             it = acc.add(w["kind"], w["group"], w["label"], net, count=w["n"] * mult, note=w["note"], meta=w["meta"], poz=w["poz"],
                          gross_m2=w["gross"] * mult, openings_m2=share * mult, **w["extra"])
+            _opening_audit(it, d, [allocation], issues, mult)
             it.detail.setdefault("by_drawing", []).append(
                 {"drawing": d.get("label", ""), "gross_m2": round(w["gross"] * mult, 2), "openings_m2": round(share * mult, 2), "net_m2": round(net, 2)})
             rule = RULES["wall_opening"].text
@@ -533,13 +585,19 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
             has_ksf_siva = any(_g(e, "etype") == "siva" or (parse_layer(_g(e, "layer") or "", catalog) or ParsedLayer("", "", None, None, "")).code == "SIVA"
                                for e in d["elements"])
             has_ksf_boya = any((parse_layer(_g(e, "layer") or "", catalog) or ParsedLayer("", "", None, None, "")).code == "BOYA" for e in d["elements"])
-            share_all = open_all * (finish_gross / gross) if gross > 0 else 0.0
-            finish_net = max(finish_gross - share_all, 0.0) * mult
+            finish_net = sum(max(w["gross"] - a["all"], 0.0) for w, a in zip(pending_walls, allocations) if w["plaster"]) * mult
             if ps > 0 and finish_net > 0 and not has_ksf_siva:
-                acc.add("siva", "*", f"Sıva ({ps:g} yüz)", finish_net * ps, note=RULES["plaster_openings"].text + "; × yüz sayısı; KSF duvar alanından (alçıpan hariç)")
+                finish = acc.add("siva", "*", f"Sıva ({ps:g} yüz)", finish_net * ps, note=RULES["plaster_openings"].text + "; × yüz sayısı; KSF duvar alanından (alçıpan hariç)")
+                _opening_audit(finish, d, allocations, issues, mult)
             if bs > 0 and finish_net > 0 and not has_ksf_boya:
-                paint_net = max(gross - open_all, 0.0) * mult
-                acc.add("boya", "*", f"Boya ({bs:g} yüz)", paint_net * bs, note=RULES["paint_openings"].text + "; × yüz sayısı; KSF duvar alanından")
+                paint_net = sum(max(w["gross"] - a["all"], 0.0) for w, a in zip(pending_walls, allocations)) * mult
+                finish = acc.add("boya", "*", f"Boya ({bs:g} yüz)", paint_net * bs, note=RULES["paint_openings"].text + "; × yüz sayısı; KSF duvar alanından")
+                _opening_audit(finish, d, allocations, issues, mult)
+    # Cam etiketine katkı veren bütün pozlar yazılır: "Cam 150×205 cm (EMP4A 2, EMP5 3)"
+    for it in acc.items.values():
+        dokum = it.detail.get("poz_dokum") if it.kind == "cam" else None
+        if dokum:
+            it.label += " (" + ", ".join(f"{k} {v:g}" for k, v in sorted(dokum.items())) + ")"
     for rec in per_project.values():
         n_max = max(rec["per_drawing"].values()) if rec["per_drawing"] else 0
         acc.add(rec["kind"], rec["group"], rec["label"], n_max, count=n_max, meta=rec["meta"], poz=rec["poz"],

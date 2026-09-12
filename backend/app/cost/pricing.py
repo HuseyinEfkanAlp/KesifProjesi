@@ -42,6 +42,9 @@ class PriceItem:
     hours_per_unit: float = 0.0    # adam-saat / birim
     crew_size: float = 0.0         # 0 = belirtilmedi (genel satır ya da 1 kişi)
     set_fields: tuple[str, ...] = ()   # kullanıcının açıkça girdiği alanlar: 0 girildiyse genel satıra düşülmez
+    # ÇŞB / firma birim fiyatı: **her şey dahil** (malzeme + işçilik + makine + yüklenici kârı). Doluysa
+    # malzeme ve işçiliğin yerine geçer — ikisini toplamak bedeli iki kez saymak olur.
+    poz_price: float = 0.0
 
 
 def default_price_items(items: list[BoqItem]) -> list[PriceItem]:
@@ -58,6 +61,40 @@ def default_price_items(items: list[BoqItem]) -> list[PriceItem]:
         if it.group != "*" and not (it.detail.get("system") or it.detail.get("info")):
             out.append(PriceItem(it.key, it.label, it.unit))
     return out
+
+
+def _missing_ranked(lines: list[dict]) -> dict:
+    """Fiyatı girilmemiş kalemleri **etki sırasına** koyar: 65 satırlık düz liste kullanılabilir değildir.
+
+    Sıralama uydurma fiyata dayanmaz — bildiğimiz büyüklükleri kullanır:
+      * işçilik satırı saat cinsindeyse miktarın kendisi adam-saattir; doğrudan sıralanır
+      * diğer kalemlerde hesaplanan adam-saat (miktar × norm) varsa o kullanılır
+      * hiçbiri yoksa kalem kendi türü içinde miktara göre sıralanır (türler arası kıyas yapılmaz)
+    Böylece kullanıcı "hangi 10 satırı doldurursam tutarın çoğu çıkar" sorusunu cevaplayabilir."""
+    def row(l: dict, eksik: str) -> dict:
+        return {"key": l["key"], "label": l["group_label"], "kind": l["kind"], "kind_label": l["kind_label"],
+                "unit": l["unit"], "quantity": l["quantity"], "hours": l["hours"], "poz": l.get("poz", ""),
+                "material_key": l.get("material_key", ""), "material_name": l.get("material_name", ""),
+                "eksik": eksik}
+
+    iscilik = [row(l, "isçilik") for l in lines if l["labor_price"] <= 0 and l["quantity"] > 0
+               and not l.get("poz_priced")]
+    iscilik.sort(key=lambda r: (-(r["hours"] or 0.0), -(r["quantity"] or 0.0)))
+    # malzeme: aynı ürün birçok kalemde geçer; ürün bazında toplanır
+    urun: dict[str, dict] = {}
+    for l in lines:
+        if l["unit_price"] > 0 or not l.get("material_key") or l["quantity"] <= 0 or l.get("poz_priced"):
+            continue
+        r = urun.setdefault(l["material_key"], {"key": l["material_key"], "name": l["material_name"] or l["material_key"],
+                                                "unit": l["unit"], "quantity": 0.0, "kalem": 0})
+        r["quantity"] += l["quantity"]
+        r["kalem"] += 1
+    malzeme = sorted(urun.values(), key=lambda r: -r["quantity"])
+    for r in malzeme:
+        r["quantity"] = round(r["quantity"], 2)
+    return {"labor": iscilik, "materials": malzeme,
+            "notice": "Sıralama kalemin büyüklüğüne göredir (adam-saat, yoksa miktar); tutar tahmini değildir. "
+                      "Üstteki birkaç satır maliyetin çoğunu belirler."}
 
 
 def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float = 0.0,
@@ -107,7 +144,12 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
             hpu, hpu_src = 1.0, "birim saat"    # miktarın kendisi adam-saat (reçete normundan)
         if it.key in covered:
             hpu, hpu_src = 0.0, "üst kalemde sayıldı"
-        crew, crew_src = pick("crew_size", 1.0)
+        crew, crew_src = pick("crew_size", 0.0)
+        if not crew:
+            # Norm: bir ekipteki kişi sayısı. Kaç ekibin aynı anda çalışacağı saha kararıdır (crew_count).
+            from ..standard.rules import crew_size as _crew
+            crew = _crew(it.kind) * max(1.0, float((params or {}).get("crew_count") or 1))
+            crew_src = "norm" if float((params or {}).get("crew_count") or 1) <= 1 else "norm × ekip sayısı"
         brand, _ = pick("brand", "")
         # malzeme: kalemin ürünü (C30/37 beton, Ø12 demir…) — fiyat ürün listesinden gelir
         m = material_of(it, params)
@@ -119,8 +161,17 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
             brand = mrec.brand
         hours = it.quantity * float(hpu)
         days = hours / (max(float(crew), 0.01) * hours_per_day) if hours > 0 else 0.0
-        mat_total = round(it.quantity * float(mat), 2)
-        lab_total = round(it.quantity * float(lab), 2)
+        poz_bf, poz_src = pick("poz_price")
+        if poz_bf and float(poz_bf) > 0:
+            # Poz bedeli her şeyi kapsar: malzeme + işçilik ayrı ayrı yazılmaz, tek satır poz bedelidir.
+            mat_total = 0.0
+            lab_total = round(it.quantity * float(poz_bf), 2)
+            mat, lab = 0.0, float(poz_bf)
+            mat_src = f"poz bedeli ({it.poz})" if it.poz else "poz bedeli"
+            lab_src = mat_src
+        else:
+            mat_total = round(it.quantity * float(mat), 2)
+            lab_total = round(it.quantity * float(lab), 2)
         lines.append({
             "key": it.key, "kind": it.kind, "kind_label": it.kind_label,
             "group": it.group, "group_label": it.label, "discipline": it.discipline,
@@ -131,6 +182,7 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
             "brand": brand or "",
             "material_key": mkey, "material_name": mname,
             "unit_price": float(mat), "labor_price": float(lab),
+            "poz_price": float(poz_bf or 0.0), "poz_priced": bool(poz_bf and float(poz_bf) > 0),
             "material_total": mat_total, "labor_total": lab_total, "total": round(mat_total + lab_total, 2),
             "price_source": mat_src,
             "labor_source": lab_src if lab else "işçilik girilmedi",
@@ -187,14 +239,20 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
         "missing_prices": [l["key"] for l in lines if l["unit_price"] <= 0 and l["material_key"]],
         "missing_materials": sorted({l["material_key"] for l in lines if l["unit_price"] <= 0 and l["material_key"]}),
         "missing_labor": [l["key"] for l in lines if l["labor_price"] <= 0],
+        "missing_ranked": _missing_ranked(lines),
         "duration": {
             "hours_per_day": hours_per_day,
             "total_hours": total_hours,
             "sequential_days": sequential_days,
             "parallel_days": parallel_days,
             "man_days": round(total_hours / hours_per_day, 1),
+            # Bu süreyi tutturmak için sahada ortalama kaç kişi olmalı: kullanıcı gerçekçiliği buradan görür
+            "implied_headcount": round(total_hours / (parallel_days * hours_per_day), 1) if parallel_days > 0 else 0.0,
+            "crew_count": float((params or {}).get("crew_count") or 1),
             "missing_rates": [l["key"] for l in lines if l["hours_per_unit"] <= 0
                               and l["hours_source"] != "üst kalemde sayıldı"],
             "missing_crew": missing_crew,
+            # Ekibi programın normundan gelen kalemler: kullanıcı girişi değildir, doğrulanmalıdır
+            "norm_crew": [l["key"] for l in lines if l["hours"] > 0 and str(l["crew_source"]).startswith("norm")],
         },
     }

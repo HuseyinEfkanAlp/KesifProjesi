@@ -237,14 +237,21 @@ def resolve_plan(titles: list[str], layers: dict[str, int] | None = None, explic
         return explicit, discipline_for(explicit)
     found = classify_title(*titles)
     code = found.code if found else ""
-    # Katman kanıtı: kalıp planı sanılan paftada DONATI / POZ / METRAJ katmanları kalabalıksa donatı paftasıdır
+    # Kalıp paftalarında donatı detayları da bulunabilir. Detay nesne sayısı,
+    # tek başına kalıp başlığını geçersiz kılamaz; donatı başlıkları ayrıca ayrılır.
+    # Üst/alt donatı gibi ana plan katmanları hâlâ donatı planına kanıt olabilir.
+    # REBAR_DET2 / donatı detay gibi yardımcı detay katmanlarını bu oya katma.
     if found is not None and found.discipline == "structural" and layers:
-        rebar_n = sum(n for name, n in layers.items() if re.search(r"DONATI|DONATİ|\bPOZ\b|METRAJ|REBAR", normalize_title(name)))
-        frame_n = sum(n for name, n in layers.items() if re.search(r"KOLON|KIRIS|COLUMN|BEAM", normalize_title(name)))
+        rebar_n = sum(n for name, n in layers.items()
+                      if re.search(r"DONATI|\bPOZ\b|METRAJ|REBAR", normalize_title(name))
+                      and not re.search(r"DETAY|DETAIL|(?:^|[ _-])DET(?:[0-9 _-]|$)", normalize_title(name)))
+        frame_n = sum(n for name, n in layers.items()
+                      if re.search(r"KOLON|KIRIS|COLUMN|BEAM", normalize_title(name)))
         if rebar_n >= 200 and rebar_n >= 0.3 * max(frame_n, 1):
             return "sta_doseme_donati", "rebar"
-    # "… KAT PLANI" açıkça mimari kat planıdır (statik ofis "KALIP PLANI" yazar); yalnız genel "PLAN" eşleşmesi zayıftır
-    strong_arch = any(re.search(r"KAT\s*PLAN|MIMARI", normalize_title(t)) for t in titles if t)
+    # Genel "kat planı" disiplin belirtmez. Yalnız açık MİMARİ başlığını koru:
+    # mimari paftalardaki statik referans izlerini ikinci kez ölçmeyelim.
+    strong_arch = any(re.search(r"MIMARI", normalize_title(t)) for t in titles if t)
     if found is not None and discipline_from_layers(layers) == "standard":
         return code, "standard"          # KSF katmanlı pafta: plan tipi başlıktan, analiz standart kuralla
     if found is None or (found.code in WEAK_TYPES and not strong_arch):

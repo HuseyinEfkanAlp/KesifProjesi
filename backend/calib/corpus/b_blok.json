@@ -1,0 +1,29 @@
+{
+  "proje": "B Blok ruhsat projesi (REV01)",
+  "kaynak": "Çizimin kendi TABLE4 katmanı: müellifin kat bazında KALIP (m2) / BETON (m3) icmali",
+  "guven": "aktarim",
+  "not": "Değerler samples/b_blok/README.md'ye aktarıldı; orijinal tablo bağımsız yeniden ölçülmedi. TABLE4 yalnız kolon + perde verir, kiriş / döşeme / temel için referans yoktur. Kat yükseklikleri çizimdeki kotlardan: bodrum 3,33 / zemin 3,80 / 1. kat 3,70.",
+  "varsayilan": {"doseme_kalinligi": 0.15},
+  "katlar": [
+    {
+      "ad": "bodrum",
+      "kat_yuksekligi": 3.33,
+      "paftalar": ["samples/b_blok/crop_bodrum01a.dxf", "samples/b_blok/crop_bodrum01b.dxf"],
+      "referans": {"kolon_perde_beton_m3": 1443.68, "kolon_perde_kalip_m2": 6367.84},
+      "not": "Pafta iki yarıya kırpıldı; ikisi birlikte bir kat eder."
+    },
+    {
+      "ad": "zemin",
+      "kat_yuksekligi": 3.80,
+      "paftalar": ["samples/b_blok/crop_zemin.dxf"],
+      "referans": {"kolon_perde_beton_m3": 731.31, "kolon_perde_kalip_m2": 2996.27}
+    },
+    {
+      "ad": "birinci kat",
+      "kat_yuksekligi": 3.70,
+      "paftalar": ["samples/b_blok/crop_kat1.dxf"],
+      "referans": {"kolon_perde_beton_m3": 677.31, "kolon_perde_kalip_m2": 2802.00},
+      "not": "TABLE4 bu katı iki kota ayırıyor (+6.50: 465,70 m³ / 2.034,06 m²; +7.50: 211,61 m³ / 767,94 m²); pafta ikisini birlikte çiziyor, referans toplamdır."
+    }
+  ]
+}

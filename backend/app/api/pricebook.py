@@ -207,6 +207,66 @@ def upsert_pricebook(body: list[BookIn], session: Session = Depends(get_session)
     return get_pricebook(body[0].scope if body else "material", session)
 
 
+@router.get("/pricebook/poz")
+def list_poz_prices(session: Session = Depends(get_session)):
+    """İçeri alınmış birim fiyat listesi (scope="poz"). Keşifte hangi pozun kullanıldığı ayrı görünür."""
+    sup = {s.id: s.name for s in session.exec(select(Supplier)).all() if s.id}
+    rows = session.exec(select(PriceBookItem).where(PriceBookItem.scope == "poz")).all()
+    return {"rows": sorted(({"id": r.id, "poz": r.poz, "name": r.name, "unit": r.unit,
+                             "price": r.unit_price, "supplier_name": sup.get(r.supplier_id or 0, ""),
+                             "note": r.note, "updated_at": r.updated_at.isoformat()} for r in rows),
+                           key=lambda x: x["poz"]),
+            "notice": "Poz bedeli her şey dahildir (malzeme + işçilik + makine + kâr); keşifte malzeme ve "
+                      "işçiliğin yerine geçer."}
+
+
+@router.delete("/pricebook/poz", status_code=204)
+def clear_poz_prices(session: Session = Depends(get_session)):
+    """Bütün poz fiyatlarını siler (yeni yıl listesi yüklenmeden önce temizlemek için)."""
+    for r in session.exec(select(PriceBookItem).where(PriceBookItem.scope == "poz")).all():
+        session.delete(r)
+    session.commit()
+
+
+class PozImportIn(BaseModel):
+    text: str
+    supplier_id: int | None = None
+    note: str = ""
+
+
+@router.post("/pricebook/poz-import")
+def import_poz_prices(body: PozImportIn, session: Session = Depends(get_session)):
+    """ÇŞB / firma birim fiyat listesini metinden okur ve poz numarasına göre bankaya yazar.
+
+    Canlıda fiyat girişi en büyük tıkanmadır: keşifte 100+ kalem çıkar, hepsine elle fiyat girmek
+    kimsenin yapmayacağı iştir. Kalemlerin çoğunda ÇŞB poz numarası zaten vardır; liste bir kez
+    yapıştırılır, eşleşme poz numarasından olur. **Poz bedeli her şey dahildir** (malzeme + işçilik +
+    makine + yüklenici kârı); keşifte malzeme ve işçiliğin yerine geçer, üstüne eklenmez."""
+    from ..cost.pozbook import parse_list
+    res = parse_list(body.text)
+    if not res.rows:
+        raise HTTPException(400, f"Listede poz numarası ve fiyat içeren satır bulunamadı ({res.skipped} satır atlandı). "
+                                 "Her satırda 15.150.1006 gibi bir poz ve bir fiyat olmalı.")
+    yazilan = guncellenen = 0
+    for r in res.rows:
+        q = select(PriceBookItem).where(PriceBookItem.scope == "poz", PriceBookItem.poz == r.poz)
+        q = q.where(PriceBookItem.supplier_id == body.supplier_id) if body.supplier_id else q.where(PriceBookItem.supplier_id.is_(None))
+        row = session.exec(q).first()
+        if row is None:
+            row = PriceBookItem(scope="poz", poz=r.poz, key=f"poz:{r.poz}", supplier_id=body.supplier_id)
+            yazilan += 1
+        else:
+            guncellenen += 1
+        row.name, row.unit = r.name or row.name, r.unit or row.unit
+        row.unit_price = r.price          # poz bedeli (her şey dahil)
+        row.note = body.note or row.note
+        row.updated_at = datetime.utcnow()
+        session.add(row)
+    session.commit()
+    return {**res.to_dict(), "yeni": yazilan, "guncellenen": guncellenen,
+            "notice": "Poz bedeli malzeme + işçilik + kârı kapsar; keşifte bu kalemler poz bedeliyle hesaplanır."}
+
+
 @router.delete("/pricebook/{row_id}", status_code=204)
 def delete_pricebook_row(row_id: int, session: Session = Depends(get_session)):
     row = session.get(PriceBookItem, row_id)

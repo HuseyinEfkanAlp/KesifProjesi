@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import re
 
-ORTAK = ""
 ORTAK_LABEL = "Ortak / tüm bina"
 
 # "A4-A5 BLOK", "C1 BLOK", "B BLOK", "BLOK C2", "C-1 BLOĞU"; BLOKAJ'a takılmaz (\b BLOK'tan sonra harf istemez)
@@ -88,10 +87,6 @@ def covered_by(names) -> set[str]:
     for n in names or []:
         out |= parts_of(n)
     return out
-
-
-def block_label(name: str) -> str:
-    return f"{name} bloğu" if name else ORTAK_LABEL
 
 
 # ---------------------------------------------------------------- çizimden blok listesi

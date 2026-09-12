@@ -165,7 +165,7 @@ def test_layers_override_weak_title():
     assert discipline_from_layers({"KOLON": 3}) is None   # çok az nesne
 
     assert resolve_plan(["ZEMİN PLANI"], sta) == ("sta_kat_kalip", "structural")          # genel "PLAN": katmanlar karar verir
-    assert resolve_plan(["ZEMİN KAT PLANI"], sta) == ("mim_kat_plani", "architectural")   # "KAT PLANI" açıkça mimari (statik xref olsa da)
+    assert resolve_plan(["ZEMİN KAT PLANI"], sta) == ("sta_kat_kalip", "structural")
     assert resolve_plan(["ZEMİN KAT PLANI"], arch) == ("mim_kat_plani", "architectural")
     assert resolve_plan(["ZEMİN KAT PLANI"], None) == ("mim_kat_plani", "architectural")
     assert resolve_plan(["Pafta 3 (başlıksız)"], sta) == ("sta_kat_kalip", "structural")
@@ -186,3 +186,25 @@ def test_api_weak_title_uses_layers(client, storey_dxf):
         r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("ZEMIN PLANI.dxf", f, "application/dxf")})
     assert r.status_code == 201, r.text
     assert r.json()["plan_type"] == "sta_kat_kalip" and r.json()["discipline"] == "structural" and r.json()["element_count"] > 0
+
+
+@pytest.mark.parametrize("title, expected", [
+    ("ZEMİN KAT KALIP PLANI", ("sta_kat_kalip", "structural")),
+    ("TEMEL KALIP PLANI", ("sta_temel_kalip", "structural")),
+    ("DÖŞEME DONATI PLANI", ("sta_doseme_donati", "rebar")),
+    ("MİMARİ KAT PLANI", ("mim_kat_plani", "architectural")),
+])
+def test_details_do_not_override_explicit_plan_title(title, expected):
+    from app.planset import resolve_plan
+    layers = {"KM Kolon": 120, "KM Kiriş": 900, "KM Perde": 40, "REBAR_DET2": 5000}
+    assert resolve_plan([title], layers) == expected
+
+
+def test_generic_storey_upload_is_structural(client, storey_dxf):
+    pid = client.post("/api/projects", json={"name": "Kat planı"}).json()["id"]
+    with open(storey_dxf, "rb") as f:
+        response = client.post(f"/api/projects/{pid}/drawings",
+                               files={"file": ("ornek_kat_plani.dxf", f, "application/dxf")})
+    assert response.status_code == 201
+    assert response.json()["discipline"] == "structural"
+    assert response.json()["element_count"] == 8

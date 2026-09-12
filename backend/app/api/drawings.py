@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import time
 import uuid
 from collections import Counter
 from pathlib import Path
@@ -20,7 +21,9 @@ from ..parser.blocks import detect_block, detect_with_known, normalize as normal
 from ..parser.dwg import convert_dwg_to_dxf, dwg_supported
 from ..parser.loader import UNIT_SCALE, load_dxf
 from ..parser.sheets import BIG_FILE_BYTES, Sheet, SheetScan, crop_sheets, scan_sheets
+from ..parser.titleblock import TitleBlock
 from ..planset import PLAN_TYPE_BY_CODE, resolve_plan
+from ..quantity.grouping import annotate
 from ..services import refresh_wall_areas, analyze_and_store, boq_payload, detect_params, drawing_boq, load_catalog, recompute_derived
 from .projects import get_project
 
@@ -150,20 +153,48 @@ def _resolve(discipline: str, plan_type: str | None, titles: list[str], layers: 
 
 
 FRAGMENT_MAX_ENTITIES = 200   # başlıksız ve bu kadar az nesneli küme: detay / tablo / lejant parçası, plan değil
+# Pafta olmayan içerik türlerinin listedeki açıklaması
+KIND_NOTE = {"antet": "antet / proje bilgi tablosu — plan değil, ölçülecek geometri taşımaz",
+             "bos": "boş çerçeve — başlığı var ama çizim yok",
+             "cetvel": "cetvel / liste — geometrisi ölçülmez, yazılarındaki poz ve adet okunur"}
+# Bu türlerin geometrisi ölçülmez; listede işaretsiz gelir. "cetvel" bunlara dahil DEĞİLDİR: okunacak
+# verisi olduğu için eklenir (doğrama poz listesi tek başına 170 adet taşıyabilir).
+NOT_A_PLAN = {"antet", "bos"}
 
 
 def _sheet_out(sh: Sheet) -> dict:
     """Pafta bilgisi + başlığından / katmanlarından tanınan plan tipi ve disiplin önerisi.
 
-    Başlıksız küçük kümeler (merdiven detayı, pano tablosu, lejant…) plan sayılmaz: tip boş, seçili gelmez (fragment)."""
+    Plan olmayan içerik seçili gelmez: başlıksız küçük kümeler (merdiven detayı, pano tablosu, lejant) ve
+    başlığı olduğu hâlde plan olmayan çerçeveler — ruhsat antedi (etiket–değer listesi) ve boş şablon kutusu.
+    Bunlar listede kalır ama etiketlenir; kullanıcı isterse yine seçebilir."""
     code, disc = resolve_plan([sh.title, *sh.titles], sh.layers)
-    fragment = not sh.titled and (sh.entity_count < FRAGMENT_MAX_ENTITIES or not disc)
+    fragment = (not sh.titled and (sh.entity_count < FRAGMENT_MAX_ENTITIES or not disc)) or sh.kind in NOT_A_PLAN
     if fragment:
         code, disc = "", ""
     pt = PLAN_TYPE_BY_CODE.get(code)
     return {**sh.to_dict(), "plan_type": code, "plan_type_label": pt.label if pt else "",
             "discipline": disc if (pt or disc) else "", "analyze": (pt.analyze if pt else bool(disc)) and not fragment,
-            "fragment": fragment}
+            "fragment": fragment, "kind_note": KIND_NOTE.get(sh.kind, "")}
+
+
+def apply_titleblock(project: Project, tb: TitleBlock, session: Session) -> list[str]:
+    """Ruhsat antedinden okunan proje verisini **boş** parametrelere yazar.
+
+    Antet "MALZEME: C35-S420" der; kullanıcı bunu bugün Parametreler sayfasında elle giriyor. Okunabiliyorsa
+    hazır gelsin — ama kullanıcının kendi girdiği değer asla ezilmez, yalnız boş alan doldurulur."""
+    params = dict(project.params or {})
+    notes: list[str] = []
+    for key, val, label in (("concrete_class", tb.concrete_class, "Beton sınıfı"),
+                            ("rebar_grade", tb.rebar_grade, "Donatı çeliği sınıfı")):
+        if val and not str(params.get(key) or "").strip():
+            params[key] = val
+            notes.append(f"{label} {val}")
+    if notes:
+        project.params = params
+        session.add(project)
+        session.commit()
+    return notes
 
 
 def majority_unit(verdicts: list[str | None]) -> tuple[str, int] | None:
@@ -261,6 +292,30 @@ def _create_drawing(project: Project, dest: Path, filename: str, label: str, sto
     return d
 
 
+# Pafta seçimi için tutulan kaynak kopyasının ömrü. Çok paftalı her yükleme dosyanın tam bir kopyasını
+# `src_<token>_<ad>.dxf` olarak bırakır; kullanıcı paftaları seçtikten sonra bu kopyanın işi biter ama aynı
+# dosyadan sonradan pafta eklenebilsin diye hemen silinmez. Süresi dolanlar bir sonraki yüklemede süpürülür —
+# yoksa klasör sınırsız büyür (bir ölçümde 34 artık kopya, 1,9 GB).
+SOURCE_TTL_HOURS = 24
+
+
+def sweep_sources(ttl_hours: float = SOURCE_TTL_HOURS) -> tuple[int, int]:
+    """Süresi dolmuş kaynak kopyalarını ve pafta önbelleklerini siler. (dosya sayısı, bayt) döner."""
+    cutoff = time.time() - ttl_hours * 3600
+    n = size = 0
+    for f in list(UPLOAD_DIR.glob("src_*")):
+        try:
+            st = f.stat()
+            if st.st_mtime >= cutoff:
+                continue
+            f.unlink()
+        except OSError:
+            continue
+        n += 1
+        size += st.st_size
+    return n, size
+
+
 def _source_path(token: str) -> Path:
     if not re.fullmatch(r"[0-9a-f]{10}", token):
         raise HTTPException(400, "Geçersiz kaynak dosya kimliği")
@@ -276,7 +331,9 @@ def _source_out(src: Path, scan: SheetScan) -> dict:
     size = src.stat().st_size
     return {"token": token, "filename": orig, "size_mb": round(size / 1e6, 1), "entity_count": scan.entity_count,
             "can_use_whole": size <= BIG_FILE_BYTES, "unit": scan.unit or "", "suggested_unit": scan.suggested_unit or "",
-            "dropped": scan.dropped, "strays": scan.strays}
+            "dropped": scan.dropped, "strays": scan.strays,
+            # antet (proje bilgi tablosu) pafta değildir; okunanlar proje parametresi önerisi olarak gösterilir
+            "titleblock": scan.titleblock.to_dict(), "titleblock_summary": scan.titleblock.summary()}
 
 
 @router.post("/projects/{project_id}/drawings", status_code=201)
@@ -305,6 +362,7 @@ def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = F
     if unit_override and unit_override not in UNIT_SCALE:
         raise HTTPException(400, "Birim mm, cm veya m olmalı")
     safe = _safe_name(fname)
+    sweep_sources()
     token = uuid.uuid4().hex[:10]
     if is_dwg:
         dwg_path = UPLOAD_DIR / f"src_{token}_{safe}"
@@ -340,6 +398,11 @@ def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = F
     discipline, plan_type = _resolve(discipline, plan_type, [label, Path(fname).stem, *scan.titles], scan.layers)
     d = _create_drawing(project, dest, file_label, label or Path(fname).stem, storey_count,
                         unit_override or None, session, discipline=discipline, plan_type=plan_type)
+    applied = apply_titleblock(project, scan.titleblock, session)
+    if applied:
+        d.warnings = [f"Dosyanın antedinden okundu ve boş proje parametrelerine yazıldı: {', '.join(applied)}."] + list(d.warnings)
+        session.add(d)
+        session.commit()
     _refresh_openings(project, session)
     session.refresh(d)
     return drawing_out(d, session)
@@ -415,6 +478,12 @@ def drawings_from_source(project_id: int, body: FromSourceIn, session: Session =
         raise HTTPException(400, "Eklenecek pafta seçilmedi")
     if not body.unit_override:
         _harmonize_units(project, created, session)
+    applied = apply_titleblock(project, scan.titleblock, session)
+    if applied:
+        created[0].warnings = [f"Dosyanın antedinden okundu ve boş proje parametrelerine yazıldı: "
+                               f"{', '.join(applied)}."] + list(created[0].warnings)
+        session.add(created[0])
+        session.commit()
     _refresh_openings(project, session)
     for d in created:
         session.refresh(d)
@@ -527,7 +596,8 @@ def drawing_boq_out(drawing_id: int, session: Session = Depends(get_session)):
 def list_elements(drawing_id: int, session: Session = Depends(get_session)):
     get_drawing(drawing_id, session)
     els = session.exec(select(Element).where(Element.drawing_id == drawing_id).order_by(Element.etype, Element.name)).all()
-    return [e.model_dump() for e in els]
+    # grup anahtarı sunucuda hesaplanır: önizlemedeki çokgenin data-group'u ile aynı olmak zorunda
+    return annotate([e.model_dump() for e in els])
 
 
 @router.get("/drawings/{drawing_id}/preview.svg")

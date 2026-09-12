@@ -1,6 +1,7 @@
 """Router'ların paylaştığı iş mantığı: analiz + kaydetme, proje metrajı / keşfi, fiyat tohumlama, maliyet."""
 from __future__ import annotations
 
+import copy
 import re
 from datetime import datetime
 
@@ -192,12 +193,23 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
 DEFAULT_STOREY_HEIGHT = 3.0
 
 
+# Çizimden okunan kat yükseklikleri bu kadar ayrışıyorsa bina değişken katlıdır ve tek bir H uygulanamaz.
+VARIABLE_HEIGHT_SPREAD = 0.30
+
+
 def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
     """Her çizim için kat yüksekliği ve kaynağı; proje için etkin kat yüksekliği.
 
-    Sıra: çizime elle girilen > çizimin kotu ile bir üst kat seviyesi arasındaki fark (kotlar planlardaki / kesitlerdeki kot
-    yazılarından) > plan adına göre kat sırası (bodrum, zemin, birinci…) ile seviye dizisi > projeye girilen H > kat
-    seviyelerinin medyan farkı > 3,0 m varsayılan."""
+    Sıra: çizime elle girilen > projeye açıkça girilen H > çizimin kotu ile bir üst kat seviyesi arasındaki fark
+    > plan adına göre kat sırası (bodrum, zemin, birinci…) ile seviye dizisi > kat
+    seviyelerinin medyan farkı > 3,0 m varsayılan.
+
+    **Tek istisna (kanıt sıralaması):** projeye girilen tek bir H, çizimden okunan kotlar kat kat
+    değişiyorsa (yayılım > 0,30 m) hiçbir katta doğru olamaz — tek sayı değişken bir binayı anlatamaz.
+    O durumda proje H'si uygulanmaz, her pafta kendi kotundan hesaplanır. Bu bir tahmin değildir: zayıf
+    kanıt (elle girilen ya da form varsayılanı tek sayı) yerine güçlü kanıt (çizimin kendi kotları)
+    kullanılır. Paftaya **elle girilmiş** yükseklik her zaman üstündür; kullanıcının pafta bazındaki
+    kararı değişmez."""
     from .parser.levels import floor_levels, floor_rank
     all_levels = [float(v) for d in drawings for v in (d.levels or [])]
     for d in drawings:
@@ -206,22 +218,39 @@ def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
     floors = floor_levels(all_levels)
     diffs = [round(b - a, 2) for a, b in zip(floors, floors[1:])]
     med = round(sorted(diffs)[len(diffs) // 2], 2) if diffs else None
-    if project.storey_height and project.storey_height > 0:
-        effective, source = float(project.storey_height), "parametre"
-    elif med:
-        effective, source = med, "kotlardan (medyan kat farkı)"
-    else:
-        effective, source = DEFAULT_STOREY_HEIGHT, "varsayılan"
-
     def above(level: float) -> float | None:
         ups = [f for f in floors if f > level + 0.5]
         return ups[0] if ups else None
+
+    # Çizimin kendi kanıtı: her paftanın kotundan çıkan yükseklik. Proje H'sinden bağımsız hesaplanır,
+    # çünkü kararı veren şey bu dizinin kendi içinde değişip değişmediğidir.
+    kot_h = [round(above(float(d.kot)) - float(d.kot), 2) for d in drawings
+             if d.kot is not None and above(float(d.kot)) is not None]
+    degisken = bool(kot_h) and (max(kot_h) - min(kot_h)) > VARIABLE_HEIGHT_SPREAD
+    proje_h = float(project.storey_height or 0)
+    # Tek bir H, kat kat değişen bir binada hiçbir katta doğru olamaz: çizimin kotları esas alınır.
+    proje_h_gecerli = proje_h > 0 and not degisken
+
+    if proje_h_gecerli:
+        effective, source = proje_h, "parametre"
+    elif med:
+        effective, source = med, ("kotlardan (medyan kat farkı; projeye girilen "
+                                  f"{proje_h:g} m çizimdeki değişken kotlarla çelişiyor)" if proje_h > 0
+                                  else "kotlardan (medyan kat farkı)")
+    else:
+        effective, source = DEFAULT_STOREY_HEIGHT, "varsayılan"
 
     per: dict[int, dict] = {}
     ranked = []
     for d in drawings:
         if d.storey_height and d.storey_height > 0:
             per[d.id] = {"height": float(d.storey_height), "source": "çizime girildi", "kot": d.kot}
+            continue
+        # H=0 otomatik modu seçer. Açık kullanıcı yüksekliği, çizimdeki kiriş altı / ara kot gibi sezgisel
+        # seviyeler tarafından sessizce değiştirilemez — ama kotlar kat kat değişiyorsa tek bir H zaten
+        # uygulanamaz (proje_h_gecerli), o zaman çizimin kanıtı kullanılır.
+        if proje_h_gecerli:
+            per[d.id] = {"height": proje_h, "source": "projeye girildi", "kot": d.kot}
             continue
         if d.kot is not None:
             nxt = above(float(d.kot))
@@ -566,6 +595,11 @@ def rebar_mix_target(d: Drawing) -> str:
     return "*"
 
 
+# Kapı pozu da camlı olabilir: fotoselli / vitrin / giyotin kapılar cam yüzeydir. Bu sözcükler geçiyorsa
+# kapıya da cam yazılır (yoksa AVM girişindeki bütün cam keşiften düşer).
+GLAZED_WORDS = re.compile(r"FOTOSEL|V[İI]TR[İI]N|CAM\b|CAMLI|G[İI]YOT[İI]N|CURTAIN|GLAZ", re.IGNORECASE)
+
+
 def project_boq(project: Project, session: Session, summary: dict | None = None, expand: bool = True,
                 drawings: list[Drawing] | None = None, measured_only: bool = False) -> list[BoqItem]:
     """Tüm disiplinlerin keşif listesi. expand=True: katmanlı sistemler bileşenlerine açılır (project_systems kararıyla).
@@ -581,7 +615,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     sh = storey_heights(project, all_drawings)
     els_by_id = {d.id: _included_elements(d, session) for d in drawings}
     # doğrama pozları: adet poz listesinden (proje toplamı), ölçü görünüş / doğrama paftasından, kapı-pencere ayrımı nottan
-    poz_sizes, poz_kinds, sched_poz = {}, {}, set()
+    poz_sizes, poz_kinds, poz_glazed, sched_poz = {}, {}, set(), set()
     for d in drawings:
         poz_sizes.update((d.poz or {}).get("sizes") or {})
         poz_kinds.update((d.poz or {}).get("kinds") or {})
@@ -589,8 +623,13 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
             if e.etype == "dograma" and e.subtype:
                 sched_poz.add(e.subtype)
                 note = str((e.meta or {}).get("note") or "").replace("i", "İ").upper()
-                if e.subtype not in poz_kinds and ("KAPI" in note or "DOOR" in note):
+                ad = str(e.name or "").replace("i", "İ").upper()
+                metin = f"{note} {ad}"
+                if e.subtype not in poz_kinds and ("KAPI" in metin or "DOOR" in metin):
                     poz_kinds[e.subtype] = "door"
+                # Kapı olması camsız olması demek değildir: fotoselli / vitrin / cam kapı neredeyse tamamen camdır.
+                if GLAZED_WORDS.search(metin):
+                    poz_glazed.add(e.subtype)
 
     def ksf_entry(e):
         if e.etype != "dograma":
@@ -598,14 +637,15 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
         size = poz_sizes.get(e.subtype or "")
         kind = poz_kinds.get(e.subtype or "", "window")
         return {"etype": e.etype, "subtype": e.subtype, "name": e.name, "layer": e.layer, "count": e.count,
-                "length": e.length, "area": e.area, "thickness": e.thickness,
+                "length": e.length, "area": e.area, "thickness": e.thickness, "points": e.points, "id": e.id,
                 "b": size[0] if size else None, "h": size[1] if size else None,
-                "meta": {**(e.meta or {}), "opening_kind": kind}}
+                "meta": {**(e.meta or {}), "opening_kind": kind,
+                         "glazed": kind == "window" or (e.subtype or "") in poz_glazed}}
 
     arch, elec, std = [], [], []
     for d in drawings:
         elements = els_by_id[d.id]
-        entry = {"label": d.label or d.filename, "storey_count": d.storey_count,
+        entry = {"id": d.id, "label": d.label or d.filename, "storey_count": d.storey_count,
                  "storey_height": storey_height_of(project, d, sh), "slab_thickness": project.slab_thickness,
                  "height_source": sh["per_drawing"].get(d.id, {}).get("source", sh["source"]),
                  "elements": [ksf_entry(e) for e in elements]}
@@ -735,7 +775,6 @@ def roof_items(project: Project, session: Session, catalog: Catalog, items: list
                     notes=[f"Miktar = çatı alanı ({ra['detail']}); sistem: {src}"], detail={"roof_auto": True})]
 
 
-DERIVED_RULES = ("astar", "tavan", "sap", "kaplama", "temel_yalitim", "grobeton", "koruma_sapi")
 DEFAULT_FINISH_KEYWORDS = "LOBİ,LOBI,VİTRİN,VITRIN,GİRİŞ,GIRIS,HOL,KORİDOR,KORIDOR,FUAYE"
 
 
@@ -766,6 +805,35 @@ def finish_area(project: Project, drawings: list[Drawing], params: dict | None =
     if total > 0:
         n = sum(1 for r in out["rooms"] if r["included"])
         out.update(area=round(total, 2), source="rooms", detail=f"seçili mahaller ({n} mahal: {', '.join(kws[:4])}…) toplamı")
+    return out
+
+
+# Kavisli / kemerli doğrama: bu sözcükler geçen poz yazısı kemer detayı demektir.
+CURVED_WORDS = re.compile(r"KAV[İI]S|KEMER|YAY\b|ARCH|RADIUS|OVAL", re.IGNORECASE)
+
+
+def _curved_joinery(drawings, session) -> dict[str, float]:
+    """Yazısında kavis / kemer geçen doğrama pozları: {poz: adet}."""
+    out: dict[str, float] = {}
+    for d in drawings:
+        for e in _included_elements(d, session):
+            if e.etype != "dograma":
+                continue
+            metin = f"{e.name or ''} {(e.meta or {}).get('note') or ''} {e.label_raw or ''}"
+            if CURVED_WORDS.search(metin.replace("i", "İ")):
+                k = e.subtype or e.name or "?"
+                out[k] = out.get(k, 0.0) + (e.count or 1)
+    return out
+
+
+def _sizeless_joinery(items) -> dict[str, float]:
+    """Ölçüsü bulunamamış doğrama pozları: {poz: adet}. Adet biliniyor, boyut bilinmiyor."""
+    out: dict[str, float] = {}
+    for it in items:
+        if it.kind != "dograma" or it.detail.get("size"):
+            continue
+        poz = (it.label.split()[-1] if it.label else "") or it.group
+        out[poz] = out.get(poz, 0.0) + (it.count or 0.0)
     return out
 
 
@@ -900,6 +968,22 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                              "(görünüşte katman eşleyerek ya da elle) ekleyin.", "optional")
     if (qty("pencere") > 0 or qty("dograma") > 0) and "cam" not in kinds:
         ask("cam", "Pencere / doğrama adedi var ama cam m² yok (ölçü etiketi ya da poz listesinde boyut yok); doğrama fiyatı camı kapsamıyorsa ekleyin.", "optional")
+    # Ölçüsü okunamayan doğrama: **adedi biliniyor**, yalnız boyutu yok. Kalem kaybolmaz (doğrama ve kasa
+    # adetten çıkar) ama camı ve ölçüye bağlı alt işleri (ölçülü körkasa, denizlik) hesaplanamaz.
+    # Kavisli / kemerli doğrama: kemer kuşağında taşıyıcı profil, boardex ve taşyünü olur. Kavis yüksekliği
+    # çizimde yazmadığı için kemer çevresi hesaplanamaz — miktar uydurulmaz, kalem eksik olarak bildirilir.
+    kavisli = _curved_joinery(drawings, session)
+    if kavisli:
+        ask("kavisli_dograma", f"{sum(kavisli.values()):g} adet kavisli / kemerli doğrama var "
+                               f"({', '.join(f'{k} {v:g}' for k, v in sorted(kavisli.items()))}): kemer taşıyıcı profili, "
+                               f"boardex ve taşyünü keşifte yok. Kemer yüksekliği çizimde yazmadığı için miktar "
+                               f"hesaplanamadı; görünüşten ölçüp elle girin.", "required")
+    olcusuz = _sizeless_joinery(items)
+    if olcusuz:
+        n = sum(olcusuz.values())
+        liste = ", ".join(f"{k} {v:g} adet" for k, v in sorted(olcusuz.items(), key=lambda kv: -kv[1]))
+        ask("dograma_olcusu", f"{n:g} adet doğramanın ölçüsü çizimde bulunamadı ({liste}). Adetleri keşifte var ama "
+                              f"camı ve ölçüye bağlı alt işleri hesaplanamadı; ölçüleri doğrama paftasından girin.", "required")
     # 6) çok katlı -> korkuluk / merdiven
     storeys = sum(max(1, d.storey_count) for d in drawings if d.discipline in (DEFAULT_DISCIPLINE, "architectural")
                   and any(e.etype in ("column", "wall") for e in _included_elements(d, session)))
@@ -917,11 +1001,11 @@ FACADE_HULL_MARGIN = 0.15   # m: kolon dış yüzünden cephe yüzeyine (duvar +
 FACADE_GAP_CLOSE = 0.6      # m: döşeme / kiriş / kolon çokgenleri arasındaki boşluklar bu ölçüye kadar kapatılır
 
 
-def building_footprint(elements) -> "tuple[float, float] | None":
-    """Kat planındaki döşeme / kiriş / kolon / perde çokgenlerinden bina oturumu: (alan m², dış çevre m).
+def footprint_polygon(elements):
+    """Bina oturumunun dış hat çokgeni (shapely Polygon) ya da None.
 
-    Çokgenler birleştirilir, aralardaki küçük boşluklar kapatılır, delikler doldurulur (dış hat = cephe). Döşeme yoksa
-    (yalnız kolon), kolonların concave hull'u alınır."""
+    Alan / çevre ve cephe yönleri **aynı** çokgenden türemeli; iki ayrı yerde ayrı kurallarla hesaplanırsa
+    kenar toplamı çevreyi tutmaz (ölçüldü: 40 m kenar, 163 m çevre)."""
     from shapely import concave_hull
     from shapely.geometry import Polygon
     from shapely.ops import unary_union
@@ -943,8 +1027,54 @@ def building_footprint(elements) -> "tuple[float, float] | None":
         return None
     if not parts:
         return None
-    big = max(parts, key=lambda g: g.area)    # bina oturumu: en büyük parça (uzak aykırı nesneler elenir)
-    return float(big.area), float(big.exterior.length)
+    return max(parts, key=lambda g: g.area)    # bina oturumu: en büyük parça (uzak aykırı nesneler elenir)
+
+
+def building_footprint(elements) -> "tuple[float, float] | None":
+    """Kat planındaki döşeme / kiriş / kolon / perde çokgenlerinden bina oturumu: (alan m², dış çevre m)."""
+    g = footprint_polygon(elements)
+    return (float(g.area), float(g.exterior.length)) if g is not None else None
+
+
+# Cephe yönleri: dış hattın her kenarı, dışa bakan normaline göre dört yönden birine yazılır. Çizimin kuzeyi
+# bilinmediği için yönler **çizim eksenidir** (+X sağ, +Y yukarı); hangi cephenin "ön" olduğunu kullanıcı söyler.
+FACADE_SIDES = ("+X", "-X", "+Y", "-Y")
+SIDE_LABEL = {"+X": "Sağdaki cephe (+X)", "-X": "Soldaki cephe (−X)",
+              "+Y": "Üstteki cephe (+Y)", "-Y": "Alttaki cephe (−Y)"}
+
+
+def footprint_sides(elements) -> dict[str, float]:
+    """Bina dış hattının kenar uzunluklarını dört yöne dağıtır: {"+X": m, "-X": m, "+Y": m, "-Y": m}.
+
+    Her kenarın dışa bakan normali hangi eksene yakınsa o yöne yazılır; eğik kenar iki yöne bileşenleriyle
+    paylaştırılır. Dik kenarlarda dört yönün toplamı dış çevreye **eşittir** — hesabın kendi sağlaması budur.
+
+    Eğik kenarda izdüşümlerin toplamı kenarın boyundan büyüktür (45°'de 1,41 katı): eğik bir yüzey iki
+    görünüşte birden yer alır, bu bir hata değil geometrinin kendisidir. Fazlalık `egik_fazla` ile ayrıca
+    bildirilir ki toplam çevreyi aştığında sebebi belli olsun."""
+    import math
+    from shapely.geometry import Polygon
+    big = footprint_polygon(elements)
+    if big is None:
+        return {}
+    ring = list(big.exterior.coords)
+    if len(ring) < 4:
+        return {}
+    # Dış halka saat yönünün tersine ise dışa normal (dy, -dx)'tir; tersse (-dy, dx).
+    isaret = 1.0 if Polygon(ring).exterior.is_ccw else -1.0
+    out = {k: 0.0 for k in FACADE_SIDES}
+    egik = 0.0
+    for a, b in zip(ring, ring[1:]):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L = math.hypot(dx, dy)
+        if L < 1e-9:
+            continue
+        nx, ny = isaret * dy / L, -isaret * dx / L      # dışa bakan birim normal
+        out["+X" if nx > 0 else "-X"] += abs(nx) * L
+        out["+Y" if ny > 0 else "-Y"] += abs(ny) * L
+        egik += L * max(abs(nx) + abs(ny) - 1.0, 0.0)    # eğik kenarın iki yönde birden sayılan payı
+    out["egik_fazla"] = round(egik, 2)
+    return {k: round(v, 2) for k, v in out.items()}
 
 
 def _unique_floor_footprints(fps: list[dict]) -> list[dict]:
@@ -978,7 +1108,7 @@ def _plan_footprints(project: Project, session: Session, drawings: list[Drawing]
             if fp and fp[0] >= 10:
                 labels_struct.add((d.block or "", kot_from_label(d.label)))
                 out.append({"drawing": d.label or d.filename, "drawing_id": d.id, "block": d.block or "",
-                            "area": round(fp[0], 2), "perimeter": round(fp[1], 2),
+                            "area": round(fp[0], 2), "perimeter": round(fp[1], 2), "sides": footprint_sides(els),
                             "storey_height": storey_height_of(project, d), "storey_count": d.storey_count,
                             "basement": "BODRUM" in (d.label or "").upper(), "source": "structural"})
     for d in drawings:
@@ -991,7 +1121,7 @@ def _plan_footprints(project: Project, session: Session, drawings: list[Drawing]
             fp = building_footprint(els)
             if fp and fp[0] >= 10:
                 out.append({"drawing": d.label or d.filename, "drawing_id": d.id, "block": d.block or "",
-                            "area": round(fp[0], 2), "perimeter": round(fp[1], 2),
+                            "area": round(fp[0], 2), "perimeter": round(fp[1], 2), "sides": footprint_sides(els),
                             "storey_height": storey_height_of(project, d), "storey_count": d.storey_count,
                             "basement": "BODRUM" in (d.label or "").upper(), "source": "architectural"})
     return out
@@ -1011,7 +1141,8 @@ def facade_area(project: Project, session: Session, items: list[BoqItem] | None 
         items = project_boq(project, session, expand=False)
     measured = sum(it.quantity for it in items if it.kind == "cephe_brut" and not it.detail.get("info"))
     glass = sum(it.quantity for it in items if it.kind == "cam" and it.unit == "m²")
-    out = {"gross": 0.0, "net": 0.0, "source": "none", "detail": "", "glass": round(glass, 2), "per_drawing": []}
+    out = {"gross": 0.0, "net": 0.0, "source": "none", "detail": "", "glass": round(glass, 2), "per_drawing": [],
+           "sides": {k: 0.0 for k in FACADE_SIDES}}
     if measured > 0:
         out.update(gross=measured, source="measured", detail="görünüşteki cephe brüt alanı kalemi (CEPHE_BRUT)")
     elif params.get("facade_gross_m2"):
@@ -1024,11 +1155,24 @@ def facade_area(project: Project, session: Session, items: list[BoqItem] | None 
             a = fp["perimeter"] * fp["storey_height"] * max(1, fp["storey_count"])
             total += a
             out["per_drawing"].append({**fp, "area": round(a, 2)})
+            for yon, m in (fp.get("sides") or {}).items():
+                if yon in FACADE_SIDES:
+                    out["sides"][yon] += m * fp["storey_height"] * max(1, fp["storey_count"])
         if total > 0:
             out.update(gross=total, source="estimated",
                        detail="kat planı dış hattı (kolon / perde / duvar) çevresi × kat yüksekliği × kat sayısı (tahmin; elle düzeltilebilir)")
     out["gross"] = round(out["gross"], 2)
     out["net"] = round(max(out["gross"] - glass, 0.0), 2)
+    # Yön yön net: cam hangi cephede olduğu bilinmediği için brüt payıyla dağıtılır — bu bir kabuldür,
+    # kalemin notunda yazar. (Doğrama pozları proje toplamıdır, konumları cepheye bağlanamaz.)
+    toplam_yon = sum(out["sides"].values())
+    if toplam_yon > 0:
+        olcek = out["gross"] / toplam_yon          # kenar toplamı eğik cephede çevreyi aşar; brüte oranla
+        out["sides"] = {k: round(v * olcek, 2) for k, v in out["sides"].items()}
+        out["sides_net"] = {k: round(max(v - glass * v / out["gross"], 0.0), 2) if out["gross"] else 0.0
+                            for k, v in out["sides"].items()}
+    else:
+        out["sides_net"] = {k: 0.0 for k in FACADE_SIDES}
     return out
 
 
@@ -1050,15 +1194,29 @@ def facade_items(project: Project, session: Session, catalog: Catalog, items: li
         out.append(it)
     sys_item = catalog.get(code)
     if sys_item and not any(i.kind == sys_item.code.lower() for i in items):
-        note = f"Miktar = net cephe alanı ({fa['gross']:,.0f} m² brüt − {fa['glass']:,.0f} m² cam); kaynak: {fa['detail']}"
-        out.append(BoqItem(key=f"{sys_item.code.lower()}:*", kind=sys_item.code.lower(), group="*", label=sys_item.name,
-                           unit=sys_item.unit, quantity=fa["net"], discipline=f"ksf:{sys_item.discipline}", kind_label=sys_item.name,
-                           discipline_label=catalog.discipline_name(sys_item.discipline), notes=[note],
-                           detail={"facade_source": fa["source"]}))
+        kind = sys_item.code.lower()
+        # Cephe yön yön ayrılır: her cephenin kendi işi, kendi iskelesi, kendi teslim sırası vardır.
+        # Yön ayrımı çıkmazsa (dış hat okunamadı) tek satır kalır.
+        yonler = [(k, v) for k, v in (fa.get("sides_net") or {}).items() if v > 0]
+        if len(yonler) >= 2:
+            cam_notu = (f"; cam ({fa['glass']:,.0f} m²) cephelere brüt payıyla dağıtıldı — hangi doğramanın "
+                        f"hangi cephede olduğu poz listesinden bilinmiyor" if fa["glass"] > 0 else "")
+            for yon, net in sorted(yonler, key=lambda kv: -kv[1]):
+                brut = fa["sides"][yon]
+                out.append(BoqItem(key=f"{kind}:{slug(yon)}", kind=kind, group=slug(yon),
+                                   label=f"{sys_item.name} — {SIDE_LABEL[yon]}", unit=sys_item.unit, quantity=net,
+                                   discipline=f"ksf:{sys_item.discipline}", kind_label=sys_item.name,
+                                   discipline_label=catalog.discipline_name(sys_item.discipline),
+                                   notes=[f"Net {net:,.0f} m² = brüt {brut:,.0f} m² − cam payı; kaynak: {fa['detail']}{cam_notu}"],
+                                   detail={"facade_source": fa["source"], "facade_side": yon,
+                                           "gross_m2": round(brut, 2)}))
+        else:
+            note = f"Miktar = net cephe alanı ({fa['gross']:,.0f} m² brüt − {fa['glass']:,.0f} m² cam); kaynak: {fa['detail']}"
+            out.append(BoqItem(key=f"{kind}:*", kind=kind, group="*", label=sys_item.name,
+                               unit=sys_item.unit, quantity=fa["net"], discipline=f"ksf:{sys_item.discipline}", kind_label=sys_item.name,
+                               discipline_label=catalog.discipline_name(sys_item.discipline), notes=[note],
+                               detail={"facade_source": fa["source"]}))
     return out
-
-
-COMPONENT_SOURCES = ("project", "manual", "default", "missing", "excluded")
 
 
 def project_systems(project: Project, session: Session, catalog: Catalog | None = None,
@@ -1078,10 +1236,24 @@ def project_systems(project: Project, session: Session, catalog: Catalog | None 
     overrides = project.systems or {}
     out: list[dict] = []
     warnings: list[str] = []
+    # Aynı sistem birden çok satıra bölünmüş olabilir (cephe yön yön: ön / arka / sağ / sol). Sistem paneli
+    # tek sistem görmeli: miktarlar toplanır, satırlar "parcalar" olarak taşınır.
+    birlesik: dict[str, BoqItem] = {}
+    parcalar: dict[str, list[dict]] = {}
     for it in items:
         sys_item = catalog.get(it.kind)
         if not sys_item or not sys_item.is_system:
             continue
+        parcalar.setdefault(sys_item.code, []).append(
+            {"key": it.key, "label": it.label, "quantity": round(it.quantity, 3),
+             "side": it.detail.get("facade_side", "")})
+        var = birlesik.get(sys_item.code)
+        if var is None:
+            birlesik[sys_item.code] = it.model_copy(deep=True) if hasattr(it, "model_copy") else copy.deepcopy(it)
+        else:
+            var.quantity += it.quantity
+    for it in birlesik.values():
+        sys_item = catalog.get(it.kind)
         ov = overrides.get(sys_item.code) or {}
         comps = []
         missing = []
@@ -1107,7 +1279,7 @@ def project_systems(project: Project, session: Session, catalog: Catalog | None 
         out.append({"code": sys_item.code, "name": sys_item.name, "discipline": sys_item.discipline,
                     "discipline_label": catalog.discipline_name(sys_item.discipline), "unit": sys_item.unit,
                     "quantity": round(it.quantity, 3), "spec": it.group if it.group != "*" else "", "key": it.key,
-                    "components": comps, "missing": missing,
+                    "components": comps, "missing": missing, "parcalar": parcalar.get(sys_item.code, []),
                     "system_evidence": list((evidence.get(sys_item.code) or {}).get("evidence") or [])})
         if missing:
             warnings.append(f"{sys_item.name} ({it.quantity:,.0f} {sys_item.unit}): projede yazmıyor → {', '.join(missing)}. "
@@ -1139,6 +1311,10 @@ def ensure_price_items(project: Project, items: list[BoqItem], session: Session)
     """Keşifteki her kalem için işçilik satırı; girilmemiş değerler fiyat bankasından doldurulur."""
     existing = {p.key: p for p in session.exec(select(PriceItem).where(PriceItem.project_id == project.id))}
     book = price_book(session, "labor")
+    # ÇŞB / firma birim fiyat listesi: kalemin poz numarasından eşleşir, malzeme + işçiliğin yerine geçer.
+    poz_book = {r.poz: r for r in session.exec(select(PriceBookItem).where(PriceBookItem.scope == "poz")) if r.poz}
+    poz_of = {it.key: it.poz for it in items if it.poz}
+    poz_birim_uyusmaz: list[tuple[str, str, str, str]] = []
     changed = False
     for d in default_price_items(items):
         item = existing.get(d.key)
@@ -1146,6 +1322,20 @@ def ensure_price_items(project: Project, items: list[BoqItem], session: Session)
             item = PriceItem(project_id=project.id, key=d.key, name=d.name, unit=d.unit)
             existing[d.key] = item
             changed = True
+        # poz bedeli: kaleme özeldir (her kalemin kendi pozu vardır), genel satıra yazılmaz
+        poz = poz_of.get(d.key, "")
+        pr = poz_book.get(poz) if poz else None
+        # scope="poz" satırında bedel unit_price alanındadır (her şey dahil birim fiyat).
+        # Birim uyuşmazlığı sessizce geçilemez: demir keşifte kg, ÇŞB pozunda ton'dur (1000 kat fark).
+        if pr and (pr.unit_price or 0) > 0 and not (item.poz_price or 0) > 0 \
+                and "poz_price" not in (item.set_fields or []):
+            from .cost.pozbook import unit_factor
+            f = unit_factor(d.unit, pr.unit)
+            if f is None:
+                poz_birim_uyusmaz.append((poz, d.name, d.unit, pr.unit))
+            else:
+                item.poz_price = float(pr.unit_price) * f
+                changed = True
         # banka değerleri türün genel satırına yazılır; kaleme özel satırlar boş kalıp genel satırdan devralır
         row = book_lookup(book, d.key) if d.key.endswith(":*") else None
         if row is None:
@@ -1159,6 +1349,12 @@ def ensure_price_items(project: Project, items: list[BoqItem], session: Session)
         session.add(item)
     if changed:
         session.commit()
+    if poz_birim_uyusmaz:
+        ensure_price_items.son_uyari = [
+            f"{poz}: liste birimi '{pb}', keşif birimi '{kb}' ({ad}) — çevrilemediği için poz bedeli uygulanmadı"
+            for poz, ad, kb, pb in poz_birim_uyusmaz]
+    else:
+        ensure_price_items.son_uyari = []
     order = {k: i for i, k in enumerate(KIND_ORDER)}
     return sorted(existing.values(), key=lambda p: (order.get(p.key.split(":")[0], 99), "*" not in p.key, p.name))
 
@@ -1220,7 +1416,8 @@ def to_material_data(m: MaterialPrice) -> MaterialData:
 
 def to_price_data(p: PriceItem) -> PriceData:
     return PriceData(p.key, p.name, p.unit, p.unit_price or 0.0, p.labor_price or 0.0, p.brand or "",
-                     p.hours_per_unit or 0.0, p.crew_size or 0.0, tuple(p.set_fields or []))
+                     p.hours_per_unit or 0.0, p.crew_size or 0.0, tuple(p.set_fields or []),
+                     poz_price=p.poz_price or 0.0)
 
 
 def project_cost(project: Project, session: Session) -> tuple[list[QuantityLine], dict, dict, list[BoqItem], dict]:
@@ -1237,3 +1434,117 @@ def project_cost(project: Project, session: Session) -> tuple[list[QuantityLine]
 
 def boq_payload(items: list[BoqItem]) -> dict:
     return boq_summary(items)
+
+
+def project_quality(project, session, items, summary, cost=None):
+    """Same evidence for API and exported reports, without mutating project data."""
+    from .quality import build_quality
+    from .planset import plan_check, PLAN_TYPE_BY_CODE
+    drawings = list(session.exec(select(Drawing).where(Drawing.project_id == project.id)))
+    elements = list(session.exec(select(Element).join(Drawing).where(Drawing.project_id == project.id)))
+    blocks = project_blocks(project, drawings)
+    check = plan_check(drawings, project.plan_set, blocks["blocks"], blocks["missing"])
+    quality = build_quality(drawings, elements, items, summary, project.params or {}, check, cost)
+    heights = storey_heights(project, drawings)
+    for d in drawings:
+        pt = PLAN_TYPE_BY_CODE.get(d.plan_type)
+        if pt and not pt.analyze:
+            continue
+        h = heights["per_drawing"].get(d.id)
+        if not h:
+            continue
+        # Kaynak değerin kendisinden okunur: proje H'si girilmiş olsa da uygulanmamış olabilir (değişken katlı bina).
+        src_txt = h.get("source", "")
+        source = ("default" if src_txt == "varsayılan"
+                  else "user" if src_txt in ("çizime girildi", "projeye girildi", "parametre")
+                  else "drawing")
+        quality["assumptions"].append({"key": f"storey_height:{d.id}", "label": f"{d.label or d.filename} — kat yüksekliği (m)",
+                                      "value": h["height"], "source": source})
+        if source != "user":
+            quality["issues"].append({"code": "storey_height", "severity": "review", "drawing_id": d.id,
+                                      "drawing": d.label or d.filename,
+                                      "message": f"Kat yüksekliği {h['height']:g} m ({h['source']}); ilgili kesit ve katla eşleşmesini kontrol edin."})
+    quality["issues"].extend(_storey_height_override(project, drawings, elements))
+    # Sonucu ikinci bir yoldan sına: bağımsız kanıtlarla çelişen bir sayı "eksik" değil, **yanlış** olabilir.
+    from .selfcheck import build as selfcheck_build
+    rapor = selfcheck_build(summary, elements, project_rebar_mix(project, session, drawings))
+    quality["selfcheck"] = rapor.to_dict()
+    for c in rapor.celisen:
+        quality["issues"].append({"code": "selfcheck_conflict", "severity": "blocking", "drawing_id": None,
+                                  "drawing": None,
+                                  "message": f"{c.ad} — {c.kapsam}: {c.aciklama} (bağımsızlık: {c.bagimsizlik})"})
+    if rapor.celisen:
+        quality["status"] = "incomplete"
+        quality["label"] = "Eksik / kontrol gerekli"
+    return quality
+
+
+def _tr(v: float) -> str:
+    """İşaretli, binlik ayracı nokta olan Türkçe sayı: 1497.0 -> "+1.497"."""
+    return f"{v:+,.0f}".replace(",", ".")
+
+
+def _storey_height_override(project, drawings, elements=None) -> list[dict]:
+    """Projeye girilen H ile çizimin kotları çelişiyorsa ne olduğunu bildirir.
+
+    İki ayrı durum vardır ve karıştırılmamalıdır:
+
+    **(a) H uygulanmadı.** Kotlar kat kat değişiyorsa tek bir H hiçbir katta doğru olamaz; `storey_heights`
+    çizimin kotlarını esas alır. Burada düzeltilecek bir şey yoktur, yalnız kullanıcının girdiği sayının
+    neden kullanılmadığı ve bunun miktara etkisi yazılır (bilgi notu).
+
+    **(b) H uygulandı ama bazı paftalarda kotla uyuşmuyor.** Yükseklikler sabit görünüyor (yayılım küçük),
+    o yüzden kullanıcının kararı korunur; fark m³ / m² olarak ölçülüp bildirilir ve tek tıkla düzeltme sunulur.
+    """
+    from types import SimpleNamespace
+    h = float(project.storey_height or 0)
+    if h <= 0:
+        return []
+    auto = storey_heights(SimpleNamespace(storey_height=0.0), drawings)["per_drawing"]
+    uygulandi = storey_heights(project, drawings)["source"] == "parametre"
+    by_drawing: dict[int, list] = {}
+    for e in (elements or []):
+        by_drawing.setdefault(e.drawing_id, []).append(e)
+    farkli, d_beton, d_kalip = [], 0.0, 0.0
+    for d in drawings:
+        if d.storey_height and d.storey_height > 0:
+            continue                      # paftaya elle girilmiş: proje H'si zaten geçerli değil
+        a = auto.get(d.id) or {}
+        if a.get("kot") is None or abs(float(a.get("height", h)) - h) <= 0.05:
+            continue
+        auto_h = float(a["height"])
+        farkli.append((d, auto_h))
+        # (a)'da çizim değeri zaten kullanıldı: fark "H kullanılsaydı ne olurdu"nun tersidir
+        delta = ((auto_h - h) if not uygulandi else (auto_h - h)) * max(1, getattr(d, "storey_count", 1) or 1)
+        for e in by_drawing.get(d.id, []):
+            if not e.included or e.etype not in ("column", "shear_wall"):
+                continue
+            d_beton += (e.area or 0.0) * delta
+            # kolon: çevre × H, perde: 2 × uzunluk × H (metraj formülleri tablosu)
+            yuz = 2 * (e.length or 0.0) if e.etype == "shear_wall" and e.length else (e.perimeter or 0.0)
+            d_kalip += yuz * delta
+    if not farkli:
+        return []
+    yukseklikler = [v for _, v in farkli]
+    ornek = ", ".join(f"{(d.label or d.filename)[:24]} {v:g} m" for d, v in farkli[:4])
+    fark_var = abs(d_beton) >= 0.5 or abs(d_kalip) >= 1.0
+    if not uygulandi:
+        mesaj = (f"Projeye girilen kat yüksekliği {h:g} m **kullanılmadı**: çizimden okunan kotlar kat kat "
+                 f"değişiyor ({min(yukseklikler):g}–{max(yukseklikler):g} m), tek bir H hiçbir katta doğru "
+                 f"olamaz. Her pafta kendi kotundan hesaplandı ({ornek}).")
+        if fark_var:
+            mesaj += (f" {h:g} m uygulansaydı kolon + perde betonu {_tr(-d_beton)} m³, "
+                      f"kalıbı {_tr(-d_kalip)} m² olurdu.")
+        mesaj += " Bir paftanın yüksekliğini kendiniz belirlemek isterseniz o paftaya doğrudan girin."
+        return [{"code": "storey_height_auto_applied", "severity": "review", "drawing_id": None,
+                 "drawing": None, "message": mesaj}]
+    mesaj = (f"Projeye girilen kat yüksekliği {h:g} m, {len(farkli)} paftada çizimden okunan kot farkının "
+             f"yerine kullanıldı ({ornek}).")
+    if fark_var:
+        mesaj += (f" Kotlardan hesaplansaydı kolon + perde betonu {_tr(d_beton)} m³, "
+                  f"kalıbı {_tr(d_kalip)} m² değişirdi.")
+    return [{"code": "storey_height_override", "severity": "review", "drawing_id": None, "drawing": None,
+             "fix": {"action": "storey_height_auto", "label": "Kat yüksekliklerini kotlardan hesapla"},
+             "message": mesaj + " Proje H'sini 0 yapın (kotlardan otomatik) ya da her paftaya kendi yüksekliğini girin."}]
+
+

@@ -18,6 +18,7 @@ const PARAM_FIELDS: Array<{ key: keyof ProjectParams; label: string; step: strin
   { key: 'cable_waste_pct', label: 'Kablo fire (%)', step: '1', hint: '' },
   { key: 'tray_waste_pct', label: 'Tava fire (%)', step: '1', hint: '' },
   { key: 'work_hours_per_day', label: 'Günlük çalışma (saat)', step: '0.5', hint: 'Süre hesabı' },
+  { key: 'crew_count', label: 'Eşzamanlı ekip sayısı', step: '1', hint: 'Bir ekipteki kişi sayısı normdur (kalıpta 3, sıvada 2); kaç ekibin aynı anda çalışacağı sizin kararınız' },
 ]
 const SARF_FIELDS: Array<{ key: keyof ProjectParams; label: string; step: string; hint: string }> = [
   { key: 'concrete_waste_pct', label: 'Beton fire (%)', step: '0.5', hint: '' },

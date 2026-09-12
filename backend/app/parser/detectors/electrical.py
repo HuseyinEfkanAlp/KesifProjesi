@@ -9,7 +9,6 @@ Armatür: armatür katmanlarındaki blok yerleşimleri; kategori blok/katman ad�
 """
 from __future__ import annotations
 
-import math
 
 from shapely import STRtree
 from shapely.geometry import LineString, Point as SPoint
@@ -18,9 +17,6 @@ from ..geometry import polyline_length
 from ..labels_ext import ElecLabel, fixture_category, parse_elec_label
 from ..loader import Drawing, Entity
 from .base import DetectParams, DetectedElement, _rect_from_centerline, find_parallel_pairs, segments_on_layers
-
-LINE_KINDS = {"tray": "tava", "cable": "kablo", "conduit": "boru"}
-
 
 class ElecLabelIndex:
     def __init__(self, drawing: Drawing, params: DetectParams):
