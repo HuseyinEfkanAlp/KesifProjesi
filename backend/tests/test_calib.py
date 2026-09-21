@@ -4,6 +4,7 @@ Gerçek DXF okumaz (o `python -m app.calib` işidir); burada test edilen, farkı
 bağlanması**: aynı yüzde sapma, hangi ölçüde çıktığına göre farklı suçluyu göstermelidir.
 """
 import json
+from pathlib import Path
 from types import SimpleNamespace as Obj
 
 import pytest
@@ -95,7 +96,7 @@ def test_korpus_okunur_ve_yollar_cozulur(tmp_path):
     }, ensure_ascii=False), encoding="utf-8")
     c = load_corpus(p, repo_root=tmp_path)
     assert c.katlar[0].doseme_kalinligi == 0.12                 # varsayılan kata iner
-    assert c.katlar[0].paftalar[0].endswith("samples/a.dxf")
+    assert Path(c.katlar[0].paftalar[0]).parts[-2:] == ("samples", "a.dxf")  # ayraç platforma göre
     assert str(tmp_path) in c.katlar[0].paftalar[0]             # yol depo köküne göre çözülür
     assert "Bağımsız" in c.guven_aciklama
 
