@@ -1057,6 +1057,10 @@ Senaryodaki iki paftanın katı, adlarındaki "Zemin"den tanındı; kullanıcı 
 
 Kapsam kuralını ölçmek için kapatmak: proje parametresi `scope_off = 1` (her pafta kendi ölçtüğünü yazar).
 
+Bu senaryo repoda bir **gerileme kapısıdır**: `cd backend && python calib/senaryo_altlik.py` (çıkış kodu 1 =
+kaldı). `python -m app.calib` doğruluk kapısıdır, bu ise çift sayım kapısı; kapsam kuralına dokunan her
+değişiklikten sonra ikisi de koşturulur.
+
 Testler: `backend/tests/test_scope.py` — zayıf akım tavayı ikinci kez saymaz, ek kol eklenir, bir katın iki
 yarısı toplanır, ayrı kot / ayrı blok / farklı kesit elenmez, kot yoksa hiçbir şey düşmez, aynı DXF'te yan
 yana duran paftalar birbirini elemez, ikiz komşuya kaptırılmaz, zayıf hizalama kabul edilmez,
