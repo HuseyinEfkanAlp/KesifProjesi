@@ -1,0 +1,18 @@
+- [Keşif projesi ortamı](kesif-projesi-ortam.md) — Mac'te conda Python 3.12 venv, ./start.sh, doğrudan main'e push
+- [Keşif projesi hedefi](kesif-projesi-hedef.md) — tüm disiplinler için keşif + maliyet/süre; KÇS standart çizim (katman adı = kalem) ana yol
+- [Arayüz sade olsun](kesif-arayuz-sade.md) — kullanıcı sayfayı karışık buldu; özet önce, ayrıntı katlanır
+- [Keşif standardı: poz ve ölçü kuralları](kesif-standart-poz.md) — iş grupları, doğrulanmış ÇŞB pozları, çok disiplinli pafta; sonraki adaylar
+- [Güven paketi 9 Eyl 2026](kesif-guven-paketi.md) — dört inceleme, ~60 bulgu kapatıldı; doğrulanmış A4-A5 değerleri; hâlâ açık kalanlar
+- [Birim fiyat modeli](kesif-fiyat-modeli.md) — işçilik kaleme, malzeme ürüne (C30/37 beton, Ø12 demir); ürün seçimi paneli
+- [Donatı çapını çizimden okuma](kesif-donati-capi.md) — ƒ glyph'i, blok özniteliklerindeki yazılar, okunan çap dağılımı
+- [İşçilik normu ilkesi](kesif-iscilik-normu.md) — norm birim başına sabit değil; sürücü değişkene bağla, işçiliği hazırlık/taşıma/montaj diye ayır
+- [Yapı blokları](kesif-yapi-bloklari.md) — birleşik bodrum+zemin podyum + C1..C4; blok kavramı, hâlâ açık: blok bazlı maliyet
+- [Gerçek dosyada doğrulama](kesif-gercek-dosya-dogrulama.md) — sezgisel değişiklik gerçek DXF'lerde ölçülmeden bitmez; .sheets.json baseline değil
+- [Grup bazlı gösterim](kesif-grup-bazli-gosterim.md) — tek tek eleman değil kesit bazında adet; önizlemede tıklama grubu seçer
+- [Antet verisi](kesif-antet-verisi.md) — ruhsat antedi pafta değil ama okunur; beton/donatı sınıfı oradan gelir
+- [Cetvel ve lejant](kesif-cetvel-lejant.md) — cetvel pafta değil ama elenmez; yazıları okunur, sembol lejantı için gerçek örnek yok
+- [Demir raporu](kesif-demir-raporu.md) — toplam ton + çap dökümü Metraj'ın ilk paneli; metraj/oran/fire ayrı sütun
+- [Boşluk çift düşümü](kesif-bosluk-cift-dusum.md) — duvar kesilerek çizilmişse boşluk ikinci kez düşülmez; tolerans duvar kalınlığından türer
+- [Kalibrasyon döngüsü](kesif-kalibrasyon-dongusu.md) — çizimin kendi metraj tablosu referanstır; app/calib korpusu, teşhis ve gerileme kapısı
+- [Kanıt sıralaması](kesif-kanit-siralamasi.md) — selfcheck.py dairesel kontrolü reddeder; çelişkide zayıf kanıtlı girdi düzeltilir, kullanıcının pafta kararı ezilmez
+- [Kapsam sahipliği](kesif-kapsam-sahipligi.md) — okunmuşu tekrar okuma; her kalemin tek sahibi var, kanıt yoksa düşürme yok
