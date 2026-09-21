@@ -13,7 +13,7 @@ Elektrik: tava m (boyut bazında), kablo m (kesit bazında; iniş payı × hat s
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ..parser.labels_ext import FIXTURE_CATEGORIES, WALL_MATERIALS
@@ -648,6 +648,46 @@ def expand_systems(items: list[BoqItem], systems: list[dict], catalog: Catalog) 
                     meta=(name, unit, f"ksf:{disc}", catalog.discipline_name(disc)), poz=(citem.poz if citem else ""),
                     system_code=sys["code"])
     return out + list(acc.items.values())
+
+
+def merge_duplicates(items: list[BoqItem]) -> list[BoqItem]:
+    """Aynı anahtarlı kalemleri tek satırda toplar.
+
+    Keşif listesi ayrı üreticilerin (sezgisel mimari / elektrik, KÇS standart çizim, türetilmiş
+    kalemler) listelerinin toplanmasıyla kurulur. Her üretici kendi `_Acc`'si içinde aynı anahtarı
+    zaten topluyor ama İKİ ÜRETİCİ aynı anahtarı doğurabiliyor: KÇS duvarından türeyen sıva ile
+    sezgisel duvarın sıvası da `siva:*` taşır. Birleşmezlerse aynı poz keşif listesinde, maliyet
+    tablosunda ve Excel'de iki satır görünür (anahtar fiyat kaleminin kendisi olduğu için tutar
+    doğru kalır, ama liste "kalem başına tek satır" kuralını bozar).
+
+    Toplama kuralı `_Acc.add` ile AYNIDIR: miktar ve adet toplanır, not tekrarsız eklenir, sayısal
+    detay alanları toplanır, sayısal olmayan detay üzerine yazılır. İlk kalem kopyalanır — girdi
+    listesindeki nesneler değişmesin (çağıran `items`'ı başka hesapta da kullanıyor olabilir).
+
+    ⚠️ Birimi farklı iki kalem BİRLEŞTİRİLMEZ (m² ile adet toplanamaz); böyle bir çakışma veri
+    tutarsızlığıdır, sessizce toplamak yanlış miktar üretirdi.
+    """
+    out: dict[str, BoqItem] = {}
+    sira: list[BoqItem] = []
+    for it in items:
+        cur = out.get(it.key)
+        if cur is None or cur.unit != it.unit:
+            if cur is None:
+                kopya = replace(it, notes=list(it.notes), detail=dict(it.detail))
+                out[it.key] = kopya
+                sira.append(kopya)
+            else:
+                sira.append(it)          # aynı anahtar, farklı birim: olduğu gibi bırak
+            continue
+        cur.quantity += it.quantity
+        cur.count += it.count
+        for n in it.notes:
+            if n not in cur.notes:
+                cur.notes.append(n)
+        for k, v in it.detail.items():
+            eski = cur.detail.get(k)
+            cur.detail[k] = eski + v if isinstance(v, (int, float)) and isinstance(eski, (int, float)) else v
+    return sira
 
 
 def sort_items(items: list[BoqItem]) -> list[BoqItem]:

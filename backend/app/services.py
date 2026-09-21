@@ -22,7 +22,7 @@ from .parser.blocks import covered_by as block_parts
 from .parser.rebar_mix import layer_verdict as rebar_layer_verdict
 from .parser.rebar_mix import scan_texts as scan_rebar_texts
 from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary, effective_params, electrical_items,
-                           expand_systems, slug, sort_items, standard_items, structural_items)
+                           expand_systems, merge_duplicates, slug, sort_items, standard_items, structural_items)
 from .standard.catalog import Catalog, parse_layer
 from .quantity.engine import ElementData, QuantityLine, QuantityParams, compute_all
 from .quantity.recipes import expand_recipes
@@ -782,7 +782,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     if std:
         items += standard_items(std, params, catalog)
     if measured_only:
-        return sort_items([it for it in items if it.group != "fire" and it.kind not in _NOT_MEASURED_KINDS])
+        return sort_items(merge_duplicates([it for it in items if it.group != "fire" and it.kind not in _NOT_MEASURED_KINDS]))
     items += facade_items(project, session, catalog, items, drawings, params)
     items += roof_items(project, session, catalog, items, drawings, params)
     items += derived_items(project, session, catalog, items, drawings, params)[0]
@@ -794,7 +794,8 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
         # demir işçiliği çapa / kata göre hesaplanır: reçete parametreleri (hazır demir %, genel kat kararı) geçilir
         rp = dict(params); rp["_rebar_layers_default"] = layers.get("*", "")
         items = expand_recipes(items, catalog, storey_height=sh["effective"], off="recete" in off, params=rp)
-    return sort_items(items)
+    # ayrı üreticiler (sezgisel / KÇS / türetilmiş) aynı anahtarı doğurabilir: kalem başına tek satır
+    return sort_items(merge_duplicates(items))
 
 
 def _g_etype(e) -> str:
