@@ -40,11 +40,15 @@ class PlanType:
     satisfies: tuple[str, ...] = ()   # bu plan varsa şu tipler de karşılanmış sayılır
     hint: str = ""             # kullanıcıya not
     analyze: bool = True       # False: yüklenir ama metraja girmez (kesit, detay); pafta seçiminde önceden işaretlenmez
+    # Bu paftanın YETKİLİ olduğu eleman tipleri: kalemi ölçmek için çizilen pafta odur. Aynı kalem başka bir
+    # paftanın altlığında da çizilmişse orada ikinci kez sayılmaz (quantity/scope.py). Boş bırakmak "yetkili
+    # değil" demek değildir — disiplini tutan pafta yine sayar, yalnız yetkilisi varken ona bırakır.
+    owns: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
         return {"code": self.code, "group": self.group, "group_label": PLAN_GROUPS[self.group], "label": self.label,
                 "discipline": self.discipline, "level": self.level, "hint": self.hint, "analyze": self.analyze,
-                "satisfies": list(self.satisfies)}
+                "satisfies": list(self.satisfies), "owns": list(self.owns)}
 
 
 # Sıra önemli: ilk eşleşen kazanır. Özel olanlar (donatı, tava, yangın...) genel "kat planı"ndan önce gelir.
@@ -59,7 +63,7 @@ PLAN_TYPES: list[PlanType] = [
              pattern=r"(TEMEL|RADYE).*DONATI|DONATI.*(TEMEL|RADYE)", hint="Temel demir metraj tablosu buradan okunur."),
     PlanType("sta_temel_kalip", "STA", "Temel kalıp planı", "structural",
              pattern=r"(TEMEL|RADYE).*(KALIP|PLAN)|KALIP.*(TEMEL|RADYE)|^STA[-_ ]?TEM(EL)?$|\bSTA[-_ ]TEM\b", exclude="DETAY|KESIT",
-             hint="Radye / sürekli temel betonu ve kalıbı."),
+             owns=("foundation",), hint="Radye / sürekli temel betonu ve kalıbı."),
     PlanType("elk_kolon_sema", "ELK", "Elektrik kolon şeması", "mapped", level=OPTIONAL, analyze=False,
              pattern=r"KOLON\s*SEMA|TEK\s*HAT\s*SEMA"),
     PlanType("sta_kolon", "STA", "Kolon aplikasyon / detay paftası", "rebar",
@@ -74,33 +78,39 @@ PLAN_TYPES: list[PlanType] = [
     PlanType("sta_doseme_donati", "STA", "Döşeme (kat) donatı planı", "rebar",
              pattern=r"DONATI", hint="Döşeme alt / üst demir metraj tablosu."),
     PlanType("sta_kat_kalip", "STA", "Kat kalıp planları", "structural",
+             owns=("column", "shear_wall", "beam", "slab", "parapet"),
              pattern=r"KALIP|^STA[-_ ]?\d{1,2}$|\bSTA[-_ ]\d{1,2}\b", exclude="DETAY(?!L)|KESIT", hint="Kolon, perde, kiriş, döşeme: beton m³, kalıp m²."),
     # --- Elektrik
     PlanType("elk_tava", "ELK", "Elektrik kablo tava planı", "electrical",
+             owns=("tray",),
              pattern=r"\bTAVA(SI|LARI)?\b|KABLO\s*TAVA|KABLO\s*TASIMA", hint="Tava m (boyut bazında), kablo m."),
     PlanType("elk_zayif", "ELK", "Zayıf akım planı", "electrical",
              pattern=r"ZAYIF|YANGIN\s*(ALGILAMA|IHBAR|ALARM)|DATA|TELEFON|\bTV\b|CCTV|KAMERA|OTOMASYON|SES\s*SISTEM|GORUNTULU",
-             hint="Data / telefon / TV / yangın algılama hatları ve cihazları."),
+             owns=("fixture", "cable", "conduit"), hint="Data / telefon / TV / yangın algılama hatları ve cihazları."),
     PlanType("elk_topraklama", "ELK", "Topraklama / paratoner planı", "electrical", level=OPTIONAL,
              pattern=r"TOPRAKLAMA|PARATONER|YILDIRIM"),
     PlanType("elk_aydinlatma", "ELK", "Aydınlatma planı", "electrical",
+             owns=("fixture", "cable", "conduit"),
              pattern=r"AYDINLATMA|ARMATUR", hint="Armatür adedi, aydınlatma hatları."),
     PlanType("elk_kuvvet", "ELK", "Kuvvet / priz planı", "electrical",
+             owns=("fixture", "cable", "conduit"),
              pattern=r"KUVVET|PRIZ|GUC\s*PLAN", hint="Priz adedi, kuvvet hatları."),
     PlanType("elk_genel", "ELK", "Elektrik tesisat planı (genel)", "electrical", level=OPTIONAL,
              pattern=r"ELEKTRIK|^ELK[-_ ]|\bELK[-_ ]?\d", satisfies=("elk_aydinlatma", "elk_kuvvet"),
              hint="Aydınlatma ve kuvvet tek paftadaysa bu tip ikisini de karşılar."),
     # --- Mekanik
     PlanType("mek_yangin", "MEK", "Yangın tesisatı (sprinkler / dolap) planı", "mechanical",
+             owns=("pipe", "mech_fixture"),
              pattern=r"SPRINK|YANGIN|HIDRANT|SONDURME|^YAN[-_ ]|\bYAN[-_ ]?\d", hint="Yangın borusu m (çap), sprinkler / dolap adet; KSF katmanlıysa 'KSF standart'."),
     PlanType("mek_hav", "MEK", "Havalandırma planı", "mechanical",
+             owns=("duct", "mech_fixture"),
              pattern=r"HAVALANDIRMA|HAVA\s*KANAL|EGZOZ|KLIMA\s*SANTRAL|^HAV[-_ ]|\bHAV[-_ ]?\d", hint="Kanal m (boyut bazında), menfez / fan adet."),
     PlanType("mek_isitma", "MEK", "Isıtma / soğutma planı", "mechanical",
              pattern=r"ISITMA|SOGUTMA|KLIMA|RADYATOR|FANCOIL|\bVRF\b|\bVRV\b|KAZAN|CHILLER|MEKANIK|^MEK[-_ ]|\bMEK[-_ ]?\d",
-             hint="Boru m (çap bazında), cihaz adet."),
+             owns=("pipe", "mech_fixture"), hint="Boru m (çap bazında), cihaz adet."),
     PlanType("mek_sihhi", "MEK", "Sıhhi tesisat planı", "mechanical",
              pattern=r"SIHHI|TEMIZ\s*SU|PIS\s*SU|ATIK\s*SU|KULLANMA\s*SUYU|VITRIFIYE|TESISAT|^SIH[-_ ]|\bSIH[-_ ]?\d", exclude="ELEKTRIK",
-             hint="Temiz / pis su boruları (çap bazında), vitrifiye adet."),
+             owns=("pipe", "mech_fixture"), hint="Temiz / pis su boruları (çap bazında), vitrifiye adet."),
     # --- Altyapı / peyzaj / asansör
     PlanType("alt_altyapi", "ALT", "Altyapı planı", "mapped",
              pattern=r"ALTYAPI|ALT\s*YAPI|KANALIZASYON|YAGMUR\s*SUYU|ICME\s*SUYU|DRENAJ|ROGAR|SAHA\s*TESISAT|DIS\s*TESISAT|^ALT[-_ ]|\bALT[-_ ]?\d",
@@ -126,7 +136,7 @@ PLAN_TYPES: list[PlanType] = [
              pattern=r"(KAPI|PENCERE|DOGRAMA|MERDIVEN|ISLAK\s*HACIM|BANYO|WC).*DETAY|DETAY"),
     PlanType("mim_kat_plani", "MIM", "Mimari kat planları", "architectural",
              pattern=r"KAT\s*PLAN|MIMARI|\bPLAN|^MIM[-_ ]|\bMIM[-_ ]?\d",
-             hint="Duvar m² (malzeme bazında), sıva, boya, kapı / pencere adet."),
+             owns=("wall", "door", "window"), hint="Duvar m² (malzeme bazında), sıva, boya, kapı / pencere adet."),
 ]
 
 PLAN_TYPE_BY_CODE: dict[str, PlanType] = {p.code: p for p in PLAN_TYPES}

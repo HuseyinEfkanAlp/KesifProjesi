@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Api } from '../api/client'
-import type { QualityReport, SelfCheck } from '../types'
+import type { QualityReport, ScopeReport, SelfCheck } from '../types'
 
 /** Kontrol listesindeki tek tıkla düzeltmeler. Hepsi bir proje parametresini değiştirir; hesap yeniden çalışır. */
 const FIXES: Record<string, { patch: Record<string, number>; done: string }> = {
@@ -35,9 +35,10 @@ export default function QualitySummary({ report, projectId, onFixed }: {
     {note && <div className="hint" style={{ marginTop: 8 }}>{note}</div>}
     {error && <div className="error" style={{ marginTop: 8 }}>{error}</div>}
     {report.selfcheck && <SelfCheckBlock sc={report.selfcheck} />}
+    {report.scope && <ScopeBlock scope={report.scope} projectId={projectId} />}
     <details style={{ marginTop: 12 }}>
       <summary>Kontrol listesi ve hesap kabulleri</summary>
-      <ul>{report.issues.map((issue, index) => <li key={index} style={{ marginBottom: 8 }}>
+      <ul>{report.issues.filter((i) => !i.code.startsWith('scope_')).map((issue, index) => <li key={index} style={{ marginBottom: 8 }}>
         <strong>{issue.severity === 'blocking' ? 'Eksik: ' : 'İncelenmeli: '}</strong>
         {issue.drawing_id && <><Link to={`/projects/${projectId}/drawings/${issue.drawing_id}`}>{issue.drawing}</Link> — </>}{issue.message}
         {issue.fix && <> <button type="button" className="link" disabled={!!busy} onClick={() => applyFix(issue.fix!.action)}>
@@ -50,6 +51,29 @@ export default function QualitySummary({ report, projectId, onFixed }: {
       </table><p>Kullanıcı girişi, bağımsız olarak doğrulanmış ölçü anlamına gelmez.</p></div>}
     </details>
   </section>
+}
+
+/** Kapsam sahipliği: bir kez okunan miktar ikinci paftadan tekrar okunmaz — ne düştü, ne eklendi. */
+function ScopeBlock({ scope, projectId }: { scope: ScopeReport; projectId: number }) {
+  if (scope.notes.length === 0) return null
+  const sira = { unmatched: 0, orphan: 1, duplicate: 2, addition: 3 } as const
+  const notes = [...scope.notes].sort((a, b) => sira[a.kind] - sira[b.kind])
+  const dikkat = notes.filter((n) => n.severity === 'review').length
+  return <div style={{ marginTop: 12 }}>
+    <strong>Kapsam: hangi miktar hangi paftadan sayıldı</strong>
+    <div>{scope.duplicate_count} nesne ikinci paftada tekrar sayılmadı · {scope.addition_count} nesne ek olarak eklendi</div>
+    <details style={{ marginTop: 6 }} open={dikkat > 0}>
+      <summary>{notes.length} kapsam notu{dikkat > 0 && ` · ${dikkat} tanesi kontrol istiyor`}</summary>
+      <ul>{notes.map((n, i) => <li key={i} style={{ marginBottom: 6 }}>
+        {n.drawing_id > 0
+          ? <Link to={`/projects/${projectId}/drawings/${n.drawing_id}`}>{n.drawing}</Link>
+          : <strong>{n.etype_label}</strong>}
+        {n.kot && <span className="muted"> ({n.kot})</span>} — {n.message}
+      </li>)}</ul>
+      <p className="muted hint">Aynı nesne bir kez sayılır, ayrı nesne her zaman sayılır. Konum kanıtı yoksa
+        hiçbir miktar düşürülmez: kararı siz verirsiniz.</p>
+    </details>
+  </div>
 }
 
 const ISARET: Record<string, string> = { destekliyor: '✓', celisiyor: '✗', kararsiz: '–' }

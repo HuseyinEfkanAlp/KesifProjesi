@@ -442,6 +442,117 @@ def _included_elements(d: Drawing, session: Session) -> list[Element]:
     return session.exec(select(Element).where(Element.drawing_id == d.id, Element.included == True)).all()  # noqa: E712
 
 
+def _floor_label(rank: float) -> str:
+    """Kat sırasının okunur adı: -100 temel, -2 2. bodrum, 0 zemin, 0,5 asma kat, 99 çatı, 3 -> 3. kat."""
+    if rank <= -100:
+        return "temel"
+    if rank < 0:
+        return f"{abs(int(rank))}. bodrum"
+    if rank == 0:
+        return "zemin kat"
+    if rank == 0.5:
+        return "asma kat"
+    if rank >= 99:
+        return "çatı"
+    return f"{rank:g}. kat"
+
+
+def _floor_identity(drawings: list[Drawing]) -> dict[int, tuple[str | None, str]]:
+    """Pafta -> (kat anahtarı, görünen ad). Aynı katı gösteren paftalar aynı anahtarı taşır.
+
+    Kat kimliği **kullanıcıdan istenmez, çizimden okunur** — iki bağımsız kanıt vardır ve ikisi de tek başına
+    yeterlidir: kot ("+7.95 KOTU KALIP PLANI", ya da çizimden okunan kot) ve plan adındaki kat sırası
+    ("2. KAT AYDINLATMA PLANI", "BODRUM KALIP"). Elektrik / mekanik paftalarında kot çoğu zaman yazmaz; kat
+    adı yazar. İkisini birden taşıyan bir pafta ("2. KAT (+7.95) KALIP PLANI") iki kimliği birbirine bağlar,
+    böylece kotla adlandırılmış statik pafta ile adla adlandırılmış elektrik paftası aynı kata düşer.
+    Hiçbir kanıt yoksa anahtar None'dur: o paftada hiçbir miktar düşürülmez."""
+    from .parser.levels import floor_rank
+    parent: dict[tuple[str, str], tuple[str, str]] = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    nodes: dict[int, list[tuple[str, str]]] = {}
+    kots: dict[tuple[str, str], str] = {}
+    for d in drawings:
+        ns: list[tuple[str, str]] = []
+        kot = _drawing_kot(d)
+        if kot:
+            ns.append(("kot", kot))
+            kots[("kot", kot)] = kot
+        r = floor_rank(d.label or d.filename or "")
+        if r is not None:
+            ns.append(("kat", f"{r:g}"))
+        for n in ns:
+            find(n)
+        if len(ns) == 2:
+            union(ns[0], ns[1])     # aynı pafta hem kotu hem kat adını taşıyor: ikisi aynı kattır
+        nodes[d.id] = ns
+
+    # her kimlik kümesi için görünen ad: varsa kot, yoksa kat adı
+    label_of: dict[tuple[str, str], str] = {}
+    for n in list(parent):
+        root = find(n)
+        if n[0] == "kot":
+            label_of.setdefault(root, kots[n])
+    out: dict[int, tuple[str | None, str]] = {}
+    for d in drawings:
+        ns = nodes.get(d.id) or []
+        if not ns:
+            out[d.id] = (None, "")
+            continue
+        root = find(ns[0])
+        ad = label_of.get(root) or next((_floor_label(float(n[1])) for n in ns if n[0] == "kat"), "")
+        out[d.id] = (f"{root[0]}:{root[1]}", ad)
+    return out
+
+
+def scope_resolution(project: Project, drawings: list[Drawing], els_by_id: dict[int, list[Element]]):
+    """Kapsam sahipliği: aynı kotta aynı nesneyi ikinci kez çizen pafta onu tekrar saymaz (quantity/scope.py).
+
+    Sahiplik yalnız hesaba giren paftalar arasında kurulur; tek pafta metrajında (drawing_boq) o paftanın kendi
+    ölçümü görünür, proje toplamında ise ikinci kez çizilen nesne düşer. Proje parametresi `scope_off` kapatır."""
+    from .planset import PLAN_TYPE_BY_CODE
+    from .quantity.scope import Resolution, ScopeDrawing, ScopeElement, resolve
+    if str((project.params or {}).get("scope_off") or "").strip() in ("1", "true", "evet"):
+        return Resolution()
+
+    def contributes(d: Drawing) -> bool:
+        """Metraja girmeyen pafta sahiplik de kuramaz: donatı paftasının altlığındaki kalıp planı hiçbir zaman
+        kalıp planının kendisini düşüremez (kesit / detay paftaları da öyle)."""
+        pt = PLAN_TYPE_BY_CODE.get(d.plan_type or "")
+        return d.discipline != REBAR_DISCIPLINE and (pt is None or pt.analyze)
+
+    drawings = [d for d in drawings if contributes(d)]
+    kat = _floor_identity(drawings)
+    sds = [ScopeDrawing(id=d.id, label=d.label or d.filename, block=d.block or "",
+                        floor=kat[d.id][0], floor_label=kat[d.id][1],
+                        plan_type=d.plan_type or "", discipline=d.discipline or "",
+                        elements=[ScopeElement(id=e.id, etype=e.etype, subtype=e.subtype, points=e.points or (),
+                                               length=e.length or 0.0, area=e.area or 0.0, count=e.count or 1,
+                                               manual=e.manual) for e in els_by_id.get(d.id, [])])
+           for d in drawings]
+    return resolve(sds)
+
+
+def measured_elements(project: Project, session: Session, drawings: list[Drawing]):
+    """Metraja giren elemanlar (pafta -> eleman listesi) ve kapsam raporu: ikinci kez çizilen nesne listede yoktur."""
+    els = {d.id: _included_elements(d, session) for d in drawings}
+    res = scope_resolution(project, drawings, els)
+    if not res.dropped:
+        return els, res
+    return {did: [e for e in lst if e.id not in res.dropped] for did, lst in els.items()}, res
+
+
 def rebar_table_rows(project: Project, session: Session) -> list[dict]:
     """Donatı paftalarından okunan tablo / poz yazısı satırları (çap bazında kg) — özet ve keşif için.
 
@@ -482,10 +593,11 @@ def project_quantities(project: Project, session: Session, drawings: list[Drawin
         drawings = all_drawings
     lines: list[QuantityLine] = []
     info: dict = {}
+    els_by_id, _scope = measured_elements(project, session, drawings)
     for d in drawings:
         if d.discipline == REBAR_DISCIPLINE:
             continue
-        elements = [e for e in _included_elements(d, session) if e.etype in STRUCTURAL_TYPES]
+        elements = [e for e in els_by_id.get(d.id, []) if e.etype in STRUCTURAL_TYPES]
         if not elements:
             continue
         net_slabs = any(e.etype == "slab" and e.subtype == "net" for e in elements)
@@ -613,7 +725,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     params = project_params(project)
     catalog = load_catalog()
     sh = storey_heights(project, all_drawings)
-    els_by_id = {d.id: _included_elements(d, session) for d in drawings}
+    els_by_id, _scope = measured_elements(project, session, drawings)
     # doğrama pozları: adet poz listesinden (proje toplamı), ölçü görünüş / doğrama paftasından, kapı-pencere ayrımı nottan
     poz_sizes, poz_kinds, poz_glazed, sched_poz = {}, {}, set(), set()
     for d in drawings:
@@ -1465,6 +1577,16 @@ def project_quality(project, session, items, summary, cost=None):
                                       "drawing": d.label or d.filename,
                                       "message": f"Kat yüksekliği {h['height']:g} m ({h['source']}); ilgili kesit ve katla eşleşmesini kontrol edin."})
     quality["issues"].extend(_storey_height_override(project, drawings, elements))
+    # Kapsam sahipliği: hangi miktar hangi paftadan sayıldı, ikinci paftada ne düştü, ne eklendi
+    els_by_id: dict[int, list] = {}
+    for e in elements:
+        if e.included:
+            els_by_id.setdefault(e.drawing_id, []).append(e)
+    scope = scope_resolution(project, drawings, els_by_id)
+    quality["scope"] = scope.to_dict()
+    for n in scope.notes:
+        quality["issues"].append({"code": f"scope_{n.kind}", "severity": n.severity, "drawing_id": n.drawing_id or None,
+                                  "drawing": n.drawing or None, "message": n.message})
     # Sonucu ikinci bir yoldan sına: bağımsız kanıtlarla çelişen bir sayı "eksik" değil, **yanlış** olabilir.
     from .selfcheck import build as selfcheck_build
     rapor = selfcheck_build(summary, elements, project_rebar_mix(project, session, drawings))

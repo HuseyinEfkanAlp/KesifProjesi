@@ -88,6 +88,9 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "rebar_dia_split": "auto",    # oran demirini çizimdeki çap dağılımına göre böl (auto) / bölme (off)
     "rebar_layers": "auto",       # donatı kaç sıra: auto (çizimden okunur) / cift / tek — ton başına işçiliği değiştirir
     "rebar_prefab_pct": 0.0,      # hazır kesilmiş - bükülmüş gelen demir %; o oranda kesme / bükme sahada yapılmaz
+    # Kapsam sahipliği (quantity/scope.py): "1" ikinci paftada tekrar çizilen nesnenin elenmesini kapatır —
+    # her pafta kendi ölçtüğünü yazar (çift sayım pahasına). Ölçüm / karşılaştırma için kaçış kapağı.
+    "scope_off": "",
     "derived_off": "",            # kapatılan türetme kuralları (virgülle: astar,tavan,sap,kaplama,temel_yalitim,grobeton,koruma_sapi,kazi,geri_dolgu,recete)
 }
 

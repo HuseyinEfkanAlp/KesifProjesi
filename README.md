@@ -970,6 +970,98 @@ bağımsız olarak doğrulanmış değerlere birebir oturdu.
 Testler: `backend/tests/test_levels.py` — değişken katta H uygulanmaz, sabit katta kullanıcının değeri
 korunur, paftaya elle girilen her zaman kazanır, düzeltme sessiz yapılmaz.
 
+## Kapsam sahipliği: bir kez okunan miktar ikinci paftadan tekrar okunmaz (`quantity/scope.py`)
+
+Bir kalem birden çok paftada çizilidir. Zayıf akım paftasının altlığında kablo tavası, kuvvet planının
+altlığında mimari duvar, mimari kat planının altlığında kolonlar vardır. İkisini de saymak miktarı ikiye
+katlar; ikinci paftayı toptan atmak ise o paftadaki **gerçek eklemeyi** (yalnız zayıf akımda çizilen ek tava
+kolu) kaybettirir. İkisi de metrajı bozar, ikincisi sessizce bozar.
+
+**Kural: aynı nesne bir kez sayılır, ayrı nesne her zaman sayılır.** Aynılığın kanıtı konumdur — kırpılan
+paftalar dünya koordinatını koruduğu için aynı blokta, aynı katta, aynı yere düşen aynı tipteki eleman aynı
+elemandır (`same_object`: tip + alt tip + merkez mesafesi + büyüklük oranı). Eşleştirme uyan ilk nesneyi
+değil **en yakınını** alır (eşitlikte miktarı en yakın olanı).
+
+### Katın kimliği de çizimden okunur (`services._floor_identity`)
+
+Kural "aynı kat" tanımına dayanır, o yüzden kat kimliği kullanıcıdan istenmez — iki bağımsız kanıt vardır ve
+her biri tek başına yeterlidir:
+
+- **Kot**: başlıktan (`+7.95 KOTU KALIP PLANI`) ya da çizimin içinden okunan kot (`parser/levels.py`).
+- **Plan adındaki kat sırası** (`levels.floor_rank`): `BODRUM`, `ZEMİN KAT`, `2. KAT`, `ÇATI`, `STA-03`.
+  Elektrik ve mekanik paftalarında kot çoğu zaman yazmaz, **kat adı yazar** — kural orada da çalışır.
+
+İkisini birden taşıyan tek bir pafta (`2. KAT (+7.95) KALIP PLANI`) iki kimliği birbirine bağlar: kotla
+adlandırılmış statik pafta ile kat adıyla adlandırılmış elektrik paftası aynı kata düşer. Hiçbir kanıt yoksa
+kat bilinmiyordur ve o paftada **hiçbir miktar düşürülmez**.
+
+### Sahip kim: kalemi ölçmek için çizilen pafta
+
+Her plan tipi, yetkili olduğu eleman tiplerini bildirir (`planset.PlanType.owns`):
+
+| Kalem | Sahibi | Altlıkta çizilse de saymayan |
+|---|---|---|
+| Kablo tavası | Elektrik kablo tava planı | zayıf akım, aydınlatma, kuvvet |
+| Armatür / priz / kablo / boru | Aydınlatma · kuvvet · zayıf akım (üçü eşit yetkili) | mimari, statik |
+| Duvar / kapı / pencere | Mimari kat planı | tavan, kaplama, elektrik altlığı |
+| Kolon / perde / kiriş / döşeme | Kat kalıp planı | mimari kat planı, donatı altlığı |
+| Temel | Temel kalıp planı | |
+| Boru / cihaz · kanal | Isıtma · sıhhi · yangın (eşit) · havalandırma | |
+
+Yetki sırası: **0** kalemin sahibi, **1** kalemin disiplinini taşıyan pafta, **2** disiplini tutan çizim,
+**3** ilgisiz pafta. Yalnız daha düşük yetkili pafta eler; **eşit yetkili iki pafta birbirini asla elemez**
+(bir katın iki yarıya kırpılmış paftası, iki ayrı kat, iki blok — hepsi gerçek ölçümdür).
+
+Metraja girmeyen pafta sahiplik de kuramaz: donatı paftası ve kesit / detay paftaları kapsam dışıdır, yoksa
+donatı paftasının altlığındaki kalıp planı, kalıp planının kendisini düşürürdü.
+
+### Karar sırası
+
+1. **Nesneler üst üste düşüyor** → eşleşen kopya sayılmaz, eşleşmeyen **ek olarak sayılır**. Bir nesne yalnız
+   bir kopyayı karşılar: sahipte bir tava varken ikinci paftada iki tane varsa, ikincisi kopya değil ektir.
+2. **Düşmüyor ama kat biliniyor** → aynı katın ayrı orijinde çizilmiş ikinci paftası olabilir: ötelemeler
+   denenir (`_align`) ve **doğrulanır** — en az 3 nesne ve nesnelerin %70'i tutmalı. Öteleme bir çıkarımdır,
+   konum kanıtı kadar güçlü değildir: zayıf bir hizalama ayrı bir yapı bloğunun gerçek ölçümünü sildirebilir.
+   Bu yolla düşen miktar her zaman "kontrol edilmeli" işaretlenir. Eşit yetkili paftalar hiç hizalanmaz.
+3. **Düşmüyor ve kat bilinmiyor** → *hiçbir şey düşürülmez.* Örtüşmeyen iki pafta aynı dosyada yan yana duran
+   ayrı bölgeler de olabilir (bir DXF'te temel ve zemin paftası). **Sessizce kaybolan miktar, çift sayımdan
+   zararlıdır**: ikisi de sayılır, kullanıcıya iki miktar ve ne yapacağı yazılır.
+4. **Sahibi hiç yüklenmemişse** kalem sayılır ama "yetkili paftası yüklenmedi, sayı altlıktan geliyor, düşük
+   güven" notu düşer — tava planı yokken zayıf akımdaki tava kaybolmaz.
+
+Elle eklenen / düzeltilen eleman (`manual`) hiçbir zaman elenmez; hiçbir şey veritabanından silinmez,
+sahiplik her hesapta yeniden kurulur ve düşen her miktar **Kapsam** panelinde nesne sayısı ve miktarıyla
+görünür. Proje parametresi `scope_off=1` kuralı tümden kapatır.
+
+### Gerçek paftada ölçüldü (21 Eyl 2026)
+
+**Altlık senaryosu** — B Blok zemin kalıp planı (830 eleman) aynı projeye iki kez yüklendi: biri kat kalıp
+planı (sahibi), öbürü mimari kat planı (altlık).
+
+| | beton m³ | kalıp m² | demir kg |
+|---|---:|---:|---:|
+| Tek pafta (doğru cevap) | 2.170,9 | 9.457,6 | 302.984 |
+| İki pafta, kapsam **kapalı** | 4.341,7 | 18.915,3 | 605.969 |
+| İki pafta, kapsam **açık** | **2.170,9** | **9.457,6** | **302.984** |
+
+830 nesnenin 830'u eşleşti, sahte ek üretilmedi: fark **0,00**.
+
+**Yanlış alarm kontrolü** — A4-A5 mimari seti (2 DXF, 16 pafta, 115 keşif kalemi) kapsam açık ve kapalı
+birebir aynı sonucu verdi, tek bir kapsam notu çıkmadı. Paftalar farklı görünüşler olduğu için elenecek
+nesne yok; kural sessizce hiçbir şeyi düşürmedi.
+
+**Eşleştirme en yakını alır, uyan ilkini değil.** İlk ölçümde 830 nesnenin 10'u "ek" sayılıp metrajı %1,2
+şişirdi: birebir ikizi olan eleman, ikizini toleransa giren komşusuna kaptırıyor, ikiz sonra boşta kalıp ek
+sanılıyordu. Eşleşme artık merkez mesafesine (eşitlikte miktar farkına) göre en yakın nesneyi seçer.
+Senaryodaki iki paftanın katı, adlarındaki "Zemin"den tanındı; kullanıcı hiçbir şey girmedi.
+
+Kapsam kuralını ölçmek için kapatmak: proje parametresi `scope_off = 1` (her pafta kendi ölçtüğünü yazar).
+
+Testler: `backend/tests/test_scope.py` — zayıf akım tavayı ikinci kez saymaz, ek kol eklenir, bir katın iki
+yarısı toplanır, ayrı kot / ayrı blok / farklı kesit elenmez, kot yoksa hiçbir şey düşmez, aynı DXF'te yan
+yana duran paftalar birbirini elemez, ikiz komşuya kaptırılmaz, zayıf hizalama kabul edilmez,
+kat kimliği kot ve plan adından okunur, uçtan uca API akışı.
+
 ## Kendini yanlışlayan kontroller (`app/selfcheck.py`)
 
 Kontrol listesi (`quality.py`) "ne eksik" diye sorar: pafta okundu mu, katman eşleşti mi. Bu modül başka bir

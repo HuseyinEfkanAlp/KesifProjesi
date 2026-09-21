@@ -807,6 +807,24 @@ export interface QualityReport {
   assumptions: { key: string; label: string; value: string | number | null; source: 'default' | 'user' | 'drawing' }[]
   /** Sonucu ikinci bir yoldan sınayan bağımsız kontroller (backend: selfcheck.py) */
   selfcheck?: SelfCheck
+  /** Kapsam sahipliği: aynı nesneyi ikinci kez çizen pafta onu tekrar saymaz (backend: quantity/scope.py) */
+  scope?: ScopeReport
+}
+
+/** Hangi miktar hangi paftadan sayıldı: düşen kopya, eklenen fark, sahibi olmayan kalem. */
+export interface ScopeReport {
+  notes: {
+    /** duplicate = ikinci kez sayılmadı, addition = yalnız bu paftada var, unmatched = eşleşmedi (ikisi de sayıldı), orphan = yetkili pafta yok */
+    kind: 'duplicate' | 'addition' | 'unmatched' | 'orphan'
+    etype: string; etype_label: string; block: string; kot: string | null
+    drawing_id: number; drawing: string; owner_id: number | null; owner: string
+    /** geometri = nesneler üst üste düştü, miktar = konum kanıtı yok */
+    method: 'geometri' | 'miktar'
+    dropped_count: number; dropped_qty: number; added_count: number; added_qty: number
+    unit: string; severity: 'info' | 'review'; message: string
+  }[]
+  duplicate_count: number
+  addition_count: number
 }
 
 /** Kendini doğrulayan / yanlışlayan kontroller. "kararsiz" = kontrol dairesel olurdu ya da kanıt yok. */
