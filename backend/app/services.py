@@ -989,7 +989,8 @@ def space_derived(project: Project, sp: dict, catalog: Catalog, params: dict, dr
 # ayrı bir çizimdir ve koordinatı aynı olmayabilir. Aday kayma iki kaynaktan gelir: (1) aynı mahal yazısı
 # iki paftada da varsa yazı konum farkı, (2) kaymasız hal (aynı modelden türetilmiş paftalarda tipik).
 # Aday DOĞRULANARAK seçilir: o kaymayla kaç eleman bir mahalin içine düşüyor.
-ALIGN_MIN_HIT = 0.30        # elemanların en az bu oranı mahale düşmeli
+ALIGN_MIN_HIT = 0.05        # elemanların en az bu oranı mahale düşmeli (bir dosyada birden çok kat
+                            # olabilir: her katın payı küçüktür; eşik düşük ama eşleşme doğrulanır)
 ALIGN_MIN_COUNT = 3         # ve en az bu kadar eleman
 
 
@@ -1055,30 +1056,78 @@ def same_plan_offset(target: Drawing, source: Drawing) -> tuple[float, float] | 
     return en_iyi if adet >= 2 and adet >= 0.5 * hedef else None
 
 
+def _point_clusters(pts: list[tuple[float, float]], gap: float) -> list[list[tuple[float, float]]]:
+    """Noktaları x ekseninde boşluklara göre kümeler. Bir tesisat dosyasında kat planları yan yana durur;
+    her kat kendi kaymasını ister, bu yüzden küme küme aday üretilir."""
+    if not pts:
+        return []
+    sp = sorted(pts)
+    out, cur = [], [sp[0]]
+    for a, b in zip(sp, sp[1:]):
+        (cur.append(b) if b[0] - a[0] <= gap else (out.append(cur), cur := [b]))
+    out.append(cur)
+    return [c for c in out if len(c) >= 5]
+
+
+def _hit_count(pts, tree, polys, dx: float, dy: float) -> int:
+    """Bu kaymayla kaç nokta bir mahalin içine düşüyor."""
+    from shapely.geometry import Point as SPoint
+    n = 0
+    for x, y in pts:
+        p = SPoint(x + dx, y + dy)
+        for i in tree.query(p):
+            if polys[int(i)][1].contains(p):
+                n += 1
+                break
+    return n
+
+
+def _refine(pts, tree, polys, seed: tuple[float, float], adim: float = 8.0) -> tuple[tuple[float, float], int]:
+    """Aday kaymayı yerel aramayla keskinleştirir (kaba adımdan ince adıma tepe tırmanışı)."""
+    en_iyi, skor = seed, _hit_count(pts, tree, polys, *seed)
+    while adim >= 0.25:
+        gelisti = False
+        for ddx, ddy in ((adim, 0), (-adim, 0), (0, adim), (0, -adim), (adim, adim), (-adim, -adim),
+                         (adim, -adim), (-adim, adim)):
+            aday = (round(en_iyi[0] + ddx, 2), round(en_iyi[1] + ddy, 2))
+            n = _hit_count(pts, tree, polys, *aday)
+            if n > skor:
+                en_iyi, skor, gelisti = aday, n, True
+        if not gelisti:
+            adim /= 2
+    return en_iyi, skor
+
+
 def align_drawing(target: Drawing, source: Drawing, elements, polys) -> dict:
     """Paftayı kaynak paftanın mahal çokgenlerine hizalar (yalnız öteleme).
 
-    Döner: {"dx", "dy", "hit", "total", "source"}. hit = o kaymayla mahale düşen eleman sayısı;
-    seçim doğrulamayla yapılır, tahminle değil."""
-    from shapely.geometry import Point as SPoint
+    Aday kaymalar: (1) kaymasız hal, (2) mahal yazıları örtüşüyorsa oradan, (3) eleman kümesinin
+    merkezi ile mahal kümesinin merkezi arasındaki fark. Her aday yerel aramayla keskinleştirilir ve
+    **doğrulanarak** seçilir: o kaymayla kaç eleman bir mahalin içine düşüyor. Tahmin yok."""
+    from shapely import STRtree
     pts = [(e.points[0][0], e.points[0][1]) for e in elements if e.points]
     out = {"dx": 0.0, "dy": 0.0, "hit": 0, "total": len(pts), "source": ""}
     if not pts or not polys:
         return out
+    if len(pts) > 1500:
+        pts = pts[::max(1, len(pts) // 1500)]        # doğrulama için örnekleme yeter
+    kaba = pts[::max(1, len(pts) // 350)]            # kaba arama daha az noktayla yapılır
+    tree = STRtree([g for _sp, g in polys])
+    mx = sum(g.centroid.x for _sp, g in polys) / len(polys)
+    my = sum(g.centroid.y for _sp, g in polys) / len(polys)
+    genislik = max(g.bounds[2] for _sp, g in polys) - min(g.bounds[0] for _sp, g in polys)
     adaylar: list[tuple[tuple[float, float], str]] = [((0.0, 0.0), "aynı koordinat sistemi")]
     for off in dict.fromkeys(_label_offsets(target, source)):
         adaylar.append((off, "mahal yazılarından"))
-    if len(pts) > 4000:
-        pts = pts[::max(1, len(pts) // 4000)]      # büyük paftada örnekleme yeter
-    best_hit = -1
+    for kume in _point_clusters(pts, max(genislik, 20.0)):
+        cx = sum(x for x, _ in kume) / len(kume)
+        cy = sum(y for _, y in kume) / len(kume)
+        adaylar.append(((round(mx - cx, 2), round(my - cy, 2)), "çizim konumlarından aranarak"))
     for (dx, dy), kaynak in adaylar:
-        hit = 0
-        for x, y in pts:
-            p = SPoint(x + dx, y + dy)
-            if any(g.contains(p) for _sp, g in polys):
-                hit += 1
-        if hit > best_hit:
-            best_hit, out = hit, {"dx": dx, "dy": dy, "hit": hit, "total": len(pts), "source": kaynak}
+        (ndx, ndy), _ = _refine(kaba, tree, polys, (dx, dy))
+        hit = _hit_count(pts, tree, polys, ndx, ndy)
+        if hit > out["hit"]:
+            out = {"dx": ndx, "dy": ndy, "hit": hit, "total": len(pts), "source": kaynak}
     return out
 
 
@@ -1106,7 +1155,7 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
                                  -sum(float(sp.get("area") or 0) for sp in x.spaces)))
     sources: list[Drawing] = []
     merged: dict[int, tuple[int, tuple[float, float]]] = {}    # pafta -> (mahal kaynağı, kayma)
-    hizalama: dict[int, dict] = {}                              # pafta -> hizalama raporu
+    hizalama: dict[tuple, dict] = {}                            # (pafta, mahal kaynağı) -> rapor
     for d in aday:
         yer = None
         for src in sources:
@@ -1116,8 +1165,10 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
                 break
         if yer:
             merged[d.id] = (yer[0].id, yer[1])
-            hizalama[d.id] = {"drawing": d.label or d.filename, "to": yer[0].label or yer[0].filename,
-                              "dx": yer[1][0], "dy": yer[1][1], "how": "mahal örtüşmesi", "hit": 0, "total": 0}
+            hizalama[(d.id, yer[0].id)] = {"drawing": d.label or d.filename,
+                                           "to": yer[0].label or yer[0].filename,
+                                           "dx": yer[1][0], "dy": yer[1][1], "how": "mahal örtüşmesi",
+                                           "hit": 0, "total": 0}
             warnings.append(f"“{d.label or d.filename}” aynı katı gösteriyor "
                             f"(“{yer[0].label or yer[0].filename}” ile mahal yazıları örtüşüyor): "
                             "mahal listesi ikilenmedi, kalemleri o mahallere yazıldı.")
@@ -1152,28 +1203,51 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
         elif d.spaces:
             src_id, off = d.id, (0.0, 0.0)
         else:
-            en_iyi, en_iyi_src = None, None
+            # Bir tesisat dosyasında kat planları yan yana durabilir (aydinlatma planının bodrum / zemin /
+            # çatı katı birlikte çizilmesi gibi): HER kat için ayrı kayma aranır, eleman hangi katın
+            # mahaline düşüyorsa oraya yazılır.
+            kabul: list[tuple[Drawing, tuple[float, float]]] = []
+            en_iyi = None
             for src in sources:
                 a = align_drawing(d, src, els, polys_by_src[src.id])
                 if en_iyi is None or a["hit"] > en_iyi["hit"]:
-                    en_iyi, en_iyi_src = a, src
-            yeterli = (en_iyi and en_iyi["hit"] >= ALIGN_MIN_COUNT
-                       and en_iyi["hit"] >= ALIGN_MIN_HIT * max(en_iyi["total"], 1))
-            if not yeterli:
+                    en_iyi = a
+                if a["hit"] >= ALIGN_MIN_COUNT and a["hit"] >= ALIGN_MIN_HIT * max(a["total"], 1):
+                    kabul.append((src, (a["dx"], a["dy"])))
+                    nasil = ("aynı koordinatta" if (a["dx"], a["dy"]) == (0.0, 0.0)
+                             else f"({a['dx']:+.1f}, {a['dy']:+.1f}) m kaydırılarak")
+                    hizalama[(d.id, src.id)] = {"drawing": d.label or d.filename, "to": src.label or src.filename,
+                                                "dx": a["dx"], "dy": a["dy"], "how": a["source"],
+                                                "hit": 0, "total": 0}
+                    warnings.append(f"“{d.label or d.filename}” → “{src.label or src.filename}” "
+                                    f"mahallerine {nasil} hizalandı.")
+            if not kabul:
                 unassigned += [(d, _scaled(e, 1.0)) for e in els]
                 if en_iyi and en_iyi["total"]:
                     warnings.append(f"“{d.label or d.filename}” mahallere hizalanamadı "
                                     f"({en_iyi['total']} elemandan yalnız {en_iyi['hit']}'i bir mahalin içine düştü): "
-                                    "kalemleri mahal kırılımına girmedi. Pafta başka bir koordinatta çizilmiş olabilir.")
+                                    "kalemleri mahal kırılımına girmedi. Pafta başka koordinatta çizilmiş olabilir.")
                 continue
-            src_id, off = en_iyi_src.id, (en_iyi["dx"], en_iyi["dy"])
-            nasil = ("aynı koordinatta" if off == (0.0, 0.0) else f"({off[0]:+.1f}, {off[1]:+.1f}) m kaydırılarak")
-            hizalama[d.id] = {"drawing": d.label or d.filename, "to": en_iyi_src.label or en_iyi_src.filename,
-                              "dx": off[0], "dy": off[1], "how": en_iyi["source"], "hit": 0, "total": 0}
-            warnings.append(f"“{d.label or d.filename}” → “{en_iyi_src.label or en_iyi_src.filename}” mahallerine "
-                            f"{nasil} hizalandı ({en_iyi['hit']}/{en_iyi['total']} eleman mahale düştü).")
+            for e in els:
+                kondu = False
+                for src, o in kabul:
+                    rapor = hizalama.get((d.id, src.id))
+                    if rapor is not None:
+                        rapor["total"] += 1
+                    share = _shares(e, polys_by_src.get(src.id) or [], offset=o)
+                    if not share:
+                        continue
+                    if rapor is not None:
+                        rapor["hit"] += 1
+                    for idx, w in share.items():
+                        buckets[f"{src.id}:{idx}"].append(_scaled(e, w))
+                    kondu = True
+                    break
+                if not kondu:
+                    unassigned.append((d, _scaled(e, 1.0)))
+            continue
         polys = polys_by_src.get(src_id) or []
-        rapor = hizalama.get(d.id)
+        rapor = hizalama.get((d.id, src_id))
         for e in els:
             share = _shares(e, polys, offset=off) if polys else {}
             if rapor is not None:

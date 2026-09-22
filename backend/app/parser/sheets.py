@@ -1129,7 +1129,7 @@ def scan_sheets(path: str | Path) -> SheetScan:
     _band_set = set(band_names)
     split_titles = titles + [t for t in big_other if t[3] in _band_set]
 
-    def _segment(bx: list[tuple[Bbox, str]]) -> tuple[list[Sheet], int]:
+    def _segment(bx: list[tuple[Bbox, str]], allow_single: bool = False) -> tuple[list[Sheet], int]:
         """Bir kutu kümesini paftalara çevirir: kopyaları eler, çok başlıklı kutuları böler, artıkları ayıklar."""
         bx = dedupe_boxes(bx)
         if titles and bx:
@@ -1139,7 +1139,9 @@ def scan_sheets(path: str | Path) -> SheetScan:
                 parts = split_box_by_titles(bbox, tin, npx, npy) if len(tin) >= 2 else []
                 refined.extend([(pb, src + "+split") for pb in parts] if parts else [(bbox, src)])
             bx = dedupe_boxes(refined)
-        if len(bx) < 2:
+        if len(bx) < 2 and not allow_single:
+            return [], 0        # tek kutu: çerçeve/küme yöntemi çizimin tamamını sarmış demektir, bölme sayılmaz
+        if not bx:
             return [], 0
         sh = _build_sheets(bx, npx, npy, titles, extent, npl, layer_names, geom)
         for one in sh:
@@ -1175,8 +1177,12 @@ def scan_sheets(path: str | Path) -> SheetScan:
     # Dördüncü aday: bütün gövdeyi doğrudan pafta başlıklarına böl. Çerçevesi olmayan, bantlara da dizilmemiş
     # (ızgara yerleşimli) dosyalarda paftaları veren tek yöntem budur.
     grid = [(b, "title") for b in split_box_by_titles(extent_box, titles + big_other, npx, npy, strict=False)]
-    for bx in (frame_boxes, cluster_boxes, [(b, "title") for b in tb], grid):
-        sh, dr = _segment(list(bx))
+    # Beşinci aday: çizimin tamamı TEK pafta. Tek plandan oluşan dosyada (tesisat planı gibi) bölme
+    # yapmaya çalışan yöntemler çizimi yüzlerce artık kümeye parçalıyordu; bölünmemiş hal de bir adaydır
+    # ve puanlama (tanınan başlık − başlıksız artık) hangisinin doğru olduğunu kendisi seçer.
+    single = [(extent_box, "cluster")]
+    for bx in (frame_boxes, cluster_boxes, [(b, "title") for b in tb], grid, single):
+        sh, dr = _segment(list(bx), allow_single=bx is single)
         if not sh:
             continue
         score = segmentation_score(sh)
