@@ -8,6 +8,7 @@ from datetime import datetime
 from sqlmodel import Session, select
 
 from .confidence import TAHMIN, TURETILDI
+from .scope import GENEL, MAHAL
 from .cost.materials import MaterialData, material_lines
 from .cost.pricebook import lookup as book_lookup
 from .cost.pricing import PriceItem as PriceData, compute_cost, default_price_items
@@ -1208,6 +1209,7 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
     Mahaller mimari paftadan çıkar (`parser/spaces.py`); eleman ancak KENDİ paftasının mahalleriyle
     eşleşir (başka paftanın koordinatı farklıdır). Mahale düşmeyen miktar "atanmamış" satırında
     toplanır — mahal toplamları + atanmamış = keşif toplamı."""
+    from .parser.levels import floor_rank
     from .quantity.boq import architectural_items, electrical_items, standard_items
     if drawings is None:
         drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
@@ -1259,6 +1261,9 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
                            "code": sp.get("code") or "", "area_source": sp.get("area_source") or "polygon",
                            "perimeter": sp.get("perimeter") or 0.0, "diff_pct": sp.get("diff_pct") or 0.0,
                            "label_area": sp.get("label_area") or 0.0, "drawing": d.label or d.filename,
+                           # ERP ağacı: Blok → Kat → Mahal. Blok çizim adından (parser/blocks.py), kat sırası
+                           # pafta başlığından gelir; sıralama bodrum → zemin → kat → çatı olsun diye sayıdır.
+                           "block": d.block or "", "floor_rank": floor_rank(d.label or d.filename),
                            "drawing_id": d.id, "path": " / ".join(x for x in path if x),
                            "parent": f"{d.id}:{sp['parent']}" if sp.get("parent") is not None else None,
                            "children": [f"{d.id}:{c}" for c in (sp.get("children") or [])]}
@@ -1366,7 +1371,13 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
             out += electrical_items(pack(elec), params)
         if ksf:
             out += standard_items(pack(ksf), params, catalog)
-        return [it for it in sort_items(merge_duplicates(out)) if it.group != "fire"]
+        # Kapsam filtresi: mahale YALNIZ mahal bazlı kalemler yazılır (app/scope.py).
+        # Duvar elemanı buraya girmeye devam eder — gövdesi (genel) elenir ama sıvası ve boyası
+        # (mahal) kalır; ayıklama bu yüzden eleman düzeyinde değil kalem düzeyinde yapılır.
+        # Kablo / boru / tava böylece mahallere bölüşturulmez: bir kablo kattan kata uzanır,
+        # geçtiği odalara bölününce kimsenin sipariş edemeyeceği sayılar çıkar.
+        return [it for it in sort_items(merge_duplicates(out))
+                if it.group != "fire" and it.scope == MAHAL]
 
     rows = []
     for key, sp in spaces.items():
@@ -1374,7 +1385,7 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
         note = _room_note_of(d, sp)
         sp = {**sp, "finish": note.get("finish") or {}, "screed_cm": note.get("screed_cm") or 0.0}
         olculen = items_of([{"drawing": d, "e": e} for e in buckets[key]])
-        turetilen = space_derived(project, sp, catalog, params, drawings)
+        turetilen = [it for it in space_derived(project, sp, catalog, params, drawings) if it.scope == MAHAL]
         # reçete mahal satırında da açılır: seramik → yapıştırıcı + DERZ DOLGU, şap → şap işçiliği
         hepsi = expand_recipes(olculen + turetilen, catalog, storey_height=sh["effective"], params=params)
         olculen_keys = {it.key for it in olculen}
@@ -1397,12 +1408,18 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
                 cur["quantity"] = round(cur["quantity"] + it["quantity"], 3)
         r["total_items"] = sorted(tot.values(), key=lambda i: (i["work_group"], i["kind"], i["group"]))
         r["total_area"] = round(r["area"], 2)
+    # "Atanmamış" artık yalnız **mahal bazlı olup** bir mahale düşmeyen kalemleri anlatır: bir kalemin
+    # mahal kırılımında olmaması bir eksiklik değil, o kalemin doğası olabilir (beton, kablo, çatı).
     un_items = [it.to_dict() for it in items_of([{"drawing": d, "e": e} for d, e in unassigned])]
     if un_items:
-        warnings.append(f"{len(un_items)} kalem mahale atanamadı: elemanı mahal sınırının dışında ya da "
-                        "mahal çıkarılmayan bir paftada (statik / cephe / çatı). Mahal toplamlarına girmez.")
+        warnings.append(f"{len(un_items)} mahal bazlı kalem hiçbir mahale atanamadı: elemanı mahal sınırının "
+                        "dışında ya da mahal çıkarılmayan bir paftada. Mahal toplamlarına girmez.")
     return {"spaces": rows, "unassigned": un_items, "alignment": list(hizalama.values()),
             "unassigned_reason": "Mahal sınırı dışında kalan ya da mahal çıkarılmayan paftalardaki elemanlar",
+            "scope_note": ("Beton, demir, kalıp, duvar gövdesi, kablo, boru, tava, cephe ve çatı **bina geneli** "
+                           "sayılır; mahal kırılımına girmez. Bir duvar iki mahalin ortak sınırıdır, gövdesini tek "
+                           "mahale yazmak yanlış olurdu — ama her yüzü tek bir mahale baktığı için sıva ve boya "
+                           "mahal bazlıdır."),
             "warnings": warnings}
 
 

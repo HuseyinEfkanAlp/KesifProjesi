@@ -20,6 +20,7 @@ from ..parser.labels_ext import FIXTURE_CATEGORIES, WALL_MATERIALS
 from ..parser.rebar_mix import normalize as normalize_mix, split_by_dia
 from ..parser.layer_profile import DISCIPLINES, ELEMENT_TYPES
 from ..standard.catalog import ParsedLayer, Catalog, parse_layer, spec_numbers
+from ..scope import SCOPE_LABEL
 from ..standard.rules import RULES, WORK_GROUPS, WORK_GROUP_ORDER, deductible_opening, default_poz, work_group_of
 
 # tür -> (görünen ad, birim, disiplin)
@@ -128,6 +129,7 @@ class BoqItem:
     poz: str = ""                          # ÇŞB poz numarası (katalogdan ya da varsayılan eşlemeden)
     poz_name: str = ""
     work_group: str = ""                   # KABA / INCE / MEK / ELK / ALT
+    scope: str = ""                        # mahal | genel (app/scope.py) — mahal kırılımına girer mi
 
     def __post_init__(self):
         if not self.kind_label:
@@ -136,6 +138,9 @@ class BoqItem:
             self.discipline_label = DISCIPLINES.get(self.discipline, self.discipline)
         if not self.work_group:
             self.work_group = work_group_of(self.discipline)
+        if not self.scope:
+            from ..scope import scope_of
+            self.scope = scope_of(self.kind, self.discipline)
         if not self.poz:
             dp = default_poz(self.kind, self.group)
             if dp:
@@ -146,6 +151,7 @@ class BoqItem:
                 "label": self.label, "unit": self.unit, "quantity": round(self.quantity, 3), "count": self.count,
                 "discipline": self.discipline, "discipline_label": self.discipline_label,
                 "work_group": self.work_group, "work_group_label": WORK_GROUPS.get(self.work_group, self.work_group),
+                "scope": self.scope, "scope_label": SCOPE_LABEL.get(self.scope, self.scope),
                 "poz": self.poz, "poz_name": self.poz_name,
                 "notes": self.notes, "detail": self.detail, "confidence": self.confidence}
 

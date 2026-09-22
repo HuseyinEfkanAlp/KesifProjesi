@@ -265,7 +265,8 @@ export default function Quantities() {
                   <td className="mono" title={it.poz_name}>{it.poz || <span className="muted">-</span>}</td>
                   <td><span className={`badge disc-${it.discipline.split(':')[0]}`}>{it.discipline_label.split(' (')[0]}</span></td>
                   <td>{it.kind_label}{it.detail?.system ? <span className="badge none" style={{ marginLeft: 6 }}>sistem</span> : null}{it.detail?.info ? <span className="badge none" style={{ marginLeft: 6 }}>bilgi</span> : null}{it.detail?.recipe ? <span className="badge recipe" style={{ marginLeft: 6 }} title={`Reçeteden türetildi: ${String(it.detail.parent ?? '')}`}>reçete</span> : null}</td>
-                  <td>{it.label}{it.detail?.system_code && !it.detail?.system ? <span className="muted hint"> ← {String(it.detail.system_code)}</span> : null}{it.detail?.recipe ? <span className="muted hint"> ← {String(it.detail.parent ?? '').split(':')[0]}</span> : null}</td>
+                  <td>{it.label}{it.detail?.system_code && !it.detail?.system ? <span className="muted hint"> ← {String(it.detail.system_code)}</span> : null}{it.detail?.recipe ? <span className="muted hint"> ← {String(it.detail.parent ?? '').split(':')[0]}</span> : null}
+                    {it.scope === 'mahal' ? <span className="badge scope-mahal" style={{ marginLeft: 6 }} title="Mahal kırılımında mahal mahal görünür">mahal</span> : null}</td>
                   <td className="num"><b>{fmt(it.quantity, it.unit === 'adet' || it.unit === 'kg' ? 0 : 2)}</b></td>
                   <td>{it.unit}</td>
                   <td className="num">{it.count ? fmt(it.count, 0) : '-'}</td>

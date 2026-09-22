@@ -440,3 +440,5 @@ button.link:disabled { opacity: .5; text-decoration: none; }
 .conf-strip .conf-tanindi { background: #b8860b; }
 .conf-strip .conf-turetildi { background: #e07b00; }
 .conf-strip .conf-tahmin { background: #d62728; }
+/* Mahal bazlı kalem: mahal kırılımında oda oda görünür (backend: app/scope.py) */
+.badge.scope-mahal { background: #e8f1fb; color: #1f4e78; }

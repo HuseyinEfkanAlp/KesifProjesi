@@ -60,6 +60,9 @@ def build_spaces_workbook(project: dict, breakdown: dict) -> bytes:
     ws3 = wb.create_sheet("Mahale girmeyen")
     ws3["A1"] = breakdown.get("unassigned_reason") or "Mahale atanamayan kalemler"
     ws3["A1"].font = Font(bold=True)
+    # Kapsam notu: bir kalemin burada olmaması eksiklik değil, o kalemin doğası olabilir.
+    if breakdown.get("scope_note"):
+        ws3["A2"] = str(breakdown["scope_note"]).replace("**", "")
     _basliklar(ws3, 3, ["İş grubu", "Disiplin", "Kalem", "Birim", "Miktar"])
     for it in (breakdown.get("unassigned") or []):
         ws3.append([it.get("work_group_label") or "", it.get("discipline_label") or "", it.get("label") or "",

@@ -450,6 +450,9 @@ export interface BoqItem {
   detail: Record<string, unknown>
   /** Güven rozeti: sayının nereden geldiği (backend: app/confidence.py) */
   confidence: Confidence
+  /** Kapsam: mahal kırılımına giren kalem mi, bina geneli mi (backend: app/scope.py) */
+  scope: 'mahal' | 'genel'
+  scope_label: string
 }
 
 /** Dört kademe: ölçüldü → adından tanındı → varsayımla türetildi → tahmin. En kötü girdi kazanır. */
@@ -609,12 +612,18 @@ export interface SpaceRow {
   /** yalnız grup için: kendi + çocuklarının toplamı */
   total_items?: BoqItem[]
   total_area?: number
+  /** ERP ağacı: yapı bloğu ("L"); "" = ortak / tüm bina */
+  block?: string
+  /** Kat sırası: temel −100, N. bodrum −N, zemin 0, birinci 1… çatı 99; bilinmiyorsa null */
+  floor_rank?: number | null
 }
 
 export interface SpaceBreakdown {
   spaces: SpaceRow[]
   unassigned: BoqItem[]
   unassigned_reason: string
+  /** Neden bazı kalemler mahal kırılımında yok (duvar gövdesi, kablo, beton…) */
+  scope_note?: string
   /** hangi pafta hangi mahal setine, ne kaymayla yazıldı */
   alignment: { drawing: string; to: string; dx: number; dy: number; how: string; hit: number; total: number }[]
   warnings: string[]

@@ -35,11 +35,14 @@ export default function SpacesPanel({ projectId, refreshKey }: Props) {
 
   const groups = data.spaces.filter((s) => s.kind === 'grup')
   const childrenOf = (g: SpaceRow) => data.spaces.filter((s) => s.parent === g.key)
-  /** Mahaller geldikleri paftaya (kata) göre gruplanır: "hangi katta hangi mahal" görünsün */
+  /** ERP ağacı: Blok → Kat → Mahal. Kat sırası sayısal olduğu için bodrum → zemin → kat → çatı
+      düzgün sıralanır; pafta adına göre alfabetik sıralamak "ÇATI"yı "ZEMİN"in önüne alıyordu. */
   const katlar = Array.from(data.spaces.reduce((m, s) => {
     m.set(s.drawing, [...(m.get(s.drawing) ?? []), s])
     return m
   }, new Map<string, SpaceRow[]>()).entries())
+    .sort(([, a], [, b]) => (a[0].block ?? '').localeCompare(b[0].block ?? '')
+      || (a[0].floor_rank ?? 999) - (b[0].floor_rank ?? 999))
 
   /** Kalemleri iş grubuna göre ayırır: Kaba / İnce / Mekanik / Elektrik / Altyapı */
   const byGroup = (rows: { work_group_label?: string; work_group?: string }[]) => {
@@ -125,6 +128,7 @@ export default function SpacesPanel({ projectId, refreshKey }: Props) {
       {katlar.map(([kat, liste]) => (
         <div key={kat} style={{ marginTop: 14 }}>
           <div style={{ borderBottom: '2px solid #dce3ee', paddingBottom: 2, marginBottom: 4 }}>
+            {liste[0].block && <span className="badge none" style={{ marginRight: 6 }}>{liste[0].block} blok</span>}
             <b>{kat}</b> <span className="muted">({liste.length} mahal · {fmt(liste.reduce((t, s) => t + s.area, 0))} m²)</span>
           </div>
           {liste.filter((s) => s.kind === 'grup').map((g) => (
@@ -136,6 +140,12 @@ export default function SpacesPanel({ projectId, refreshKey }: Props) {
           {liste.filter((s) => s.kind !== 'grup' && !s.parent).map((s) => spaceBlock(s))}
         </div>
       ))}
+      {data.scope_note && (
+        <p className="muted" style={{ marginTop: 12, fontSize: 13 }}>
+          {/* Bir kalemin mahal kırılımında olmaması eksiklik değil, o kalemin doğası olabilir. */}
+          {data.scope_note.replace(/\*\*/g, '')}
+        </p>
+      )}
       {data.unassigned.length > 0 && (
         <div className="facade-info" style={{ marginTop: 10 }}>
           <b>Mahale atanamayan kalemler</b> <span className="muted">({data.unassigned_reason})</span>

@@ -74,6 +74,9 @@ class CatalogItem:
     # Proje geneli kalem (asansör, kazan, hidrofor, su deposu…): her kat planında görünse de kat sayısıyla çarpılmaz,
     # paftalar arasında en büyük adet alınır (8 kat planında 2'şer asansör bloğu = 2 asansör, 16 değil).
     per_project: bool = False
+    # Kapsam: "mahal" (mahal kırılımına girer) | "genel" (bina geneli) | "" (app/scope.py karar versin).
+    # Reçete çocukları ebeveynden miras almaz — kendi kodlarından sınıflanırlar.
+    scope: str = ""
     # Katmanlı sistem: bu kalem ölçüldüğünde (ör. çatı alanı) ayrı iş kalemi olarak yazılacak bileşenler.
     # [{"code": "OSB", "factor": 1.0, "spec": "11"}]: miktar = sistem miktarı × factor; spec varsayılan özellik.
     # Sistem bileşenleri kullanıcıya sorulur (projede yazıyor / yok).
