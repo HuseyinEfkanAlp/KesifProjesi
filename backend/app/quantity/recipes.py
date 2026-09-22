@@ -89,6 +89,12 @@ def expand_recipes(items: list[BoqItem], catalog: Catalog, storey_height: float 
         return items
     # reçete normları proje parametrelerine bakar (kalıp malzemesi, levha kullanım sayısı, hazır demir %):
     # çağıran vermediyse varsayılanlar geçerli olmalı, ama "_rebar_layers_default" gibi ek anahtarlar da korunur
+    from ..confidence import TURETILDI, grade, shift
+    def _normalize(ev: dict, qty: float) -> dict:
+        """Devralınan kanıtı çocuğun kendi miktarına ölçekler (paylar korunur, toplam qty olur)."""
+        t = sum(ev.values())
+        return {k: v / t * abs(qty) for k, v in ev.items()} if t else {}
+
     params = {**effective_params(params), **(params or {})}
     H = float(storey_height or 0.0)
     acc = _Acc()
@@ -136,9 +142,14 @@ def expand_recipes(items: list[BoqItem], catalog: Catalog, storey_height: float 
                 times_txt = {"H": " × H", "PER": " × boşluk çevresi", "WID": " × boşluk genişliği", "AREA": " × boşluk alanı"}.get(times, "")
                 note = (f"Reçete varsayılanı: {parent.kind_label} × {float(comp.get('factor') or 1.0):g}{times_txt}"
                         + "; çarpan katalogdan düzenlenir") if first else None
+                # Reçete çocuğu üst kalemden daha güvenilir olamaz ve en iyi ihtimalle "türetildi"dir:
+                # ölçülmüş seramikten gelen derz türetildi, oranla tahmin edilen cepheden gelen dubel tahmin.
+                ev = shift(parent.detail.get("evidence") or {grade(None, parent.detail.get("evidence_fallback") or TURETILDI)["code"]: 1.0},
+                           tier=TURETILDI)
                 child = acc.add(kind, group, cit.name + (f" {spec}" if spec else ""), qty, note=note,
                                 meta=(cit.name, cit.unit, f"ksf:{cit.discipline}", catalog.discipline_name(cit.discipline)),
-                                poz=cit.poz, recipe=True, parents=1, **({"parent": parent.key, "depth": depth + 1} if first else {}),
+                                poz=cit.poz, recipe=True, parents=1, ev=_normalize(ev, qty),
+                                **({"parent": parent.key, "depth": depth + 1} if first else {}),
                                 **({"size": spec} if spec and comp.get("spec") == "$SIZE" else {}))
                 src = child.detail.setdefault("from", [])
                 if isinstance(src, list) and len(src) < 8 and parent.label not in src:

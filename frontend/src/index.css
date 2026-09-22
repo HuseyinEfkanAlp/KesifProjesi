@@ -426,3 +426,17 @@ button.link { background: none; border: 0; color: var(--primary); padding: 0; mi
   font-weight: 600; text-decoration: underline; cursor: pointer; }
 button.link:hover { background: none; color: var(--primary-hover); }
 button.link:disabled { opacity: .5; text-decoration: none; }
+
+/* Güven rozeti: sayının nereden geldiği (backend: app/confidence.py). Renk tek başına anlam
+   taşımaz — etiket her zaman yazılır, renk yalnız sırayı görünür kılar. */
+.badge.conf-olculdu { background: #2ca02c; }
+.badge.conf-tanindi { background: #b8860b; }
+.badge.conf-turetildi { background: #e07b00; }
+.badge.conf-tahmin { background: #d62728; }
+.nowrap { white-space: nowrap; }
+.conf-strip { display: flex; height: 8px; border-radius: 4px; overflow: hidden; }
+.conf-strip > span { display: block; }
+.conf-strip .conf-olculdu { background: #2ca02c; }
+.conf-strip .conf-tanindi { background: #b8860b; }
+.conf-strip .conf-turetildi { background: #e07b00; }
+.conf-strip .conf-tahmin { background: #d62728; }

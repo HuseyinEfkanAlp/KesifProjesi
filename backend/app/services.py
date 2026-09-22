@@ -7,6 +7,7 @@ from datetime import datetime
 
 from sqlmodel import Session, select
 
+from .confidence import TAHMIN, TURETILDI
 from .cost.materials import MaterialData, material_lines
 from .cost.pricebook import lookup as book_lookup
 from .cost.pricing import PriceItem as PriceData, compute_cost, default_price_items
@@ -598,6 +599,7 @@ def project_quantities(project: Project, session: Session, drawings: list[Drawin
     """Statik metraj: (satırlar, özet, element_info) döndürür. Yalnızca statik eleman tipleri girer;
     donatı paftalarındaki tablolar demiri çap bazında verir ve ilgili eleman tipinin oran tahminini geçersiz kılar.
     drawings: yalnız bu paftalar (tek pafta metrajı); kat yükseklikleri yine projenin tüm paftalarından."""
+    from .confidence import element_tier
     all_drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
     sh = storey_heights(project, all_drawings)
     if drawings is None:
@@ -619,7 +621,7 @@ def project_quantities(project: Project, session: Session, drawings: list[Drawin
                                 rebar_ratios={**QuantityParams().rebar_ratios, **(project.rebar_ratios or {})})
         data = [ElementData.from_obj(e) for e in elements]
         for e in elements:
-            info[e.id] = {"drawing": d.label or d.filename, "drawing_id": d.id, "kot": _drawing_kot(d), "layer": e.layer,
+            info[e.id] = {"tier": element_tier(e), "drawing": d.label or d.filename, "drawing_id": d.id, "kot": _drawing_kot(d), "layer": e.layer,
                           "b": e.b, "h": e.h, "thickness": e.thickness, "area": round(e.area, 4), "length": round(e.length, 4),
                           "warnings": e.warnings, "storey_height": params.storey_height, "slab_thickness": params.slab_thickness}
         lines.extend(compute_all(data, params))
@@ -728,7 +730,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     """Tüm disiplinlerin keşif listesi. expand=True: katmanlı sistemler bileşenlerine açılır (project_systems kararıyla).
     drawings: yalnız bu paftalar. measured_only: yalnız çizimden ölçülen kalemler (beton / kalıp / demir, duvar, kapı,
     KSF kalemleri…); fire, sarf, cephe / çatı tahmini, türetilmiş kalemler ve reçeteler yazılmaz (pafta metrajı)."""
-    from .derive import slab_thicknesses
+    from .derive import slab_thicknesses, storey_counts
     all_drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
     if drawings is None:
         drawings = all_drawings
@@ -771,12 +773,19 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     # kalınlığı kullanır. Duvar yüksekliği (kat yüksekliği − d) buna bağlıdır ve tek bir proje sayısı
     # bodrum perdesiyle çatı döşemesini aynı sayar.
     st = slab_thicknesses(project, drawings, lambda x: els_by_id.get(x.id, []))
+    # Kat sayısı çıkarılamamış **çok katlı** bir binada paftadan gelen her miktar kat sayısı kadar yanlış
+    # olabilir: o paftanın kalemleri güven rozetinde en alt kademeye (tahmin) düşer. Tek katlı projede
+    # "1 kat" doğrudur, rozet düşürülmez.
+    sc = storey_counts(project, all_drawings)
+    riskli = {d.id for d in drawings
+              if (sc["per_drawing"].get(d.id, {}).get("kind") == "default" and (sc["total"] or 1) > 1)}
     for d in drawings:
         elements = els_by_id[d.id]
         entry = {"id": d.id, "label": d.label or d.filename, "storey_count": d.storey_count,
                  "storey_height": storey_height_of(project, d, sh),
                  "slab_thickness": st["per_drawing"].get(d.id, {}).get("value") or project.slab_thickness,
                  "height_source": sh["per_drawing"].get(d.id, {}).get("source", sh["source"]),
+                 "storey_risk": d.id in riskli,
                  "elements": [ksf_entry(e) for e in elements]}
         if d.discipline in (STANDARD_DISCIPLINE, MAPPED_DISCIPLINE):
             # KSF statik katmanları (KOLON_ON, DOSEME_ON…) statik motorda beton / kalıp / demir olarak ölçüldü; ikinci kez yazılmaz
@@ -989,7 +998,8 @@ def space_derived(project: Project, sp: dict, catalog: Catalog, params: dict, dr
                            label=it.name + (f" {spec}" if spec else ""), unit=it.unit, quantity=round(qty, 3),
                            discipline=f"ksf:{it.discipline}", kind_label=it.name,
                            discipline_label=catalog.discipline_name(it.discipline),
-                           notes=[note], detail={"derived": True, "space": True, "source": kaynak}))
+                           notes=[note], detail={"derived": True, "space": True, "source": kaynak,
+                                                 "evidence": {TURETILDI if sp.get("area_source") == "drawing" else TAHMIN: round(qty, 3)}}))
 
     kaynak = "mahal sınırından ölçüldü" if sp.get("area_source") == "drawing" else "mahal yazısındaki alandan"
     note = sp.get("finish") or {}
@@ -1536,7 +1546,8 @@ def roof_items(project: Project, session: Session, catalog: Catalog, items: list
             BoqItem(key=f"{sys_item.code.lower()}:*", kind=sys_item.code.lower(), group="*", label=sys_item.name, unit=sys_item.unit,
                     quantity=ra["area"], discipline=f"ksf:{sys_item.discipline}", kind_label=sys_item.name,
                     discipline_label=catalog.discipline_name(sys_item.discipline),
-                    notes=[f"Miktar = çatı alanı ({ra['detail']}); sistem: {src}"], detail={"roof_auto": True})]
+                    notes=[f"Miktar = çatı alanı ({ra['detail']}); sistem: {src}"],
+                    detail={"roof_auto": True, "evidence": {TAHMIN: round(ra["area"], 3)}})]
 
 
 DEFAULT_FINISH_KEYWORDS = "LOBİ,LOBI,VİTRİN,VITRIN,GİRİŞ,GIRIS,HOL,KORİDOR,KORIDOR,FUAYE"
@@ -1689,7 +1700,10 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
         if not it or q <= 0 or rule in off:
             return
         group = slug(spec) if spec else "*"
-        detail = {"derived": True, "rule": rule} | ({"param_source": source} if source else {})
+        # Kanıt kademesi kaynağına bakar: mahal notundan / kesit kotundan okunan ölçü bir türetmedir
+        # ("turetildi"); parametre varsayılanı ya da "çevre = 4·√alan" gibi geometrik kabul tahmindir.
+        kademe = TAHMIN if (rule == "islak" or source in ("param", "default", "")) else TURETILDI
+        detail = {"derived": True, "rule": rule, "evidence": {kademe: round(q, 3)}} | ({"param_source": source} if source else {})
         out.append(BoqItem(key=f"{it.code.lower()}:{group}", kind=it.code.lower(), group=group,
                            label=it.name + (f" {spec}" if spec else ""), unit=it.unit, quantity=round(q, 3),
                            discipline=f"ksf:{it.discipline}", kind_label=it.name, discipline_label=catalog.discipline_name(it.discipline),
@@ -2089,13 +2103,15 @@ def facade_items(project: Project, session: Session, catalog: Catalog, items: li
                                    discipline_label=catalog.discipline_name(sys_item.discipline),
                                    notes=[f"Net {net:,.0f} m² = brüt {brut:,.0f} m² − cam payı; kaynak: {fa['detail']}{cam_notu}"],
                                    detail={"facade_source": fa["source"], "facade_side": yon,
-                                           "gross_m2": round(brut, 2)}))
+                                           "gross_m2": round(brut, 2),
+                                           "evidence": {TAHMIN if fa["source"] == "estimated" else TURETILDI: round(net, 3)}}))
         else:
             note = f"Miktar = net cephe alanı ({fa['gross']:,.0f} m² brüt − {fa['glass']:,.0f} m² cam); kaynak: {fa['detail']}"
             out.append(BoqItem(key=f"{kind}:*", kind=kind, group="*", label=sys_item.name,
                                unit=sys_item.unit, quantity=fa["net"], discipline=f"ksf:{sys_item.discipline}", kind_label=sys_item.name,
                                discipline_label=catalog.discipline_name(sys_item.discipline), notes=[note],
-                               detail={"facade_source": fa["source"]}))
+                               detail={"facade_source": fa["source"],
+                                       "evidence": {TAHMIN if fa["source"] == "estimated" else TURETILDI: round(fa["net"], 3)}}))
     return out
 
 
@@ -2325,6 +2341,10 @@ def project_quality(project, session, items, summary, cost=None):
     blocks = project_blocks(project, drawings)
     check = plan_check(drawings, project.plan_set, blocks["blocks"], blocks["missing"])
     quality = build_quality(drawings, elements, items, summary, project.params or {}, check, cost)
+    # Güven dağılımı: her kalemin rozeti `BoqItem.confidence` ile zaten API ve Excel'e gidiyor;
+    # burada keşfin tamamı için tek cümle üretilir ("Metrajın %78'i çizimden ölçüldü …").
+    from .confidence import distribution
+    quality["confidence"] = distribution(items)
     heights = storey_heights(project, drawings)
     for d in drawings:
         pt = PLAN_TYPE_BY_CODE.get(d.plan_type)

@@ -448,6 +448,18 @@ export interface BoqItem {
   poz_name: string
   notes: string[]
   detail: Record<string, unknown>
+  /** Güven rozeti: sayının nereden geldiği (backend: app/confidence.py) */
+  confidence: Confidence
+}
+
+/** Dört kademe: ölçüldü → adından tanındı → varsayımla türetildi → tahmin. En kötü girdi kazanır. */
+export interface Confidence {
+  code: 'olculdu' | 'tanindi' | 'turetildi' | 'tahmin'
+  label: string
+  icon: string
+  note: string
+  /** Kanıtın kademelere dağılımı (miktar payı, 0-1) */
+  shares: Partial<Record<'olculdu' | 'tanindi' | 'turetildi' | 'tahmin', number>>
 }
 
 export interface Boq {
@@ -878,6 +890,10 @@ export interface QualityReport {
   selfcheck?: SelfCheck
   /** Kapsam sahipliği: aynı nesneyi ikinci kez çizen pafta onu tekrar saymaz (backend: quantity/scope.py) */
   scope?: ScopeReport
+  /** Keşfin güven dağılımı ve tek cümlelik özeti (backend: app/confidence.py) */
+  confidence?: { counts: Record<string, number>; total: number; shares: Record<string, number>; sentence: string }
+  /** Çizimden türetilen kat sayısı: kot dizisi ve planı yüklenmemiş katlar (backend: app/derive.py) */
+  storey_count?: { total: number | null; levels: number[]; unowned: number[] }
 }
 
 /** Hangi miktar hangi paftadan sayıldı: düşen kopya, eklenen fark, sahibi olmayan kalem. */

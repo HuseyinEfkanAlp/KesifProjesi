@@ -35,6 +35,15 @@ export default function QualitySummary({ report, projectId, onFixed }: {
     {note && <div className="hint" style={{ marginTop: 8 }}>{note}</div>}
     {error && <div className="error" style={{ marginTop: 8 }}>{error}</div>}
     {report.selfcheck && <SelfCheckBlock sc={report.selfcheck} />}
+    {report.confidence && report.confidence.total > 0 && <div className="conf-bar">
+      {/* Her kalemin rozeti keşif listesinde; burada tek cümleyle "bu metraj nereden geldi" */}
+      <p style={{ margin: '8px 0 4px' }}>{report.confidence.sentence}</p>
+      <div className="conf-strip" role="img" aria-label={report.confidence.sentence}>
+        {(['olculdu', 'tanindi', 'turetildi', 'tahmin'] as const).map((k) => (report.confidence!.shares[k] ?? 0) > 0
+          ? <span key={k} className={`conf-${k}`} style={{ width: `${report.confidence!.shares[k]}%` }} />
+          : null)}
+      </div>
+    </div>}
     {report.scope && <ScopeBlock scope={report.scope} projectId={projectId} />}
     <details style={{ marginTop: 12 }}>
       <summary>Kontrol listesi ve hesap kabulleri</summary>

@@ -38,7 +38,15 @@ def summarize(lines: list[QuantityLine], rebar_tables: list[dict] | None = None,
         k = group_key(ln)
         g = groups.setdefault(k, {"key": k, "label": group_label(k), "etype": ln.etype, "element_count": 0,
                                   "concrete_m3": 0.0, "formwork_m2": 0.0, "rebar_kg": 0.0, "rebar_source": "oran",
-                                  "rebar_ratio_kg": 0.0, "rebar_table_kg": 0.0, "rebar_kots_ratio": []})
+                                  "rebar_ratio_kg": 0.0, "rebar_table_kg": 0.0, "rebar_kots_ratio": [],
+                                  "evidence": {"concrete": {}, "formwork": {}}})
+        # Güven kanitı (app/confidence.py): hangi miktar hangi kademeden geldi. `info` elemanin
+        # kademesini taşır; miktar birimiyle ağırlıklandığı için rozet "en kötü girdi kazanır" kuralıyla çıkar.
+        tier = info.get(ln.element_id, {}).get("tier")
+        if tier:
+            ev = g["evidence"]
+            ev["concrete"][tier] = ev["concrete"].get(tier, 0.0) + ln.total_concrete
+            ev["formwork"][tier] = ev["formwork"].get(tier, 0.0) + ln.total_formwork
         g["element_count"] += ln.count * ln.multiplier
         g["concrete_m3"] += ln.total_concrete
         g["formwork_m2"] += ln.total_formwork

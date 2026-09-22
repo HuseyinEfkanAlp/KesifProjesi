@@ -242,7 +242,7 @@ export default function Quantities() {
         <div className="panel" key={g.group}>
           <h3>{g.label} <span className="muted" style={{ fontWeight: 400 }}>· {g.items.length} kalem</span></h3>
           <table>
-            <thead><tr><th>Poz</th><th>Disiplin</th><th>Tür</th><th>Kalem</th><th className="num">Miktar</th><th>Birim</th><th className="num">Adet / hat</th><th>Not</th></tr></thead>
+            <thead><tr><th>Poz</th><th>Disiplin</th><th>Tür</th><th>Kalem</th><th className="num">Miktar</th><th>Birim</th><th className="num">Adet / hat</th><th title="Sayının nereden geldiği">Kaynak</th><th>Not</th></tr></thead>
             <tbody>
               {kindBlocks(g.items).map(({ kind, kindLabel, unit, rows, total, count }) => {
                 const key = `${g.group}:${kind}`
@@ -257,6 +257,7 @@ export default function Quantities() {
                     <td><b>{unit}</b></td>
                     <td className="num">{count ? fmt(count, 0) : ''}</td>
                     <td></td>
+                    <td></td>
                   </tr>
                 )}
                 {open && rows.map((it) => (
@@ -268,6 +269,9 @@ export default function Quantities() {
                   <td className="num"><b>{fmt(it.quantity, it.unit === 'adet' || it.unit === 'kg' ? 0 : 2)}</b></td>
                   <td>{it.unit}</td>
                   <td className="num">{it.count ? fmt(it.count, 0) : '-'}</td>
+                  <td className="nowrap" title={it.confidence.note}>
+                    <span className={`badge conf-${it.confidence.code}`}>{it.confidence.icon} {it.confidence.label}</span>
+                  </td>
                   <td className="muted">{it.notes.join('; ')}</td>
                 </tr>
                 ))}
