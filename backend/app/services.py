@@ -1043,6 +1043,26 @@ ALIGN_MIN_HIT = 0.05        # elemanların en az bu oranı mahale düşmeli (bir
                             # olabilir: her katın payı küçüktür; eşik düşük ama eşleşme doğrulanır)
 ALIGN_MIN_COUNT = 3         # ve en az bu kadar eleman
 ALIGN_BOX_MARGIN = 5.0      # m — hizalama kutusuna bu kadar pay verilir (kutu isabet eden noktalardan çıkar)
+# Yan yana çizilen kat kümelerini ayıran en küçük boşluk (m). Bir mahalin içindeki armatür aralığı
+# birkaç metredir; iki kat planı arasında her zaman antet / ölçü çizgisi payı kadar boşluk kalır.
+CLUSTER_GAP = 15.0
+CLUSTER_MIN = 20            # bundan az elemanlı küme kat planı değil (lejant, antet, pano tablosu)
+# Bir kümenin kat planı sayılabilmesi için kapsadığı alanın, paftadaki en büyük kümeye oranı.
+# Aynı paftadaki kat planları aynı ölçekte çizilir ve boyca karşılaştırılabilir; lejant / sembol listesi
+# bir mertebe küçüktür (gerçek projede ölçüldü: lejant 0,035 · katlar 0,69 - 1,00).
+CLUSTER_MIN_EXTENT = 0.15
+# Bir kümenin bir kata yazılabilmesi için elemanlarının en az bu oranı o katın mahallerine düşmeli.
+# ALIGN_MIN_HIT'ten çok daha yükseği: orada soru "bu pafta bu binaya ait mi", burada "bu küme
+# tam olarak BU kat mı" — zayıf bir eşleşme, armatürleri başka katın odalarına yazmak demektir.
+CLUSTER_MIN_HIT = 0.40
+# Küme sırası ile kat sırası arasındaki her bir kaymanın bedeli. Konum puandan ÖNCE gelir:
+# gerçek projede isabet oranı hiçbir eşleşmeyi ayırt edemedi (1.206 m²'lik spor salonu hangi küme
+# gelirse yüksek puan veriyor), ama iki pafta da katları AYNI SIRADA dizer — tesisatçı mimarin
+# yerleşimini izler. Bedel, oranın verebileceği en büyük üstünlükten büyüktür: kaydırılmış bir
+# atama ancak sıralı olanı tamamen geçersiz kıldığında seçilir.
+CLUSTER_ORDER_COST = 0.8
+# Lejant / sembol listesi katmanları: plan değil, açıklama tablosudur ve her kayma ile "içeri düşer".
+LEGEND_LAYER = re.compile(r"LEJANT|LEGEND|SEMBOL\s*L[İI]STE|AÇIKLAMA", re.IGNORECASE)
 NOKTA_MAX_AREA = 4.0        # m² — bundan küçük ve uzunluğu olmayan eleman "nokta" sayılır (armatür, priz,
                             # kamera, menfez): hizalama aramaşı yalnız bunları kullanır
 
@@ -1160,6 +1180,101 @@ def _refine(pts, tree, polys, seed: tuple[float, float], adim: float = 32.0) -> 
         if not gelisti:
             adim /= 2
     return en_iyi, skor
+
+
+def floor_clusters(elements) -> list[list]:
+    """Paftadaki yan yana çizilmiş kat kümeleri (soldan sağa sıralı).
+
+    Bir tesisat paftası çoğu projede bir katı değil BÜTÜN katları yan yana gösterir (gerçek projede
+    bodrum · zemin · 1. kat soldan sağa). Hepsi tek küme sayılırsa her kat aynı kümeye hizalanır ve
+    armatürler yanlış odalara yazılır — ölçüldü: üç katın üçü de ortadaki kümeyi aldı, soldaki ve
+    sağdaki küme (551 armatür) boşta kaldı.
+
+    Lejant katmanları ayıklanır: sembol listesi plan değildir ama küçük ve sık olduğu için herhangi bir
+    kaymayla büyük bir mahalin içine düşüp %100 isabet veriyor."""
+    nokta = [e for e in elements
+             if e.points and not (getattr(e, "length", 0) or 0)
+             and (getattr(e, "area", 0) or 0) <= NOKTA_MAX_AREA
+             and not LEGEND_LAYER.search(getattr(e, "layer", "") or "")]
+    if not nokta:
+        return []
+    nokta.sort(key=lambda e: e.points[0][0])
+    out, cur = [], [nokta[0]]
+    for a, b in zip(nokta, nokta[1:]):
+        if b.points[0][0] - a.points[0][0] > CLUSTER_GAP:
+            out.append(cur)
+            cur = []
+        cur.append(b)
+    out.append(cur)
+    out = [k for k in out if len(k) >= CLUSTER_MIN]
+
+    def kapsam(k) -> float:
+        xs = [e.points[0][0] for e in k]
+        ys = [e.points[0][1] for e in k]
+        return (max(xs) - min(xs)) * (max(ys) - min(ys))
+
+    # Lejant, sembol listesi ve pano tablosu: eleman sayısı bir katı andırır ama kapsadığı alan bir
+    # mertebe küçüktür. Ayıklanmazsa en tehlikeli yanlışı yapar: sıkışık olduğu için herhangi bir
+    # kaymayla büyük bir mahalin içine tamamen düşer, %100 isabet verir ve sıralı eşlemeyi kaydırır.
+    if not out:
+        return []
+    enb = max(kapsam(k) for k in out)
+    return [k for k in out if enb <= 0 or kapsam(k) / enb >= CLUSTER_MIN_EXTENT]
+
+
+def assign_clusters(target: Drawing, sources: list[Drawing], clusters: list[list],
+                    polys_by_src: dict[int, list]) -> tuple[list[dict], list[list]]:
+    """Kümeleri katlara **birebir** ve **sırayı bozmadan** eşler. Döner: (eşlemeler, boşta kümeler).
+
+    İki kısıt da yapısaldır ve puandan önce gelir:
+      • **Birebir** — bir katın armatürü tek bir kümededir; iki kat aynı kümeyi paylaşamaz.
+      • **Sıra korunur** — her iki pafta da katları soldan sağa dizer. Yalnız isabet sayısını
+        büyütmek yanıltıcıdır: gerçek projede 1.206 m²'lik spor salonu her kümeye en yüksek puanı
+        veriyor ve puan en çoğa çıkaran atama sırayı ters çeviriyordu.
+
+    Eşleşmesi `CLUSTER_MIN_HIT` altında kalan küme atanmaz: o katın mimari planı yüklenmemiş olabilir
+    (gerçek projede kotlarda 5 kat var, 3'ünün planı yüklü). Uydurma bir eşleşme yerine boşta bırakılır."""
+    if not clusters or not sources:
+        return [], list(clusters)
+    src_sirali = sorted(sources, key=lambda d: min((g.bounds[0] for _sp, g in polys_by_src.get(d.id) or []),
+                                                   default=0.0))
+    skor: dict[tuple[int, int], dict] = {}
+    for i, k in enumerate(clusters):
+        for j, src in enumerate(src_sirali):
+            a = align_drawing(target, src, k, polys_by_src.get(src.id) or [])
+            a["ratio"] = a["hit"] / max(len(k), 1)
+            skor[(i, j)] = a
+
+    # Sıra koruyan birebir eşleme (en uzun artan ortak dizi): O(küme × kat) dinamik programlama.
+    nk, nj = len(clusters), len(src_sirali)
+    en = [[0.0] * (nj + 1) for _ in range(nk + 1)]
+    sec = [[None] * (nj + 1) for _ in range(nk + 1)]
+    for i in range(nk - 1, -1, -1):
+        for j in range(nj - 1, -1, -1):
+            atla_k = en[i + 1][j]
+            atla_s = en[i][j + 1]
+            a = skor[(i, j)]
+            deger = 1.0 + 0.5 * a["ratio"] - CLUSTER_ORDER_COST * abs(i - j)
+            al = (deger + en[i + 1][j + 1]) if a["ratio"] >= CLUSTER_MIN_HIT and a["hit"] >= ALIGN_MIN_COUNT else -1e9
+            en[i][j], sec[i][j] = max((al, "al"), (atla_k, "kume"), (atla_s, "kat"))
+    eslesme: list[dict] = []
+    alinan: set[int] = set()
+    i = j = 0
+    while i < nk and j < nj:
+        hangi = sec[i][j]
+        if hangi == "al":
+            a = skor[(i, j)]
+            eslesme.append({"cluster": clusters[i], "source": src_sirali[j], "offset": (a["dx"], a["dy"]),
+                            "bbox": a.get("bbox"), "hit": a["hit"], "total": len(clusters[i]),
+                            "ratio": a["ratio"], "how": a["source"]})
+            alinan.add(i)
+            i += 1
+            j += 1
+        elif hangi == "kume":
+            i += 1
+        else:
+            j += 1
+    return eslesme, [k for n, k in enumerate(clusters) if n not in alinan]
 
 
 def align_drawing(target: Drawing, source: Drawing, elements, polys) -> dict:
@@ -1290,21 +1405,44 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
             # (pafta, kayma, hizalama kutusu): kutu, o kaymayla mahale düşen noktaların çizimdeki
             # sınırıdır. Bir kat, başka katın bölgesindeki elemanı kapmasın diye atama bu kutuyla sınırlanır:
             # büyük bir mahal (1.200 m² spor salonu) yanlış kaymayla komşu katın armatürünü içine alabiliyor.
+            # Önce paftadaki yan yana kat kümeleri bulunur, sonra her küme **tek** bir kata atanır.
+            # Katları ayrı ayrı hizalamak yetmiyor: üç kat da en iyi puanı aynı (ortadaki) kümeden
+            # alıp onu paylaşıyor, soldaki ve sağdaki küme boşta kalıyordu.
+            kumeler = floor_clusters(els)
             kabul: list[tuple[Drawing, tuple[float, float], tuple | None]] = []
             en_iyi = None
-            for src in sources:
-                a = align_drawing(d, src, els, polys_by_src[src.id])
-                if en_iyi is None or a["hit"] > en_iyi["hit"]:
-                    en_iyi = a
-                if a["hit"] >= ALIGN_MIN_COUNT and a["hit"] >= ALIGN_MIN_HIT * max(a["total"], 1):
-                    kabul.append((src, (a["dx"], a["dy"]), a.get("bbox")))
-                    nasil = ("aynı koordinatta" if (a["dx"], a["dy"]) == (0.0, 0.0)
-                             else f"({a['dx']:+.1f}, {a['dy']:+.1f}) m kaydırılarak")
+            if len(kumeler) > 1:
+                eslesme, bosta = assign_clusters(d, sources, kumeler, polys_by_src)
+                for m in eslesme:
+                    src = m["source"]
+                    kabul.append((src, m["offset"], m["bbox"]))
+                    nasil = ("aynı koordinatta" if m["offset"] == (0.0, 0.0)
+                             else f"({m['offset'][0]:+.1f}, {m['offset'][1]:+.1f}) m kaydırılarak")
                     hizalama[(d.id, src.id)] = {"drawing": d.label or d.filename, "to": src.label or src.filename,
-                                                "dx": a["dx"], "dy": a["dy"], "how": a["source"],
+                                                "dx": m["offset"][0], "dy": m["offset"][1], "how": m["how"],
                                                 "hit": 0, "total": 0}
-                    warnings.append(f"“{d.label or d.filename}” → “{src.label or src.filename}” "
-                                    f"mahallerine {nasil} hizalandı.")
+                    warnings.append(f"“{d.label or d.filename}” paftasındaki {m['total']} elemanlı küme "
+                                    f"“{src.label or src.filename}” mahallerine {nasil} hizalandı "
+                                    f"(%{m['ratio'] * 100:.0f} isabet).")
+                if bosta:
+                    n = sum(len(k) for k in bosta)
+                    warnings.append(f"“{d.label or d.filename}” paftasında {len(bosta)} kat kümesi ({n} eleman) "
+                                    "hiçbir mimari kata eşleşmedi: o katların mimari planı yüklenmemiş olabilir. "
+                                    "Kalemleri mahal kırılımına girmedi.")
+            else:
+                for src in sources:
+                    a = align_drawing(d, src, els, polys_by_src[src.id])
+                    if en_iyi is None or a["hit"] > en_iyi["hit"]:
+                        en_iyi = a
+                    if a["hit"] >= ALIGN_MIN_COUNT and a["hit"] >= ALIGN_MIN_HIT * max(a["total"], 1):
+                        kabul.append((src, (a["dx"], a["dy"]), a.get("bbox")))
+                        nasil = ("aynı koordinatta" if (a["dx"], a["dy"]) == (0.0, 0.0)
+                                 else f"({a['dx']:+.1f}, {a['dy']:+.1f}) m kaydırılarak")
+                        hizalama[(d.id, src.id)] = {"drawing": d.label or d.filename, "to": src.label or src.filename,
+                                                    "dx": a["dx"], "dy": a["dy"], "how": a["source"],
+                                                    "hit": 0, "total": 0}
+                        warnings.append(f"“{d.label or d.filename}” → “{src.label or src.filename}” "
+                                        f"mahallerine {nasil} hizalandı.")
             if not kabul:
                 unassigned += [(d, _scaled(e, 1.0)) for e in els]
                 if en_iyi and en_iyi["total"]:
