@@ -112,8 +112,25 @@ def _band(v: float, band: tuple[float, float]) -> bool:
     return band[0] <= v <= band[1]
 
 
-def build(summary: dict, elements=None, rebar_mix: dict | None = None) -> SelfCheckReport:
-    """summary: quantity/summary.py çıktısı. elements: proje elemanları (birim sağlaması için)."""
+# Mahal çokgeninin ölçülen alanı ile mahal yazısındaki alan arasında kabul edilen azami fark (%).
+# `parser/spaces.AREA_TOLERANCE_PCT` (12) sınırın KABUL eşiğidir: üzerindeki mahal zaten ölçülmemiş
+# sayılır. Burada sorulan başka bir şey: kabul edilmiş mahallerin içinde de sistematik bir kayma
+# var mı (ölçek hatası, yanlış birim, duvar ekseni / iç yüz karışıklığı).
+SPACE_AREA_TOL_PCT = 8.0
+# Mahallerin toplamı bina dış hattının bu oranını geçemez: duvar, şaft ve kolon payları düşülür.
+SPACES_IN_FOOTPRINT_MAX = 1.02
+# Antetteki inşaat alanı ile ölçülen kat alanları toplamı arasında kabul edilen fark (%).
+# Antet brüt alanı anlatır, ölçülen mahal toplamı nettir; aradaki fark doğal olarak büyüktür.
+TITLEBLOCK_AREA_TOL_PCT = 35.0
+
+
+def build(summary: dict, elements=None, rebar_mix: dict | None = None,
+          spaces: list[dict] | None = None, footprints: list[dict] | None = None,
+          titleblock: dict | None = None) -> SelfCheckReport:
+    """summary: quantity/summary.py çıktısı. elements: proje elemanları (birim sağlaması için).
+
+    spaces / footprints / titleblock verilirse **mekânsal** kontroller de yapılır: aynı büyüklüğe
+    birbirini hiç görmeyen iki kaynaktan bakılır (mimarın yazdığı alan ↔ bizim ölçtüğümüz çokgen)."""
     r = SelfCheckReport()
     _rebar_ratio(r, summary)
     _slab_thickness(r, summary)
@@ -121,7 +138,116 @@ def build(summary: dict, elements=None, rebar_mix: dict | None = None) -> SelfCh
     _diameters(r, summary, rebar_mix or {})
     _floor_consistency(r, summary)
     _arithmetic(r, summary)
+    _space_areas(r, spaces or [])
+    _spaces_in_footprint(r, spaces or [], footprints or [])
+    _titleblock_area(r, footprints or [], titleblock or {})
     return r
+
+
+def _space_areas(r: SelfCheckReport, spaces: list[dict]) -> None:
+    """Ölçtüğümüz mahal çokgeni ↔ mimarın mahal yazısına yazdığı alan.
+
+    **Bağımsızlık buradan gelir:** yazıdaki alanı mimar kendi hesabıyla yazmış, biz çizgilerden
+    ölçtük. İkisi birbirini hiç görmez. Tek tek küçük farklar normaldir (duvar ekseni / iç yüz);
+    ama fark **sistematikse** ortada bir ölçek ya da birim hatası vardır ve bütün metrajı kaydırır."""
+    esli = [sp for sp in spaces
+            if float(sp.get("label_area") or 0) > 0 and sp.get("area_source") == "drawing"]
+    if len(esli) < 3:
+        r.checks.append(Check("mahal_alani", "Mahal alanı", "mahaller", "kararsiz",
+                              "Yazısında alanı olan ve sınırı ölçülen mahal sayısı karşılaştırma için yetersiz.",
+                              bagimsizlik="mimarın yazdığı alan ↔ çizgilerden ölçülen çokgen"))
+        return
+    farklar = [(float(sp["area"]) - float(sp["label_area"])) / float(sp["label_area"]) * 100.0 for sp in esli]
+    ort = median(farklar)
+    sapan = [sp for sp, f in zip(esli, farklar) if abs(f) > SPACE_AREA_TOL_PCT]
+    if abs(ort) > SPACE_AREA_TOL_PCT:
+        yon = "büyük" if ort > 0 else "küçük"
+        r.checks.append(Check(
+            "mahal_alani", "Mahal alanı", f"{len(esli)} mahal", "celisiyor",
+            f"Ölçtüğümüz alanlar mimarın yazdığı alanlardan sistematik olarak %{abs(ort):.0f} {yon}. "
+            "Tek tek sapma değil, bütününe yayılan bir kayma: ölçek ya da birim hatası olabilir; "
+            "böyleyse kaplama, şap ve tavan metrajı aynı oranda yanlıştır.",
+            olculen=ort, beklenen=f"±%{SPACE_AREA_TOL_PCT:g} medyan fark",
+            bagimsizlik="mimarın yazdığı alan ↔ çizgilerden ölçülen çokgen"))
+        return
+    ad = ", ".join(f"{sp.get('name') or '?'} ({sp['area']:,.0f} / {sp['label_area']:,.0f} m²)"
+                   for sp in sapan[:4]).replace(",", ".")
+    r.checks.append(Check(
+        "mahal_alani", "Mahal alanı", f"{len(esli)} mahal", "destekliyor",
+        f"Ölçülen alanlar yazıdaki alanlarla örtüşüyor (medyan fark %{ort:+.1f})."
+        + (f" {len(sapan)} mahalde tek tek sapma var: {ad}." if sapan else ""),
+        olculen=ort, beklenen=f"±%{SPACE_AREA_TOL_PCT:g} medyan fark",
+        bagimsizlik="mimarın yazdığı alan ↔ çizgilerden ölçülen çokgen"))
+
+
+def _spaces_in_footprint(r: SelfCheckReport, spaces: list[dict], footprints: list[dict]) -> None:
+    """Bir katın mahalleri o katın dış hattının içine sığmalı.
+
+    Mahaller iç yüzlerden, dış hat kabuktan ölçülür; mahal toplamı dış hattı GEÇİYORSA
+    geometrilerden biri yanlış yerdedir (yanlış kat eşlemesi, ikinci kopyanın karışması)."""
+    by_dwg: dict[int, float] = {}
+    for sp in spaces:
+        if sp.get("kind") == "grup" or sp.get("parent") is not None:
+            continue            # grup ve iç içe mahal iki kez sayılmasın
+        by_dwg[sp.get("drawing_id")] = by_dwg.get(sp.get("drawing_id"), 0.0) + float(sp.get("area") or 0)
+    # **Dairesellik yasağı:** dış hat mahal sınırlarından türetilmişse (services._plan_footprints
+    # önce mahalleri kullanır) bu karşılaştırma aynı sayıya iki kez bakmaktır ve hiçbir şey
+    # kanıtlamaz — üstelik mahalleri kopuk olan bir katta (ayrık teras) sahte çelişki üretir.
+    # Yalnız taşıyıcı / duvar geometrisinden çıkan dış hatlar karşılaştırılır.
+    fp = {f.get("drawing_id"): float(f.get("area") or 0)
+          for f in footprints if f.get("source") != "spaces"}
+    ortak = [(d, by_dwg[d], fp[d]) for d in by_dwg if fp.get(d)]
+    if not ortak:
+        r.checks.append(Check("mahal_oturum", "Mahaller bina içinde", "mahaller", "kararsiz",
+                              "Bina dış hattı mahal sınırlarından türetildiği için karşılaştırma dairesel olurdu; "
+                              "bağımsız kontrol için taşıyıcı (kalıp) planı gerekir.",
+                              bagimsizlik="mahal çokgenleri ↔ taşıyıcı / duvar dış hattı"))
+        return
+    tasan = [(d, a, f) for d, a, f in ortak if f > 0 and a / f > SPACES_IN_FOOTPRINT_MAX]
+    ad = {f.get("drawing_id"): f.get("drawing") for f in footprints}
+    if tasan:
+        d, a, f = max(tasan, key=lambda t: t[1] / t[2])
+        r.checks.append(Check(
+            "mahal_oturum", "Mahaller bina içinde", f"{len(ortak)} kat", "celisiyor",
+            f"“{ad.get(d, '?')}” katında mahallerin toplamı ({a:,.0f} m²) bina dış hattını "
+            f"({f:,.0f} m²) aşıyor. Mahaller iç yüzlerden ölçülür, dış hattı geçemez: "
+            "geometrilerden biri yanlış katta ya da planın ikinci kopyası karışmış olabilir.".replace(",", "."),
+            olculen=a / f, beklenen=f"≤ {SPACES_IN_FOOTPRINT_MAX:g}",
+            bagimsizlik="mahal çokgenleri ↔ taşıyıcı / duvar dış hattı"))
+        return
+    r.checks.append(Check(
+        "mahal_oturum", "Mahaller bina içinde", f"{len(ortak)} kat", "destekliyor",
+        "Her katta mahallerin toplamı bina dış hattının içinde kalıyor.",
+        olculen=max(a / f for _d, a, f in ortak), beklenen=f"≤ {SPACES_IN_FOOTPRINT_MAX:g}",
+        bagimsizlik="mahal çokgenleri ↔ taşıyıcı / duvar dış hattı"))
+
+
+def _titleblock_area(r: SelfCheckReport, footprints: list[dict], titleblock: dict) -> None:
+    """Antetteki inşaat alanı ↔ ölçtüğümüz kat alanları toplamı.
+
+    Anteti ruhsat için mimar yazar, kat alanlarını biz çizimden ölçeriz — tam bağımsız iki kaynak.
+    Bu kontrolün asıl değeri **birim hatasını** yakalamasıdır: cm yerine mm okunan bir çizimde
+    alanlar 100 kat çıkar ve başka hiçbir kontrol bunu görmez."""
+    antet = float(titleblock.get("area_m2") or 0)
+    olculen = sum(float(f.get("area") or 0) * max(1, int(f.get("storey_count") or 1)) for f in footprints)
+    if antet <= 0 or olculen <= 0:
+        return
+    fark = (olculen - antet) / antet * 100.0
+    if abs(fark) > TITLEBLOCK_AREA_TOL_PCT:
+        r.checks.append(Check(
+            "antet_alani", "İnşaat alanı", "proje", "celisiyor",
+            f"Antette {antet:,.0f} m² inşaat alanı yazıyor, çizimden ölçülen kat alanları toplamı "
+            f"{olculen:,.0f} m² (%{fark:+.0f}). Bu büyüklükte bir fark ölçek / birim hatasına ya da "
+            "eksik yüklenmiş kata işaret eder; bütün metraj aynı oranda kayar.".replace(",", "."),
+            olculen=fark, beklenen=f"±%{TITLEBLOCK_AREA_TOL_PCT:g}",
+            bagimsizlik="ruhsat anteti ↔ çizimden ölçülen kat alanları"))
+        return
+    r.checks.append(Check(
+        "antet_alani", "İnşaat alanı", "proje", "destekliyor",
+        f"Ölçülen kat alanları toplamı ({olculen:,.0f} m²) antetteki inşaat alanıyla "
+        f"({antet:,.0f} m²) tutarlı (%{fark:+.0f}).".replace(",", "."),
+        olculen=fark, beklenen=f"±%{TITLEBLOCK_AREA_TOL_PCT:g}",
+        bagimsizlik="ruhsat anteti ↔ çizimden ölçülen kat alanları"))
 
 
 def _rebar_ratio(r: SelfCheckReport, summary: dict) -> None:

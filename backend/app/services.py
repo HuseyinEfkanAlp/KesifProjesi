@@ -2638,7 +2638,12 @@ def project_quality(project, session, items, summary, cost=None):
                                   "drawing": n.drawing or None, "message": n.message})
     # Sonucu ikinci bir yoldan sına: bağımsız kanıtlarla çelişen bir sayı "eksik" değil, **yanlış** olabilir.
     from .selfcheck import build as selfcheck_build
-    rapor = selfcheck_build(summary, elements, project_rebar_mix(project, session, drawings))
+    # Mekânsal kontroller de burada beslenir: mahal çokgenleri, kat dış hatları ve ruhsat anteti.
+    # Üçü de birbirini hiç görmeyen kaynaklardır — kontrolün değeri bundan gelir.
+    mahaller = [{**sp, "drawing_id": d.id} for d in drawings for sp in (d.spaces or [])]
+    rapor = selfcheck_build(summary, elements, project_rebar_mix(project, session, drawings),
+                            spaces=mahaller, footprints=_plan_footprints(project, session, drawings),
+                            titleblock=project.titleblock or {})
     quality["selfcheck"] = rapor.to_dict()
     for c in rapor.celisen:
         quality["issues"].append({"code": "selfcheck_conflict", "severity": "blocking", "drawing_id": None,
