@@ -587,6 +587,8 @@ export interface SpaceBreakdown {
   spaces: SpaceRow[]
   unassigned: BoqItem[]
   unassigned_reason: string
+  /** hangi pafta hangi mahal setine, ne kaymayla yazıldı */
+  alignment: { drawing: string; to: string; dx: number; dy: number; how: string; hit: number; total: number }[]
   warnings: string[]
 }
 

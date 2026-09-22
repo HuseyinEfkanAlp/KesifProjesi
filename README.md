@@ -608,6 +608,23 @@ yazıyı içerebilir) **alanı tutan** seçilir.
 > Aynı dosyada DXF başlığı birimi `mm` diyordu, yazı yükseklikleri `cm` dedi ve doğrusu cm çıktı —
 > birim uyarısına uyulmasaydı bütün metraj 10 kat yanlış olurdu.
 
+**Her disiplin kendi kalemini mahale yazar.** Mahaller MİMARİ plandan çıkar; döşeme kaplama, elektrik,
+zayıf akım ve mekanik paftaları ayrı çizimlerdir ve koordinatları aynı olmayabilir. İki kademeli eşleştirme var:
+
+1. **Aynı katı gösteren pafta birleştirilir** (`services.same_plan_offset`): elektrik paftası mimari altlık
+   taşıdığı için kendi mahallerini de üretir. Aynı adlı ve aynı alanlı mahaller hep aynı kaymayı veriyorsa
+   aynı kattır: mahal listesi **ikilenmez**, o paftanın kalemleri mevcut mahallere yazılır. Farklı katlar
+   (bodrum / zemin) eşleşmez, kendi mahal setlerini korur.
+2. **Mahal yazısı olmayan pafta hizalanır** (`services.align_drawing`): aday kaymalar (kaymasız hal + mahal
+   yazılarından gelenler) **doğrulanarak** seçilir — o kaymayla kaç eleman bir mahalin içine düşüyor.
+   Elemanların en az %30'u ve en az 3 tanesi düşmüyorsa hizalama kabul edilmez; o paftanın kalemleri
+   mahal kırılımına girmez ve bu açıkça bildirilir (uydurma eşleştirme yapılmaz).
+
+Sonuç `GET /projects/{id}/spaces` → `alignment`: hangi pafta hangi mahal setine, ne kaymayla, kaç elemanı
+düştü. Mahal satırında **reçete de açılır**: zemin seramiği → yapıştırıcı + **derz dolgusu**, şap → şap
+işçiliği, armatür → buat / kasa + montaj. Böylece tek mahal satırında "113 m² seramik, 5,7 m³ şap,
+56 kg derz · 12 armatür, 8 priz · 2 VRF iç ünite, 4 menfez" görünür.
+
 **Mahalin kendi ölçülerinden türetilenler** (`services.space_derived`): şap (kalınlık mahal notu > çizim notu >
 parametre > varsayılan), döşeme kaplaması (tip mahal notundan), tavan sıva+boya, sıva ve boya. Sınırı doğrulanan
 mahalde duvar yüzeyi **çevre × duvar yüksekliği** ile çıkar; çevre çokgenden **ölçülür**, proje genelindeki

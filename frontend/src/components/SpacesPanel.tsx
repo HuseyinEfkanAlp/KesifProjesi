@@ -88,6 +88,17 @@ export default function SpacesPanel({ projectId, refreshKey }: Props) {
       <div className="muted hint">Mahal sınırı mimarın alan çizgisinden, yoksa duvarlardan çıkarılır ve
         mahal yazısındaki alanla doğrulanır. Sınırı doğrulanan mahalde sıva / boya çevreden ÖLÇÜLÜR.
         mahale sayıldı. Duvar / hat gibi mahal sınırında duran kalemler komşu mahaller arasında bölüşülür.</div>
+      {(data.alignment ?? []).length > 0 && (
+        <div className="hint" style={{ marginTop: 4 }}>
+          <b>Paftalar:</b>{' '}
+          {data.alignment.map((a, i) => (
+            <span key={i} className={`chip${a.hit < a.total ? ' st-missing' : ''}`}
+                  title={`${a.how}${a.dx || a.dy ? ` · kayma (${a.dx}, ${a.dy}) m` : ''}`}>
+              {a.drawing} → {a.to} <span className="muted">({a.hit}/{a.total} eleman mahale düştü)</span>
+            </span>
+          ))}
+        </div>
+      )}
       {data.warnings.map((w, i) => <div key={i} className="muted hint">⚠ {w}</div>)}
       {groups.map((g) => (
         <div key={g.key} style={{ marginTop: 10 }}>

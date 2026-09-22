@@ -490,7 +490,10 @@ def room_rows(drawing: Drawing) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-        rows.append(r.to_dict())
+        row = r.to_dict()
+        if pt is not None:
+            row["x"], row["y"] = round(pt[0], 3), round(pt[1], 3)
+        rows.append(row)
         pts.append(pt)
     for f, npt in notes:
         i = _nearest_room(npt, rows, pts)

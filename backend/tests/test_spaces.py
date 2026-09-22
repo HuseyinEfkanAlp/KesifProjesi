@@ -171,3 +171,72 @@ def test_space_derived_items(client, tmp_path):
     # bağımsız bölüm satırı çocuklarının türetilmiş kalemlerini de toplar
     daire = {i["kind"]: i["quantity"] for i in by["DAİRE 1"]["total_items"]}
     assert daire["tavan_siva_boya"] == pytest.approx(64.0 + 32.0)
+
+
+def _mimari_dxf(path, dx=0.0, dy=0.0, tesisat=None):
+    """Mimari plan (duvar + mahal yazısı) ya da aynı planın tesisat kopyası.
+
+    tesisat: [(katman, [(x, y), …])] — elektrik / mekanik sembolleri. dx, dy ile pafta kaydırılır."""
+    import ezdxf
+    doc = ezdxf.new("R2010"); doc.header["$INSUNITS"] = 6
+    for n in ["DUVAR", "YAZI"] + [k for k, _ in (tesisat or [])]:
+        doc.layers.add(n)
+    for blk in ("SEM",):
+        if blk not in doc.blocks:
+            doc.blocks.new(name=blk).add_circle((0, 0), 0.15)
+    msp = doc.modelspace()
+    M = lambda x, y: (x + dx, y + dy)                                    # noqa: E731
+    msp.add_lwpolyline([M(0, 0), M(12, 0), M(12, 8), M(0, 8)], close=True, dxfattribs={"layer": "DUVAR"})
+    msp.add_line(M(8, 0), M(8, 3.5), dxfattribs={"layer": "DUVAR"})
+    msp.add_line(M(8, 4.5), M(8, 8), dxfattribs={"layer": "DUVAR"})
+    for ad, alan, x, y in [("SALON", 64.0, 4, 4), ("HOL", 32.0, 10, 4)]:
+        msp.add_text(ad, dxfattribs={"layer": "YAZI", "height": 0.24}).set_placement(M(x, y + 0.6))
+        msp.add_text(f"{alan:.2f} m²", dxfattribs={"layer": "YAZI", "height": 0.24}).set_placement(M(x, y))
+    for i in range(22):
+        msp.add_text(f"N{i}", dxfattribs={"layer": "YAZI", "height": 0.2}).set_placement(M(0.5 + i * 0.5, 9))
+    for katman, noktalar in (tesisat or []):
+        for x, y in noktalar:
+            msp.add_blockref("SEM", M(x, y), dxfattribs={"layer": katman})
+    doc.saveas(path)
+    return path
+
+
+@pytest.mark.parametrize("kayma", [(0.0, 0.0), (250.0, -120.0)])
+def test_spaces_across_sheets(client, tmp_path, kayma):
+    """Mahal mimariden çıkar; AYRI paftadaki elektrik ve mekanik kalemleri o mahallere yazılır.
+
+    Tesisat paftası başka koordinatta çizilmiş olsa bile mahal yazılarından kayma bulunur ve
+    doğrulanır (o kaymayla kaç eleman mahalin içine düşüyor)."""
+    dx, dy = kayma
+    mim = _mimari_dxf(tmp_path / "mimari.dxf")
+    elk = _mimari_dxf(tmp_path / "elektrik.dxf", dx, dy, tesisat=[
+        ("KSF-ELK-ARMATUR-LED", [(2, 2), (5, 6), (6, 2), (3, 5)]),      # SALON: 4 armatür
+        ("KSF-ELK-PRIZ-TOPRAKLI", [(1, 1), (7, 1)]),                    # SALON: 2 priz
+        ("KSF-ZAY-KAMERA-DOME", [(9, 2), (11, 6)]),                     # HOL: 2 kamera
+    ])
+    mek = _mimari_dxf(tmp_path / "mekanik.dxf", dx, dy, tesisat=[
+        ("KSF-MEK-VRF_IC_UNITE-5.6KW", [(4, 7)]),                       # SALON: 1 iç ünite
+        ("KSF-MEK-MENFEZ-ANEMOSTAT", [(3, 3), (6, 5), (10, 3)]),        # SALON 2, HOL 1
+    ])
+    pid = client.post("/api/projects", json={"name": "Disiplinler", "storey_height": 3.0}).json()["id"]
+    for ad, yol in [("ZEMİN KAT PLANI.dxf", mim), ("ZEMİN KAT ELEKTRİK PLANI.dxf", elk),
+                    ("ZEMİN KAT MEKANİK PLANI.dxf", mek)]:
+        with open(yol, "rb") as f:
+            assert client.post(f"/api/projects/{pid}/drawings",
+                               files={"file": (ad, f, "application/dxf")}).status_code == 201, ad
+    out = client.get(f"/api/projects/{pid}/spaces").json()
+    by = {s["name"]: s for s in out["spaces"]}
+    assert {"SALON", "HOL"} <= set(by)
+
+    def adet(mahal, kind):
+        return sum(i["quantity"] for i in by[mahal]["items"] if i["kind"] == kind)
+
+    assert adet("SALON", "armatur") == 4 and adet("SALON", "priz") == 2
+    assert adet("HOL", "kamera") == 2 and adet("SALON", "kamera") == 0
+    assert adet("SALON", "vrf_ic_unite") == 1
+    assert adet("SALON", "menfez") == 2 and adet("HOL", "menfez") == 1
+    # hizalama raporlanır: hangi pafta hangi mahal setine, ne kadar kaymayla
+    hiz = {h["drawing"]: h for h in out["alignment"]}
+    assert len(hiz) == 2
+    for h in hiz.values():
+        assert h["hit"] == h["total"] and (abs(h["dx"] + dx) < 0.05 or dx == 0)

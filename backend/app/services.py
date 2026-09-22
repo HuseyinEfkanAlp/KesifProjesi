@@ -869,10 +869,12 @@ def _space_polys(spaces: list[dict]):
     return out
 
 
-def _shares(el, polys, leaf_only: bool = True) -> dict[int, float]:
-    """Bir elemanın mahallere dağılımı: {mahal index: pay (0-1)}. Boş dönerse mahale atanamadı."""
+def _shares(el, polys, leaf_only: bool = True, offset: tuple[float, float] = (0.0, 0.0)) -> dict[int, float]:
+    """Bir elemanın mahallere dağılımı: {mahal index: pay (0-1)}. Boş dönerse mahale atanamadı.
+    offset: eleman başka bir paftadansa o paftanın mahal çizimine göre kayması."""
     from shapely.geometry import LineString, Point as SPoint, Polygon
-    pts = [tuple(p[:2]) for p in (el.points or []) if len(p) >= 2]
+    dx, dy = offset
+    pts = [(p[0] + dx, p[1] + dy) for p in (el.points or []) if len(p) >= 2]
     cand = [(sp, poly) for sp, poly in polys if not leaf_only or not sp.get("children")]
     if not cand or not pts:
         return {}
@@ -929,13 +931,13 @@ def _room_note_of(drawing: Drawing, sp: dict) -> dict:
 WET_SKIRT = 0.3
 
 
-def space_derived(project: Project, sp: dict, catalog: Catalog, params: dict, drawings: list[Drawing]) -> list[dict]:
+def space_derived(project: Project, sp: dict, catalog: Catalog, params: dict, drawings: list[Drawing]) -> list[BoqItem]:
     """Mahalin kendi ölçülerinden türetilen kalemler: şap, döşeme kaplaması, tavan, sıva + boya.
 
     Alan ve **çevre mahal sınırından ölçülür**: proje genelindeki "kare mahal varsayımı 4·√alan" burada
     gerekmez. Sınırı doğrulanmamış mahalde (alan yalnız yazıdan) çevre bilinmez; duvar yüzeyi üretilmez
     ve bu açıkça yazılır."""
-    out: list[dict] = []
+    out: list[BoqItem] = []
     area = float(sp.get("area") or 0.0)
     if area <= 0 or sp.get("kind") == "grup":
         return out
@@ -949,12 +951,11 @@ def space_derived(project: Project, sp: dict, catalog: Catalog, params: dict, dr
         if not it or qty <= 0:
             return
         group = slug(spec) if spec else "*"
-        from .quantity.boq import work_group_of
-        out.append({"key": f"{it.code.lower()}:{group}", "kind": it.code.lower(), "group": group,
-                    "label": it.name + (f" {spec}" if spec else ""), "unit": it.unit,
-                    "quantity": round(qty, 3), "note": note, "source": kaynak,
-                    "discipline": f"ksf:{it.discipline}", "work_group": work_group_of(f"ksf:{it.discipline}"),
-                    "derived": True})
+        out.append(BoqItem(key=f"{it.code.lower()}:{group}", kind=it.code.lower(), group=group,
+                           label=it.name + (f" {spec}" if spec else ""), unit=it.unit, quantity=round(qty, 3),
+                           discipline=f"ksf:{it.discipline}", kind_label=it.name,
+                           discipline_label=catalog.discipline_name(it.discipline),
+                           notes=[note], detail={"derived": True, "space": True, "source": kaynak}))
 
     kaynak = "mahal sınırından ölçüldü" if sp.get("area_source") == "drawing" else "mahal yazısındaki alandan"
     note = sp.get("finish") or {}
@@ -984,6 +985,103 @@ def space_derived(project: Project, sp: dict, catalog: Catalog, params: dict, dr
     return out
 
 
+# Paftalar arası hizalama. Mahaller MİMARİ plandan çıkar; elektrik / mekanik / kaplama paftası
+# ayrı bir çizimdir ve koordinatı aynı olmayabilir. Aday kayma iki kaynaktan gelir: (1) aynı mahal yazısı
+# iki paftada da varsa yazı konum farkı, (2) kaymasız hal (aynı modelden türetilmiş paftalarda tipik).
+# Aday DOĞRULANARAK seçilir: o kaymayla kaç eleman bir mahalin içine düşüyor.
+ALIGN_MIN_HIT = 0.30        # elemanların en az bu oranı mahale düşmeli
+ALIGN_MIN_COUNT = 3         # ve en az bu kadar eleman
+
+
+def _label_offsets(target: Drawing, source: Drawing) -> list[tuple[float, float]]:
+    """İki paftada da geçen mahal yazılarından aday kaymalar (ad + alan eşleşmesi)."""
+    src: dict[str, list[dict]] = {}
+    for r in (source.rooms or []):
+        if r.get("x") is not None:
+            src.setdefault(str(r.get("name") or "").upper(), []).append(r)
+    out: list[tuple[float, float]] = []
+    for r in (target.rooms or []):
+        if r.get("x") is None:
+            continue
+        for q in src.get(str(r.get("name") or "").upper(), []):
+            a1, a2 = float(r.get("area_m2") or 0.0), float(q.get("area_m2") or 0.0)
+            if a1 > 0 and a2 > 0 and abs(a1 - a2) > max(0.05, 0.01 * max(a1, a2)):
+                continue
+            out.append((round(q["x"] - r["x"], 2), round(q["y"] - r["y"], 2)))
+    return out
+
+
+def _space_points(d: Drawing) -> list[tuple[str, float, tuple[float, float]]]:
+    """Paftanın mahalleri: (ad, alan, temsil noktası). Konum çokgenin merkezinden gelir."""
+    from shapely.geometry import Polygon
+    out = []
+    for sp in (d.spaces or []):
+        pts = sp.get("points") or []
+        if len(pts) < 3:
+            continue
+        try:
+            c = Polygon(pts).centroid
+        except Exception:
+            continue
+        out.append((str(sp.get("name") or "").upper(),
+                    float(sp.get("label_area") or sp.get("area") or 0.0), (c.x, c.y)))
+    return out
+
+
+def same_plan_offset(target: Drawing, source: Drawing) -> tuple[float, float] | None:
+    """İki pafta AYNI katı mı gösteriyor? Aynı adlı ve aynı alanlı mahaller hep AYNI kaymayı
+    veriyorsa evet; kayma döner.
+
+    Elektrik / mekanik / kaplama paftası mimari altlık taşıdığı için kendi mahallerini de üretir;
+    mahal listesi ikilenmesin diye bu kontrol yapılır. Farklı katlar (bodrum / zemin) eşleşmez:
+    mahal adları ve alanları tutmaz."""
+    t, sp = _space_points(target), _space_points(source)
+    offs: list[tuple[float, float]] = []
+    for n1, a1, p1 in t:
+        for n2, a2, p2 in sp:
+            if n1 != n2 or not n1:
+                continue
+            if a1 > 0 and a2 > 0 and abs(a1 - a2) > max(0.05, 0.01 * max(a1, a2)):
+                continue
+            offs.append((round(p2[0] - p1[0], 2), round(p2[1] - p1[1], 2)))
+    offs += _label_offsets(target, source)
+    if len(offs) < 2:
+        return None
+    say: dict[tuple[float, float], int] = {}
+    for o in offs:
+        say[o] = say.get(o, 0) + 1
+    en_iyi, adet = max(say.items(), key=lambda kv: kv[1])
+    hedef = max(len(t), sum(1 for r in (target.rooms or []) if r.get("x") is not None), 1)
+    return en_iyi if adet >= 2 and adet >= 0.5 * hedef else None
+
+
+def align_drawing(target: Drawing, source: Drawing, elements, polys) -> dict:
+    """Paftayı kaynak paftanın mahal çokgenlerine hizalar (yalnız öteleme).
+
+    Döner: {"dx", "dy", "hit", "total", "source"}. hit = o kaymayla mahale düşen eleman sayısı;
+    seçim doğrulamayla yapılır, tahminle değil."""
+    from shapely.geometry import Point as SPoint
+    pts = [(e.points[0][0], e.points[0][1]) for e in elements if e.points]
+    out = {"dx": 0.0, "dy": 0.0, "hit": 0, "total": len(pts), "source": ""}
+    if not pts or not polys:
+        return out
+    adaylar: list[tuple[tuple[float, float], str]] = [((0.0, 0.0), "aynı koordinat sistemi")]
+    for off in dict.fromkeys(_label_offsets(target, source)):
+        adaylar.append((off, "mahal yazılarından"))
+    if len(pts) > 4000:
+        pts = pts[::max(1, len(pts) // 4000)]      # büyük paftada örnekleme yeter
+    best_hit = -1
+    for (dx, dy), kaynak in adaylar:
+        hit = 0
+        for x, y in pts:
+            p = SPoint(x + dx, y + dy)
+            if any(g.contains(p) for _sp, g in polys):
+                hit += 1
+        if hit > best_hit:
+            best_hit, out = hit, {"dx": dx, "dy": dy, "hit": hit, "total": len(pts), "source": kaynak}
+    return out
+
+
 def space_breakdown(project: Project, session: Session, drawings: list[Drawing] | None = None) -> dict:
     """Mahal bazında keşif: her mahalin kendi kalemleri, keşifteki aynı ölçüm kurallarıyla.
 
@@ -1001,7 +1099,31 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
     buckets: dict[str, list[dict]] = {}  # key -> ölçeklenmiş eleman dictleri
     unassigned: list[tuple[Drawing, dict]] = []
     warnings: list[str] = []
-    for d in drawings:
+    polys_by_src: dict[int, list] = {}
+    # Birincil mahal kaynağı: sınırı doğrulanmış mahali en çok olan pafta (mimari plan).
+    aday = sorted([d for d in drawings if d.spaces],
+                  key=lambda x: (-sum(1 for sp in x.spaces if sp.get("area_source") == "drawing"),
+                                 -sum(float(sp.get("area") or 0) for sp in x.spaces)))
+    sources: list[Drawing] = []
+    merged: dict[int, tuple[int, tuple[float, float]]] = {}    # pafta -> (mahal kaynağı, kayma)
+    hizalama: dict[int, dict] = {}                              # pafta -> hizalama raporu
+    for d in aday:
+        yer = None
+        for src in sources:
+            off = same_plan_offset(d, src)
+            if off is not None:
+                yer = (src, off)
+                break
+        if yer:
+            merged[d.id] = (yer[0].id, yer[1])
+            hizalama[d.id] = {"drawing": d.label or d.filename, "to": yer[0].label or yer[0].filename,
+                              "dx": yer[1][0], "dy": yer[1][1], "how": "mahal örtüşmesi", "hit": 0, "total": 0}
+            warnings.append(f"“{d.label or d.filename}” aynı katı gösteriyor "
+                            f"(“{yer[0].label or yer[0].filename}” ile mahal yazıları örtüşüyor): "
+                            "mahal listesi ikilenmedi, kalemleri o mahallere yazıldı.")
+        else:
+            sources.append(d)
+    for d in sources:
         sps = d.spaces or []
         by_index = {sp["index"]: sp for sp in sps}
         for sp in sps:
@@ -1019,14 +1141,49 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
                            "parent": f"{d.id}:{sp['parent']}" if sp.get("parent") is not None else None,
                            "children": [f"{d.id}:{c}" for c in (sp.get("children") or [])]}
             buckets[key] = []
-        polys = _space_polys(sps)
-        for e in els_by_id[d.id]:
-            share = _shares(e, polys) if polys else {}
+        polys_by_src[d.id] = _space_polys(sps)
+    # her pafta: kendi mahalleri varsa doğrudan, yoksa hizalanabildiği mimari paftaya
+    for d in drawings:
+        els = els_by_id[d.id]
+        if not els:
+            continue
+        if d.id in merged:
+            src_id, off = merged[d.id]
+        elif d.spaces:
+            src_id, off = d.id, (0.0, 0.0)
+        else:
+            en_iyi, en_iyi_src = None, None
+            for src in sources:
+                a = align_drawing(d, src, els, polys_by_src[src.id])
+                if en_iyi is None or a["hit"] > en_iyi["hit"]:
+                    en_iyi, en_iyi_src = a, src
+            yeterli = (en_iyi and en_iyi["hit"] >= ALIGN_MIN_COUNT
+                       and en_iyi["hit"] >= ALIGN_MIN_HIT * max(en_iyi["total"], 1))
+            if not yeterli:
+                unassigned += [(d, _scaled(e, 1.0)) for e in els]
+                if en_iyi and en_iyi["total"]:
+                    warnings.append(f"“{d.label or d.filename}” mahallere hizalanamadı "
+                                    f"({en_iyi['total']} elemandan yalnız {en_iyi['hit']}'i bir mahalin içine düştü): "
+                                    "kalemleri mahal kırılımına girmedi. Pafta başka bir koordinatta çizilmiş olabilir.")
+                continue
+            src_id, off = en_iyi_src.id, (en_iyi["dx"], en_iyi["dy"])
+            nasil = ("aynı koordinatta" if off == (0.0, 0.0) else f"({off[0]:+.1f}, {off[1]:+.1f}) m kaydırılarak")
+            hizalama[d.id] = {"drawing": d.label or d.filename, "to": en_iyi_src.label or en_iyi_src.filename,
+                              "dx": off[0], "dy": off[1], "how": en_iyi["source"], "hit": 0, "total": 0}
+            warnings.append(f"“{d.label or d.filename}” → “{en_iyi_src.label or en_iyi_src.filename}” mahallerine "
+                            f"{nasil} hizalandı ({en_iyi['hit']}/{en_iyi['total']} eleman mahale düştü).")
+        polys = polys_by_src.get(src_id) or []
+        rapor = hizalama.get(d.id)
+        for e in els:
+            share = _shares(e, polys, offset=off) if polys else {}
+            if rapor is not None:
+                rapor["total"] += 1
+                rapor["hit"] += 1 if share else 0
             if not share:
                 unassigned.append((d, _scaled(e, 1.0)))
                 continue
             for idx, w in share.items():
-                buckets[f"{d.id}:{idx}"].append(_scaled(e, w))
+                buckets[f"{src_id}:{idx}"].append(_scaled(e, w))
     if not spaces:
         return {"spaces": [], "unassigned": [], "unassigned_reason": "Mimari paftada mahal sınırı bulunamadı.",
                 "warnings": ["Mahal listesi yok: mimari kat planı yükleyin (mahal sınırları duvarlardan çıkarılır)."]}
@@ -1056,16 +1213,23 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
             out += electrical_items(pack(elec), params)
         if ksf:
             out += standard_items(pack(ksf), params, catalog)
-        out = [it for it in sort_items(merge_duplicates(out)) if it.group != "fire"]
-        return [it.to_dict() for it in out]
+        return [it for it in sort_items(merge_duplicates(out)) if it.group != "fire"]
 
     rows = []
     for key, sp in spaces.items():
         d = next(x for x in drawings if x.id == sp["drawing_id"])
         note = _room_note_of(d, sp)
-        sp = {**sp, "finish": note.get("finish") or {}, "screed_cm": note.get("screed_cm") or 0.0,
-              "items": items_of([{"drawing": d, "e": e} for e in buckets[key]])}
-        sp["derived"] = space_derived(project, sp, catalog, params, drawings)
+        sp = {**sp, "finish": note.get("finish") or {}, "screed_cm": note.get("screed_cm") or 0.0}
+        olculen = items_of([{"drawing": d, "e": e} for e in buckets[key]])
+        turetilen = space_derived(project, sp, catalog, params, drawings)
+        # reçete mahal satırında da açılır: seramik → yapıştırıcı + DERZ DOLGU, şap → şap işçiliği
+        hepsi = expand_recipes(olculen + turetilen, catalog, storey_height=sh["effective"], params=params)
+        olculen_keys = {it.key for it in olculen}
+        sp["items"] = [it.to_dict() for it in hepsi if it.key in olculen_keys]
+        sp["derived"] = [{**it.to_dict(), "derived": True,
+                          "note": (it.notes[0] if it.notes else ""),
+                          "source": (it.detail or {}).get("source", "reçete")}
+                         for it in hepsi if it.key not in olculen_keys]
         rows.append(sp)
     # grup (daire) toplamları: kendi kalemleri + çocuklarının kalemleri
     by_key = {r["key"]: r for r in rows}
@@ -1080,11 +1244,11 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
                 cur["quantity"] = round(cur["quantity"] + it["quantity"], 3)
         r["total_items"] = sorted(tot.values(), key=lambda i: (i["work_group"], i["kind"], i["group"]))
         r["total_area"] = round(r["area"], 2)
-    un_items = items_of([{"drawing": d, "e": e} for d, e in unassigned])
+    un_items = [it.to_dict() for it in items_of([{"drawing": d, "e": e} for d, e in unassigned])]
     if un_items:
         warnings.append(f"{len(un_items)} kalem mahale atanamadı: elemanı mahal sınırının dışında ya da "
                         "mahal çıkarılmayan bir paftada (statik / cephe / çatı). Mahal toplamlarına girmez.")
-    return {"spaces": rows, "unassigned": un_items,
+    return {"spaces": rows, "unassigned": un_items, "alignment": list(hizalama.values()),
             "unassigned_reason": "Mahal sınırı dışında kalan ya da mahal çıkarılmayan paftalardaki elemanlar",
             "warnings": warnings}
 
