@@ -130,6 +130,10 @@ class BoqItem:
     poz_name: str = ""
     work_group: str = ""                   # KABA / INCE / MEK / ELK / ALT
     scope: str = ""                        # mahal | genel (app/scope.py) — mahal kırılımına girer mi
+    # Kullanıcının bu satırdaki kararı (models.QuantityOverride): {"status", "quantity", "computed",
+    # "reason", "author", "updated_at"}. Boş = henüz bakılmadı. `quantity` alanı elle girilen değer
+    # uygulandıktan SONRAKİ miktardır; hesaplanan değer `review["computed"]`de durur.
+    review: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.kind_label:
@@ -152,6 +156,7 @@ class BoqItem:
                 "discipline": self.discipline, "discipline_label": self.discipline_label,
                 "work_group": self.work_group, "work_group_label": WORK_GROUPS.get(self.work_group, self.work_group),
                 "scope": self.scope, "scope_label": SCOPE_LABEL.get(self.scope, self.scope),
+                "review": self.review, "review_status": self.review.get("status") or "kontrol",
                 "poz": self.poz, "poz_name": self.poz_name,
                 "notes": self.notes, "detail": self.detail, "confidence": self.confidence}
 
@@ -173,6 +178,9 @@ class _Acc:
         # İşlenmekte olan paftanın belirsizliği (kat sayısı çıkarılamamış çok katlı bina). O paftadan
         # gelen her kalem nedenini taşısın diye burada tutulur; her add çağrısına yazılması gerekmez.
         self.risk: str = ""
+        # İşlenmekte olan pafta (id, ad). Her kalem hangi paftadan geldiğini taşır: kaynak künyesi
+        # ("Mimari kat planı · Zemin") ve "kaynağını çizim üzerinde göster" bağı bundan kurulur.
+        self.drawing: tuple | None = None
 
     def add(self, kind: str, group: str, label: str, qty: float, count: float = 0.0, note: str | None = None,
             meta: tuple[str, str, str, str] | None = None, poz: str = "", ev: Any = None, **detail) -> BoqItem:
@@ -198,6 +206,11 @@ class _Acc:
         if ev is not None:
             from ..confidence import merge
             it.detail["evidence"] = merge(it.detail.get("evidence"), ev, abs(qty))
+        if self.drawing is not None:
+            kaynaklar = it.detail.setdefault("sources", [])
+            kayit = {"id": self.drawing[0], "label": self.drawing[1]}
+            if kayit not in kaynaklar:
+                kaynaklar.append(kayit)
         if self.risk:
             nedenler = it.detail.setdefault("confidence_notes", [])
             if self.risk not in nedenler:
@@ -265,12 +278,13 @@ def structural_items(summary: dict, params: dict[str, Any] | None = None,
                 acc.add("demir", f"{group}:o{dia}", "", 0.0, note=lay_note(lay))
     for g in summary.get("groups", []):
         ev = g.get("evidence") or {}
+        kaynak = g.get("drawings") or []
         if g.get("concrete_m3", 0) > 0:
             acc.add("beton", g["key"], f"Beton - {g['label']}", g["concrete_m3"], count=g.get("element_count", 0),
-                    note=RULES["concrete"].text, ev=ev.get("concrete"))
+                    note=RULES["concrete"].text, ev=ev.get("concrete"), sources=list(kaynak))
         if g.get("formwork_m2", 0) > 0:
             acc.add("kalip", g["key"], f"Kalıp - {g['label']}", g["formwork_m2"], count=g.get("element_count", 0),
-                    note=RULES["formwork"].text, ev=ev.get("formwork"))
+                    note=RULES["formwork"].text, ev=ev.get("formwork"), sources=list(kaynak))
         ratio_kg = float(g.get("rebar_ratio_kg") or (g.get("rebar_kg", 0) if g.get("rebar_source", "oran") == "oran" else 0.0))
         if ratio_kg > 0:
             kots = g.get("rebar_kots_ratio") or []
@@ -367,6 +381,7 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
         mult = int(d.get("storey_count") or 1)
         acc.risk = ("Bu paftanın kaç katı temsil ettiği çizimden çıkarılamadı: geometri ölçüldü ama miktar "
                      "kat sayısı kadar eksik olabilir.") if d.get("storey_risk") else ""
+        acc.drawing = (d.get("id"), d.get("label") or "")
         wall_h = params.get("wall_height") or max((d.get("storey_height") or 3.0) - (d.get("slab_thickness") or 0.0), 0.0)
         src = str(d.get("height_source") or "")
         h_note = None if params.get("wall_height") or src in ("", "parametre", "çizime girildi") else f"Kat yüksekliği {d.get('storey_height'):g} m: {src}"
@@ -465,6 +480,7 @@ def electrical_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqIt
         mult = int(d.get("storey_count") or 1)
         acc.risk = ("Bu paftanın kaç katı temsil ettiği çizimden çıkarılamadı: geometri ölçüldü ama miktar "
                      "kat sayısı kadar eksik olabilir.") if d.get("storey_risk") else ""
+        acc.drawing = (d.get("id"), d.get("label") or "")
         for e in d["elements"]:
             et = _g(e, "etype")
             n = _g(e, "count") or 1
@@ -517,6 +533,7 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
         mult = int(d.get("storey_count") or 1)
         acc.risk = ("Bu paftanın kaç katı temsil ettiği çizimden çıkarılamadı: geometri ölçüldü ama miktar "
                      "kat sayısı kadar eksik olabilir.") if d.get("storey_risk") else ""
+        acc.drawing = (d.get("id"), d.get("label") or "")
         wall_h_default = params.get("wall_height") or max((d.get("storey_height") or 3.0) - (d.get("slab_thickness") or 0.0), 0.0)
         openings = []
         pending_walls: list[dict] = []      # bu paftanın KSF duvarları: boşluklar düşüldükten sonra yazılır

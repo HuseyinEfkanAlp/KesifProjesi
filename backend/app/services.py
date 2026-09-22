@@ -12,7 +12,7 @@ from .scope import GENEL, MAHAL
 from .cost.materials import MaterialData, material_lines
 from .cost.pricebook import lookup as book_lookup
 from .cost.pricing import PriceItem as PriceData, compute_cost, default_price_items
-from .models import Drawing, Element, MaterialPrice, PriceBookItem, PriceItem, Project
+from .models import Drawing, Element, MaterialPrice, PriceBookItem, PriceItem, Project, QuantityOverride
 from .parser.analyzer import analyze_file
 from .parser.detectors.base import DetectParams
 from .db import DATA_DIR
@@ -821,8 +821,10 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
         # demir işçiliği çapa / kata göre hesaplanır: reçete parametreleri (hazır demir %, genel kat kararı) geçilir
         rp = dict(params); rp["_rebar_layers_default"] = layers.get("*", "")
         items = expand_recipes(items, catalog, storey_height=sh["effective"], off="recete" in off, params=rp)
-    # ayrı üreticiler (sezgisel / KÇS / türetilmiş) aynı anahtarı doğurabilir: kalem başına tek satır
-    return sort_items(merge_duplicates(items))
+    # ayrı üreticiler (sezgisel / KÇS / türetilmiş) aynı anahtarı doğurabilir: kalem başına tek satır.
+    # Kullanıcı kararı EN SONDA uygulanır: elle girilen miktarın reçeteye ve sistem açılımına
+    # yayılması istenmez — onlar hesabın kendi zinciridir, insanın düzeltmesi o satıra aittir.
+    return apply_reviews(project, session, sort_items(merge_duplicates(items)))
 
 
 def _g_etype(e) -> str:
@@ -2519,6 +2521,36 @@ def project_cost(project: Project, session: Session) -> tuple[list[QuantityLine]
                         hours_per_day=float(params.get("work_hours_per_day") or 8.0),
                         materials=[to_material_data(m) for m in materials], params=params)
     return lines, summary, info, items, cost
+
+
+REVIEW_STATUSES = ("kontrol", "onaylandi", "reddedildi")
+
+
+def apply_reviews(project: Project, session: Session, items: list[BoqItem]) -> list[BoqItem]:
+    """Kullanıcının keşif satırlarındaki kararlarını uygular (onay / ret / elle miktar).
+
+    **Hesaplanan değer silinmez**: elle girilen miktar kaleme yazılır ama programdan çıkan sayı
+    `review["computed"]` alanında durur. "Hesaplanan 1.240 m² · elle 1.280 m²" cümlesi raporda
+    böyle kurulur; hangi sayının programdan hangisinin insandan geldiği sonradan sorulacaktır.
+
+    Reddedilen satır listeden çıkarılmaz, miktarı sıfırlanır ve işaretlenir: sessizce kaybolan bir
+    kalem, hiç hesaplanmamış bir kalemden ayırt edilemez."""
+    rows = session.exec(select(QuantityOverride).where(QuantityOverride.project_id == project.id)).all()
+    if not rows:
+        return items
+    by_key = {r.item_key: r for r in rows}
+    for it in items:
+        r = by_key.get(it.key)
+        if r is None:
+            continue
+        it.review = {"status": r.status, "quantity": r.quantity, "computed": round(it.quantity, 3),
+                     "reason": r.reason or "", "author": r.author or "",
+                     "updated_at": r.updated_at.isoformat() if r.updated_at else ""}
+        if r.status == "reddedildi":
+            it.quantity = 0.0
+        elif r.quantity is not None:
+            it.quantity = float(r.quantity)
+    return items
 
 
 def boq_payload(items: list[BoqItem]) -> dict:

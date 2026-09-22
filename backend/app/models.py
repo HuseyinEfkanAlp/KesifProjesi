@@ -33,6 +33,26 @@ class Project(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class QuantityOverride(SQLModel, table=True):
+    """Keşif satırında kullanıcının verdiği karar: onay, ret ya da elle miktar.
+
+    **Hesaplanan değer silinmez.** Kullanıcı 1.240 m² yerine 1.280 yazdıysa raporda ikisi de durur
+    ("hesaplanan 1.240 · elle 1.280") — metrajın izlenebilirliği bunu gerektirir: hangi sayının
+    programdan, hangisinin insandan geldiği sonradan sorulacaktır.
+
+    Yeniden analizde korunur: kalem anahtarına (`kind:group`) bağlıdır, elemana değil. Bu, eleman
+    düzeyindeki `Element.manual` deseninin keşif düzeyindeki karşılığıdır."""
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    item_key: str = Field(index=True)        # "duvar:ytong_20" — BoqItem.key
+    status: str = "kontrol"                  # onaylandi | kontrol | reddedildi
+    quantity: float | None = None            # elle girilen miktar; None = hesaplanan kullanılır
+    computed: float | None = None            # değiştirildiği andaki hesaplanan değer (karşılaştırma için)
+    reason: str = ""                         # gerekçe (şantiye ölçümü, şartname, müşavir kararı…)
+    author: str = ""                         # kim
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Drawing(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)

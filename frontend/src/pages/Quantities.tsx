@@ -22,6 +22,64 @@ const REBAR_SOURCE_HINT: Record<string, string> = {
   'poz+oran': 'Bazı katların donatı paftası yok: o katlar oranla',
 }
 
+/** Kalemin geldiği paftalar: "bu sayı nereden çıktı" sorusunun ilk cevabı, çizime giden bağ. */
+function kaynakKunyesi(it: Boq['items'][number]): { id: number; label: string }[] {
+  const src = it.detail?.sources
+  return Array.isArray(src) ? (src as { id: number; label: string }[]).filter((x) => x && x.id) : []
+}
+
+const DURUM_ETIKET: Record<string, string> = {
+  onaylandi: '✓ Onaylandı', kontrol: 'Kontrol bekliyor', reddedildi: '✗ Reddedildi',
+}
+
+/** Bir keşif satırının kontrolü: onay, ret ya da elle miktar.
+ *
+ *  Elle girilen değer hesaplananı SILMEZ — sunucu programdan çıkan sayıyı `review.computed`
+ *  içinde saklar ve miktar hücresinde ikisi birlikte görünür. */
+function ReviewCell({ pid, item, onDone }: {
+  pid: number; item: Boq['items'][number]; onDone: () => void
+}) {
+  const [acik, setAcik] = useState(false)
+  const [miktar, setMiktar] = useState('')
+  const [gerekce, setGerekce] = useState('')
+  const [bekle, setBekle] = useState(false)
+  const durum = item.review_status
+
+  const yaz = (body: Parameters<typeof Api.review.save>[1]) => {
+    setBekle(true)
+    Api.review.save(pid, body).then(() => { setAcik(false); onDone() }).finally(() => setBekle(false))
+  }
+
+  if (!acik) {
+    return <>
+      <button type="button" className={`link ${durum !== 'kontrol' ? 'muted' : ''}`} disabled={bekle}
+              onClick={() => { setAcik(true); setMiktar(item.review?.quantity != null ? String(item.review.quantity) : '') }}>
+        {DURUM_ETIKET[durum] ?? durum}
+      </button>
+      {item.review?.reason ? <div className="muted hint">{item.review.reason}</div> : null}
+    </>
+  }
+  return <div style={{ minWidth: 190 }}>
+    <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+      <button type="button" className="link" disabled={bekle}
+              onClick={() => yaz({ item_key: item.key, status: 'onaylandi', quantity: null, computed: item.quantity, reason: gerekce })}>onayla</button>
+      <button type="button" className="link" disabled={bekle}
+              onClick={() => yaz({ item_key: item.key, status: 'reddedildi', quantity: null, computed: item.quantity, reason: gerekce })}>reddet</button>
+      <button type="button" className="link muted" disabled={bekle}
+              onClick={() => { setBekle(true); Api.review.clear(pid, item.key).then(() => { setAcik(false); onDone() }).finally(() => setBekle(false)) }}>geri al</button>
+    </div>
+    <input value={miktar} onChange={(e) => setMiktar(e.target.value)} placeholder={`elle miktar (${item.unit})`}
+           style={{ width: '100%', marginBottom: 4 }} />
+    <input value={gerekce} onChange={(e) => setGerekce(e.target.value)} placeholder="gerekçe"
+           style={{ width: '100%', marginBottom: 4 }} />
+    <button type="button" className="link" disabled={bekle || !miktar.trim()}
+            onClick={() => yaz({ item_key: item.key, status: 'onaylandi', quantity: Number(miktar.replace(',', '.')),
+                                 computed: item.review?.computed ?? item.quantity, reason: gerekce })}>kaydet</button>
+    {' '}
+    <button type="button" className="link muted" onClick={() => setAcik(false)}>vazgeç</button>
+  </div>
+}
+
 /** Keşif kalemlerini türe göre bloklar: aynı türün (beton, kalıp, demir…) kalemleri tek başlık altında,
  *  başlıkta türün toplamı. Sıra korunur; "sistem" / "bilgi" satırları toplama girmez. */
 function kindBlocks(items: Boq['items']) {
@@ -242,7 +300,7 @@ export default function Quantities() {
         <div className="panel" key={g.group}>
           <h3>{g.label} <span className="muted" style={{ fontWeight: 400 }}>· {g.items.length} kalem</span></h3>
           <table>
-            <thead><tr><th>Poz</th><th>Disiplin</th><th>Tür</th><th>Kalem</th><th className="num">Miktar</th><th>Birim</th><th className="num">Adet / hat</th><th title="Sayının nereden geldiği">Kaynak</th><th>Not</th></tr></thead>
+            <thead><tr><th>Poz</th><th>Disiplin</th><th>Tür</th><th>Kalem</th><th className="num">Miktar</th><th>Birim</th><th className="num">Adet / hat</th><th title="Sayının nereden geldiği">Kaynak</th><th title="Satırı onaylayın, reddedin ya da miktarı elle düzeltin">Kontrol</th><th>Not</th></tr></thead>
             <tbody>
               {kindBlocks(g.items).map(({ kind, kindLabel, unit, rows, total, count }) => {
                 const key = `${g.group}:${kind}`
@@ -258,6 +316,7 @@ export default function Quantities() {
                     <td className="num">{count ? fmt(count, 0) : ''}</td>
                     <td></td>
                     <td></td>
+                    <td></td>
                   </tr>
                 )}
                 {open && rows.map((it) => (
@@ -267,11 +326,31 @@ export default function Quantities() {
                   <td>{it.kind_label}{it.detail?.system ? <span className="badge none" style={{ marginLeft: 6 }}>sistem</span> : null}{it.detail?.info ? <span className="badge none" style={{ marginLeft: 6 }}>bilgi</span> : null}{it.detail?.recipe ? <span className="badge recipe" style={{ marginLeft: 6 }} title={`Reçeteden türetildi: ${String(it.detail.parent ?? '')}`}>reçete</span> : null}</td>
                   <td>{it.label}{it.detail?.system_code && !it.detail?.system ? <span className="muted hint"> ← {String(it.detail.system_code)}</span> : null}{it.detail?.recipe ? <span className="muted hint"> ← {String(it.detail.parent ?? '').split(':')[0]}</span> : null}
                     {it.scope === 'mahal' ? <span className="badge scope-mahal" style={{ marginLeft: 6 }} title="Mahal kırılımında mahal mahal görünür">mahal</span> : null}</td>
-                  <td className="num"><b>{fmt(it.quantity, it.unit === 'adet' || it.unit === 'kg' ? 0 : 2)}</b></td>
+                  <td className="num">
+                    <b>{fmt(it.quantity, it.unit === 'adet' || it.unit === 'kg' ? 0 : 2)}</b>
+                    {/* Hesaplanan değer silinmez: hangi sayının programdan hangisinin insandan
+                        geldiği sonradan sorulacaktır. */}
+                    {it.review?.quantity != null && it.review.computed != null && (
+                      <div className="muted hint">hesaplanan {fmt(it.review.computed, 2)}</div>
+                    )}
+                    {it.review_status === 'reddedildi' && it.review.computed != null && (
+                      <div className="muted hint">hesaplanan {fmt(it.review.computed, 2)} — çıkarıldı</div>
+                    )}
+                  </td>
                   <td>{it.unit}</td>
                   <td className="num">{it.count ? fmt(it.count, 0) : '-'}</td>
                   <td className="nowrap" title={it.confidence.note}>
                     <span className={`badge conf-${it.confidence.code}`}>{it.confidence.icon} {it.confidence.label}</span>
+                    {kaynakKunyesi(it).length > 0 && (
+                      <div className="muted hint">{kaynakKunyesi(it).map((src, n) => (
+                        <Fragment key={src.id}>{n > 0 && ' · '}
+                          <Link to={`/projects/${pid}/drawings/${src.id}`}>{src.label}</Link>
+                        </Fragment>
+                      ))}</div>
+                    )}
+                  </td>
+                  <td className="nowrap">
+                    <ReviewCell pid={pid} item={it} onDone={() => setRefresh(refresh + 1)} />
                   </td>
                   <td className="muted">{it.notes.join('; ')}</td>
                 </tr>

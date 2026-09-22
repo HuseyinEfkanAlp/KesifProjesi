@@ -50,6 +50,22 @@ export interface UploadOptions {
   planType?: string
 }
 
+export interface ReviewIn {
+  item_key: string
+  status?: 'onaylandi' | 'kontrol' | 'reddedildi'
+  /** null = hesaplanan değer kullanılsın */
+  quantity?: number | null
+  /** değiştirildiği andaki hesaplanan değer — raporda "hesaplanan X · elle Y" için saklanır */
+  computed?: number | null
+  reason?: string
+  author?: string
+}
+
+export interface ReviewRow extends ReviewIn {
+  status: 'onaylandi' | 'kontrol' | 'reddedildi'
+  updated_at: string
+}
+
 export const Api = {
   projects: {
     list: () => request<Project[]>('/api/projects'),
@@ -106,6 +122,13 @@ export const Api = {
     remove: (id: number) => request<void>(`/api/elements/${id}`, { method: 'DELETE' }),
   },
   quantities: (pid: number) => request<QuantitiesResponse>(`/api/projects/${pid}/quantities`),
+  /** Metraj kontrolü: keşif satırını onaylama / reddetme / elle düzeltme */
+  review: {
+    save: (pid: number, body: ReviewIn) =>
+      request<ReviewRow>(`/api/projects/${pid}/review`, { method: 'PUT', body: json(body) }),
+    clear: (pid: number, itemKey: string) =>
+      request<void>(`/api/projects/${pid}/review/${itemKey}`, { method: 'DELETE' }),
+  },
   prices: {
     list: (pid: number) => request<PriceItem[]>(`/api/projects/${pid}/prices`),
     save: (pid: number, items: PriceIn[]) =>

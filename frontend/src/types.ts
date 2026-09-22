@@ -453,6 +453,18 @@ export interface BoqItem {
   /** Kapsam: mahal kırılımına giren kalem mi, bina geneli mi (backend: app/scope.py) */
   scope: 'mahal' | 'genel'
   scope_label: string
+  /** Kullanıcının bu satırdaki kararı (backend: models.QuantityOverride) */
+  review: {
+    status?: 'onaylandi' | 'kontrol' | 'reddedildi'
+    /** elle girilen miktar (null = hesaplanan kullanıldı) */
+    quantity?: number | null
+    /** programdan çıkan değer — elle düzeltilse de silinmez */
+    computed?: number | null
+    reason?: string
+    author?: string
+    updated_at?: string
+  }
+  review_status: 'onaylandi' | 'kontrol' | 'reddedildi'
 }
 
 /** Dört kademe: ölçüldü → adından tanındı → varsayımla türetildi → tahmin. En kötü girdi kazanır. */
