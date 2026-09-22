@@ -728,6 +728,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     """Tüm disiplinlerin keşif listesi. expand=True: katmanlı sistemler bileşenlerine açılır (project_systems kararıyla).
     drawings: yalnız bu paftalar. measured_only: yalnız çizimden ölçülen kalemler (beton / kalıp / demir, duvar, kapı,
     KSF kalemleri…); fire, sarf, cephe / çatı tahmini, türetilmiş kalemler ve reçeteler yazılmaz (pafta metrajı)."""
+    from .derive import slab_thicknesses
     all_drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
     if drawings is None:
         drawings = all_drawings
@@ -766,10 +767,15 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
                          "glazed": kind == "window" or (e.subtype or "") in poz_glazed}}
 
     arch, elec, std = [], [], []
+    # Döşeme kalınlığı da sorulmaz: kullanıcı açıkça girmediyse her pafta kendi planında ölçülen baskın
+    # kalınlığı kullanır. Duvar yüksekliği (kat yüksekliği − d) buna bağlıdır ve tek bir proje sayısı
+    # bodrum perdesiyle çatı döşemesini aynı sayar.
+    st = slab_thicknesses(project, drawings, lambda x: els_by_id.get(x.id, []))
     for d in drawings:
         elements = els_by_id[d.id]
         entry = {"id": d.id, "label": d.label or d.filename, "storey_count": d.storey_count,
-                 "storey_height": storey_height_of(project, d, sh), "slab_thickness": project.slab_thickness,
+                 "storey_height": storey_height_of(project, d, sh),
+                 "slab_thickness": st["per_drawing"].get(d.id, {}).get("value") or project.slab_thickness,
                  "height_source": sh["per_drawing"].get(d.id, {}).get("source", sh["source"]),
                  "elements": [ksf_entry(e) for e in elements]}
         if d.discipline in (STANDARD_DISCIPLINE, MAPPED_DISCIPLINE):
@@ -2358,6 +2364,19 @@ def project_quality(project, session, items, summary, cost=None):
     if any(w["severity"] == "blocking" for w in sc["warnings"]):
         quality["status"] = "incomplete"
         quality["label"] = "Eksik / kontrol gerekli"
+    # Döşeme kalınlığı: kolon / perde / kiriş net yükseklikleri ve duvar yüksekliği buna bağlı. Planda
+    # ölçüm varsa proje parametresi değil o kullanılır; ölçüm yoksa varsayım olduğu söylenir.
+    from .derive import slab_thicknesses
+    _els: dict[int, list] = {}
+    for e in elements:
+        _els.setdefault(e.drawing_id, []).append(e)
+    st = slab_thicknesses(project, drawings, lambda d: _els.get(d.id, []))
+    quality["assumptions"].append({"key": "slab_thickness", "label": "Döşeme kalınlığı (m)",
+                                   "value": round(st["effective"], 3), "source": st["kind"],
+                                   "detail": st["source"]})
+    for w in st["warnings"]:
+        quality["issues"].append({"code": "slab_thickness_default", "severity": "review",
+                                  "drawing_id": None, "drawing": None, "message": w})
     # Kapsam sahipliği: hangi miktar hangi paftadan sayıldı, ikinci paftada ne düştü, ne eklendi
     els_by_id: dict[int, list] = {}
     for e in elements:

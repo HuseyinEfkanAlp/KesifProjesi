@@ -110,6 +110,12 @@ def update_project(project_id: int, body: ProjectPatch, session: Session = Depen
     p = get_project(project_id, session)
     data = body.model_dump(exclude_unset=True)
     reanalyze = "slab_thickness" in data and data["slab_thickness"] != p.slab_thickness
+    if reanalyze:
+        # Kullanıcı kalınlığı **değiştirdiyse** bu açık bir karardır: planda ölçülen değer artık onu ezmez
+        # (`derive.slab_thicknesses` önce `slab_manual`e bakar). Formun mevcut değeriyle kaydetmek bir
+        # beyan değildir, bu yüzden yalnız değişiklik sayılır; 0 girmek türetmeye geri döndürür.
+        v = data["slab_thickness"]
+        p.slab_manual = float(v) if v and float(v) > 0 else None
     reanalyze_mapped = False
     if "params" in data:
         old_params = p.params or {}
