@@ -625,6 +625,17 @@ düştü. Mahal satırında **reçete de açılır**: zemin seramiği → yapı�
 işçiliği, armatür → buat / kasa + montaj. Böylece tek mahal satırında "113 m² seramik, 5,7 m³ şap,
 56 kg derz · 12 armatür, 8 priz · 2 VRF iç ünite, 4 menfez" görünür.
 
+**Mahal metrajı tablosu** — `GET /projects/{id}/spaces.xlsx` (`export/spaces.py`): "Mahaller" (kod, ad, bağlı
+olduğu bölüm, alan, çevre, alan kaynağı, pafta), "Mahal metrajı" (mahal × kalem: iş grubu, disiplin, birim,
+miktar, ölçüldü mü türetildi mi, not), "Mahale girmeyen" ve "Pafta hizalama" sayfaları. Panelde kalemler
+iş grubuna göre (Kaba / İnce / Mekanik / Elektrik) gruplanır.
+
+> **Gerçek elektrik paftasından öğrenilen**: Türk elektrik projeleri katman adlarında kısaltma kullanır.
+> `E-AYD-BLK` (aydınlatma bloğu) armatürdür, `E-AYO` anahtar, `E-PAN-BLK` pano, `E-PRZ` priz; ama
+> `E-KUV-LNY-HAT-AYD` armatür değil aydınlatma **linyesidir** (kablo). Desenler bu ayrımı yapar
+> (`layer_profile.py`); karıştırılırsa 868 armatürlük bir pafta ya hiç sayılmaz ya da hat metreleri
+> adet sanılır.
+
 **Mahalin kendi ölçülerinden türetilenler** (`services.space_derived`): şap (kalınlık mahal notu > çizim notu >
 parametre > varsayılan), döşeme kaplaması (tip mahal notundan), tavan sıva+boya, sıva ve boya. Sınırı doğrulanan
 mahalde duvar yüzeyi **çevre × duvar yüksekliği** ile çıkar; çevre çokgenden **ölçülür**, proje genelindeki
