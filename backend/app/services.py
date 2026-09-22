@@ -951,9 +951,14 @@ def _shares(el, polys, leaf_only: bool = True, offset: tuple[float, float] = (0.
 
 
 def _scaled(e, share: float) -> dict:
-    """Elemanın mahale düşen payı: miktarlar ölçeklenir (adet tam sayı kalır)."""
+    """Elemanın mahale düşen payı: yalnız ölçüler ölçeklenir, **adet dokunulmaz kalır**.
+
+    Üreticiler miktarı `uzunluk × adet` (ya da `alan × adet`) olarak hesaplıyor; payı ikisine birden
+    uygulamak miktarı payın KARESIYLE çarpıyordu ve mahal toplamları keşiften eksik kalıyordu.
+    Adet zaten bölünmüyor: adetle ölçülen eleman (armatür, kapı) `_shares` içinde ağırlık merkeziyle
+    tek bir mahale yazılır, payı her zaman 1,0'dır."""
     return {"etype": e.etype, "subtype": e.subtype, "name": e.name, "layer": e.layer,
-            "count": e.count if share >= 0.999 else round((e.count or 0) * share, 3),
+            "count": e.count,
             "length": (e.length or 0.0) * share, "area": (e.area or 0.0) * share,
             "thickness": e.thickness, "points": e.points, "id": e.id, "b": e.b, "h": e.h, "meta": e.meta or {}}
 
@@ -1385,10 +1390,15 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
         note = _room_note_of(d, sp)
         sp = {**sp, "finish": note.get("finish") or {}, "screed_cm": note.get("screed_cm") or 0.0}
         olculen = items_of([{"drawing": d, "e": e} for e in buckets[key]])
-        turetilen = [it for it in space_derived(project, sp, catalog, params, drawings) if it.scope == MAHAL]
+        olculen_keys = {it.key for it in olculen}
+        # Türetme ÖLÇÜMÜN YEDEĞİDİR, üzerine eklenmez. Mahalin sıvası iki yoldan çıkabiliyor:
+        # (1) mahale düşen duvar elemanlarının gerçek geometrisinden, (2) mahal çevresi × yükseklikten.
+        # İkisi de yazılınca aynı duvar yüzü iki kez sayılıyor ve mahal toplamı keşifle tutmuyordu
+        # (gerçek projede sıva +%25). Ölçülen varsa türetilen aynı kalem yazılmaz.
+        turetilen = [it for it in space_derived(project, sp, catalog, params, drawings)
+                     if it.scope == MAHAL and it.key not in olculen_keys]
         # reçete mahal satırında da açılır: seramik → yapıştırıcı + DERZ DOLGU, şap → şap işçiliği
         hepsi = expand_recipes(olculen + turetilen, catalog, storey_height=sh["effective"], params=params)
-        olculen_keys = {it.key for it in olculen}
         sp["items"] = [it.to_dict() for it in hepsi if it.key in olculen_keys]
         sp["derived"] = [{**it.to_dict(), "derived": True,
                           "note": (it.notes[0] if it.notes else ""),
@@ -1910,16 +1920,33 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
 FACADE_HULL_RATIO = 0.7
 FACADE_HULL_MARGIN = 0.15   # m: kolon dış yüzünden cephe yüzeyine (duvar + kaplama) pay
 FACADE_GAP_CLOSE = 0.6      # m: döşeme / kiriş / kolon çokgenleri arasındaki boşluklar bu ölçüye kadar kapatılır
+# Dış hat kabul edilebilmesi için içini dolduran geometrinin en az payı. Döşemeli kat planında ~1,0,
+# yalnız duvarı olan mimari planda ~0,10; dağınık parçaların kabuğunda binde birler mertebesinde kalır.
+FOOTPRINT_MIN_FILL = 0.04
 
 
-def footprint_polygon(elements):
+def footprint_polygon(elements, spaces: list[dict] | None = None):
     """Bina oturumunun dış hat çokgeni (shapely Polygon) ya da None.
 
     Alan / çevre ve cephe yönleri **aynı** çokgenden türemeli; iki ayrı yerde ayrı kurallarla hesaplanırsa
-    kenar toplamı çevreyi tutmaz (ölçüldü: 40 m kenar, 163 m çevre)."""
+    kenar toplamı çevreyi tutmaz (ölçüldü: 40 m kenar, 163 m çevre).
+
+    **En güvenilir kaynak mahal sınırlarıdır**: mimarın kendi çizdiği mahal çokgenlerinin birleşimi
+    katın planının ta kendisidir (`parser/spaces.py`; alanı mahal yazısındaki alanla doğrulanmıştır).
+    Mahal yoksa taşıyıcı / duvar geometrisinin dış hattına düşülür."""
     from shapely import concave_hull
     from shapely.geometry import Polygon
     from shapely.ops import unary_union
+    if spaces:
+        try:
+            u = unary_union([g for _, g in _space_polys(spaces)])
+            u = u.buffer(FACADE_GAP_CLOSE, join_style=2).buffer(-FACADE_GAP_CLOSE, join_style=2)
+            parts = [Polygon(g.exterior) for g in (list(u.geoms) if u.geom_type == "MultiPolygon" else [u])
+                     if g.geom_type == "Polygon" and not g.is_empty]
+            if parts:
+                return max(parts, key=lambda g: g.area)
+        except Exception:
+            pass
     polys = [Polygon(e.points).buffer(0) for e in elements
              if e.etype in ("slab", "beam", "column", "shear_wall", "wall") and len(e.points or []) >= 3]
     polys = [g for g in polys if not g.is_empty and g.is_valid and g.area > 1e-4]
@@ -1928,6 +1955,7 @@ def footprint_polygon(elements):
     try:
         u = unary_union(polys)
         u = u.buffer(FACADE_GAP_CLOSE, join_style=2).buffer(-FACADE_GAP_CLOSE, join_style=2)
+        dolu = float(u.area)
         has_plate = any(e.etype in ("slab", "beam") for e in elements)
         if not has_plate:
             u = concave_hull(u, ratio=FACADE_HULL_RATIO)
@@ -1938,12 +1966,20 @@ def footprint_polygon(elements):
         return None
     if not parts:
         return None
-    return max(parts, key=lambda g: g.area)    # bina oturumu: en büyük parça (uzak aykırı nesneler elenir)
+    big = max(parts, key=lambda g: g.area)    # bina oturumu: en büyük parça (uzak aykırı nesneler elenir)
+    # Dış hat gerçekten bir bina mı, yoksa dağınık parçaların etrafına çizilmiş bir kabuk mu? Gerçek
+    # bir katta döşeme / duvar geometrisi oturumun kayda değer bir kısmını doldurur. Mimarın planın
+    # ikinci bir kopyasını yanına çizdiği paftada (gerçek projede ölçüldü) kabuk iki kopyayı birden
+    # sarıyor ve 2.500 m2'lik kat 44.000 m2 çıkıyordu — tavan, cephe ve iskele metrajını mertebe olarak
+    # kaydıran hata. Savunulamayan bir dış hat üretmektense hiç üretmemek doğrudur.
+    if big.area > 0 and dolu / big.area < FOOTPRINT_MIN_FILL:
+        return None
+    return big
 
 
-def building_footprint(elements) -> "tuple[float, float] | None":
-    """Kat planındaki döşeme / kiriş / kolon / perde çokgenlerinden bina oturumu: (alan m², dış çevre m)."""
-    g = footprint_polygon(elements)
+def building_footprint(elements, spaces: list[dict] | None = None) -> "tuple[float, float] | None":
+    """Kat planının bina oturumu: (alan m², dış çevre m). Önce mahal sınırları, yoksa taşıyıcı geometri."""
+    g = footprint_polygon(elements, spaces)
     return (float(g.area), float(g.exterior.length)) if g is not None else None
 
 
@@ -1954,7 +1990,7 @@ SIDE_LABEL = {"+X": "Sağdaki cephe (+X)", "-X": "Soldaki cephe (−X)",
               "+Y": "Üstteki cephe (+Y)", "-Y": "Alttaki cephe (−Y)"}
 
 
-def footprint_sides(elements) -> dict[str, float]:
+def footprint_sides(elements, spaces: list[dict] | None = None) -> dict[str, float]:
     """Bina dış hattının kenar uzunluklarını dört yöne dağıtır: {"+X": m, "-X": m, "+Y": m, "-Y": m}.
 
     Her kenarın dışa bakan normali hangi eksene yakınsa o yöne yazılır; eğik kenar iki yöne bileşenleriyle
@@ -1965,7 +2001,7 @@ def footprint_sides(elements) -> dict[str, float]:
     bildirilir ki toplam çevreyi aştığında sebebi belli olsun."""
     import math
     from shapely.geometry import Polygon
-    big = footprint_polygon(elements)
+    big = footprint_polygon(elements, spaces)
     if big is None:
         return {}
     ring = list(big.exterior.coords)
@@ -2029,12 +2065,14 @@ def _plan_footprints(project: Project, session: Session, drawings: list[Drawing]
                 continue
             if kot_from_label(d.label) and (d.block or "", kot_from_label(d.label)) in labels_struct:
                 continue
-            fp = building_footprint(els)
+            fp = building_footprint(els, d.spaces)
             if fp and fp[0] >= 10:
                 out.append({"drawing": d.label or d.filename, "drawing_id": d.id, "block": d.block or "",
-                            "area": round(fp[0], 2), "perimeter": round(fp[1], 2), "sides": footprint_sides(els),
+                            "area": round(fp[0], 2), "perimeter": round(fp[1], 2),
+                            "sides": footprint_sides(els, d.spaces),
                             "storey_height": storey_height_of(project, d), "storey_count": d.storey_count,
-                            "basement": "BODRUM" in (d.label or "").upper(), "source": "architectural"})
+                            "basement": "BODRUM" in (d.label or "").upper(),
+                            "source": "spaces" if d.spaces else "architectural"})
     return out
 
 

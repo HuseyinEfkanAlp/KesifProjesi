@@ -65,3 +65,28 @@ def test_acikca_verilen_kapsam_korunur():
     it = BoqItem(key="duvar:a", kind="duvar", group="a", label="Duvar", unit="m²", quantity=1.0,
                  discipline="architectural", scope=MAHAL)
     assert it.scope == MAHAL
+
+
+# ------------------------------------------------------------------ mahal ↔ keşif uzlaşması
+
+def test_dis_hat_dagilmis_geometriden_uretilmez():
+    """Mimarın planın ikinci kopyasını yanına çizdiği paftada dış hat iki kopyayı birden sarıyordu:
+    2.500 m²'lik kat 44.000 m² çıkıyor, tavan / cephe / iskele metrajı mertebe olarak kayıyordu."""
+    from app.services import footprint_polygon
+
+    class E:
+        def __init__(self, pts):
+            self.etype, self.points = "wall", pts
+
+    # iki küme ince duvar dilimi, 400 m arayla: aralarındaki boşluk bina değildir
+    els = [E([(x, 0), (x + 4, 0), (x + 4, 0.2), (x, 0.2)]) for x in (0, 10, 20, 400, 410, 420)]
+    assert footprint_polygon(els) is None
+
+
+def test_mahal_sinirlari_dis_hattin_birincil_kaynagidir():
+    """Mimarın kendi çizdiği mahal çokgenlerinin birleşimi katın planının ta kendisidir."""
+    from app.services import footprint_polygon
+
+    kare = [(0.0, 0.0), (20.0, 0.0), (20.0, 20.0), (0.0, 20.0)]
+    g = footprint_polygon([], [{"index": 0, "points": kare, "area": 400.0, "children": []}])
+    assert g is not None and 380 < g.area < 450    # kapatma tamponu payı
