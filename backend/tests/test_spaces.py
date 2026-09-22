@@ -265,3 +265,34 @@ def test_spaces_xlsx(client, tmp_path):
     assert armatur and armatur[0][7] == 3                              # SALON: 3 armatür
     assert any(r[1] == "HOL" and "Kamera" in (r[5] or "") and r[7] == 1 for r in metraj)
     assert any("Şap" in (r[5] or "") and r[8] == "türetildi" for r in metraj)
+
+
+def test_alignment_ignores_lines(client, tmp_path):
+    """Hizalama yalnız NOKTA elemanlarıyla aranır: kablo / boru gibi çizgiler mahaller arasında
+    uzandığı için aramayı yanıltır — varlıkları bulunan kaymayı değiştirmemeli."""
+    import ezdxf
+    from app.services import align_drawing, _space_polys
+    from app.parser.loader import load_dxf
+    from app.parser.spaces import detect_spaces
+    from types import SimpleNamespace as NS
+    mim = load_dxf(str(_mimari_dxf(tmp_path / "m.dxf")))
+    sps, _ = detect_spaces(mim, ["DUVAR"])
+    polys = _space_polys([s.to_dict() for s in sps])
+    DX, DY = 640.0, -275.0                                    # tesisat paftası başka koordinatta
+    nokta = [NS(points=[[x + DX, y + DY]], etype="fixture", length=0.0, area=0.0, count=1)
+             for x, y in [(2, 2), (5, 6), (6, 2), (3, 5), (1, 1), (7, 1), (9, 2), (11, 6), (10, 5)]]
+    # mahalleri boydan boya geçen hatlar: nokta değildir, hizalamaya girmemeli
+    hat = [NS(points=[[0 + DX, y + DY], [12 + DX, y + DY]], etype="cable", length=12.0, area=0.0, count=1)
+           for y in (1.0, 2.0, 3.0, 5.0, 6.0, 7.0)]
+    yalniz = align_drawing(NS(rooms=[]), NS(rooms=[]), nokta, polys)
+    karisik = align_drawing(NS(rooms=[]), NS(rooms=[]), nokta + hat, polys)
+    # kayma, noktaları doğru mahallere oturtacak kadar doğru bulunur (birebir tek bir değer değildir:
+    # noktalar mahalin içinde kaldığı sürece küçük oynamalar aynı sonucu verir)
+    from shapely.geometry import Point as SPoint
+    yer = []
+    for e in nokta:
+        p0 = SPoint(e.points[0][0] + yalniz["dx"], e.points[0][1] + yalniz["dy"])
+        yer.append(next((sp["name"] for sp, g in polys if g.contains(p0)), None))
+    assert yer == ["SALON"] * 6 + ["HOL"] * 3
+    assert (karisik["dx"], karisik["dy"]) == (yalniz["dx"], yalniz["dy"])   # hatlar kaymayı değiştirmedi
+    assert karisik["total"] == len(nokta) == yalniz["hit"]                  # ve sayıma girmedi

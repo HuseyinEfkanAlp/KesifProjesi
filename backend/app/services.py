@@ -992,6 +992,8 @@ def space_derived(project: Project, sp: dict, catalog: Catalog, params: dict, dr
 ALIGN_MIN_HIT = 0.05        # elemanların en az bu oranı mahale düşmeli (bir dosyada birden çok kat
                             # olabilir: her katın payı küçüktür; eşik düşük ama eşleşme doğrulanır)
 ALIGN_MIN_COUNT = 3         # ve en az bu kadar eleman
+NOKTA_MAX_AREA = 4.0        # m² — bundan küçük ve uzunluğu olmayan eleman "nokta" sayılır (armatür, priz,
+                            # kamera, menfez): hizalama aramaşı yalnız bunları kullanır
 
 
 def _label_offsets(target: Drawing, source: Drawing) -> list[tuple[float, float]]:
@@ -1105,7 +1107,13 @@ def align_drawing(target: Drawing, source: Drawing, elements, polys) -> dict:
     merkezi ile mahal kümesinin merkezi arasındaki fark. Her aday yerel aramayla keskinleştirilir ve
     **doğrulanarak** seçilir: o kaymayla kaç eleman bir mahalin içine düşüyor. Tahmin yok."""
     from shapely import STRtree
-    pts = [(e.points[0][0], e.points[0][1]) for e in elements if e.points]
+    # Hizalama yalnız NOKTA elemanlarıyla aranır (armatür, priz, kamera, menfez, doğrama): bunlar mahalin
+    # içinde durur. Kablo / boru / duvar gibi çizgisel elemanlar mahaller arasında uzanır ve aramayı yanıltır
+    # — yanlış kayma, armatürleri komşu odaya yazmak demektir.
+    nokta = [e for e in elements if e.points and not (getattr(e, "length", 0) or 0)
+             and (getattr(e, "area", 0) or 0) <= NOKTA_MAX_AREA]
+    kaynak_els = nokta or [e for e in elements if e.points]
+    pts = [(e.points[0][0], e.points[0][1]) for e in kaynak_els]
     out = {"dx": 0.0, "dy": 0.0, "hit": 0, "total": len(pts), "source": ""}
     if not pts or not polys:
         return out
