@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import { Api, fmt } from '../api/client'
 import type { SpaceBreakdown, SpaceRow } from '../types'
 
@@ -37,12 +37,28 @@ export default function SpacesPanel({ projectId, refreshKey }: Props) {
   const loose = data.spaces.filter((s) => s.kind !== 'grup' && !s.parent)
   const childrenOf = (g: SpaceRow) => data.spaces.filter((s) => s.parent === g.key)
 
+  /** Kalemleri iş grubuna göre ayırır: Kaba / İnce / Mekanik / Elektrik / Altyapı */
+  const byGroup = (rows: { work_group_label?: string; work_group?: string }[]) => {
+    const m = new Map<string, typeof rows>()
+    rows.forEach((i) => {
+      const k = i.work_group_label || i.work_group || 'Diğer'
+      m.set(k, [...(m.get(k) ?? []), i])
+    })
+    return Array.from(m.entries())
+  }
+
   const itemRows = (rows: SpaceRow['items'], title: string) => (
     rows.length === 0 ? <div className="muted hint">{title}: kalem yok</div> : (
       <table className="summary-table">
         <thead><tr><th>{title}</th><th>Miktar</th><th>Birim</th></tr></thead>
-        <tbody>{rows.map((i) => (
-          <tr key={i.key}><td>{i.label}</td><td style={{ textAlign: 'right' }}>{fmt(i.quantity, 2)}</td><td>{i.unit}</td></tr>
+        <tbody>{byGroup(rows).map(([grup, liste]) => (
+          <Fragment key={grup}>
+            <tr><td colSpan={3} className="muted" style={{ fontWeight: 600, paddingTop: 6 }}>{grup}</td></tr>
+            {(liste as SpaceRow['items']).map((i) => (
+              <tr key={i.key}><td style={{ paddingLeft: 14 }}>{i.label}</td>
+                <td style={{ textAlign: 'right' }}>{fmt(i.quantity, 2)}</td><td>{i.unit}</td></tr>
+            ))}
+          </Fragment>
         ))}</tbody>
       </table>
     )
@@ -84,7 +100,9 @@ export default function SpacesPanel({ projectId, refreshKey }: Props) {
   return (
     <div>
       <h3>Mahaller <span className="muted">({data.spaces.filter((s) => s.kind === 'mahal').length} mahal
-        {groups.length > 0 ? `, ${groups.length} bağımsız bölüm` : ''})</span></h3>
+        {groups.length > 0 ? `, ${groups.length} bağımsız bölüm` : ''})</span>{' '}
+        <a className="btn secondary-link" style={{ fontSize: 12, padding: '2px 10px' }}
+           href={Api.cost.spacesExcelUrl(projectId)}>Mahal metrajı (Excel)</a></h3>
       <div className="muted hint">Mahal sınırı mimarın alan çizgisinden, yoksa duvarlardan çıkarılır ve
         mahal yazısındaki alanla doğrulanır. Sınırı doğrulanan mahalde sıva / boya çevreden ÖLÇÜLÜR.
         mahale sayıldı. Duvar / hat gibi mahal sınırında duran kalemler komşu mahaller arasında bölüşülür.</div>

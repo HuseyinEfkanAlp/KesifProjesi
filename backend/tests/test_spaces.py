@@ -240,3 +240,28 @@ def test_spaces_across_sheets(client, tmp_path, kayma):
     assert len(hiz) == 2
     for h in hiz.values():
         assert h["hit"] == h["total"] and (abs(h["dx"] + dx) < 0.05 or dx == 0)
+
+
+def test_spaces_xlsx(client, tmp_path):
+    """Mahal metrajı Excel'e dökülür: mahal listesi, mahal × kalem, mahale girmeyenler, hizalama."""
+    from openpyxl import load_workbook
+    from io import BytesIO
+    mim = _mimari_dxf(tmp_path / "mimari.dxf")
+    elk = _mimari_dxf(tmp_path / "elk.dxf", 0, 0, tesisat=[
+        ("KSF-ELK-ARMATUR-LED", [(2, 2), (5, 6), (6, 2)]), ("KSF-ZAY-KAMERA-DOME", [(9, 2)])])
+    pid = client.post("/api/projects", json={"name": "Excel", "storey_height": 3.0}).json()["id"]
+    for ad, yol in [("ZEMİN KAT PLANI.dxf", mim), ("ZEMİN KAT AYDINLATMA PLANI.dxf", elk)]:
+        with open(yol, "rb") as f:
+            client.post(f"/api/projects/{pid}/drawings", files={"file": (ad, f, "application/dxf")})
+    r = client.get(f"/api/projects/{pid}/spaces.xlsx")
+    assert r.status_code == 200 and "spreadsheetml" in r.headers["content-type"]
+    wb = load_workbook(BytesIO(r.content))
+    assert {"Mahaller", "Mahal metrajı", "Mahale girmeyen"} <= set(wb.sheetnames)
+    mahaller = [[c.value for c in row] for row in wb["Mahaller"].iter_rows(min_row=4)]
+    assert {r[1] for r in mahaller} == {"SALON", "HOL"}
+    assert all(r[5] == "çizimden ölçüldü" for r in mahaller)          # sınır doğrulandı
+    metraj = [[c.value for c in row] for row in wb["Mahal metrajı"].iter_rows(min_row=4)]
+    armatur = [r for r in metraj if r[1] == "SALON" and "armat" in (r[5] or "").lower()]
+    assert armatur and armatur[0][7] == 3                              # SALON: 3 armatür
+    assert any(r[1] == "HOL" and "Kamera" in (r[5] or "") and r[7] == 1 for r in metraj)
+    assert any("Şap" in (r[5] or "") and r[8] == "türetildi" for r in metraj)

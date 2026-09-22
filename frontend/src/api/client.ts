@@ -139,6 +139,8 @@ export const Api = {
   cost: {
     get: (pid: number) => request<{ summary: QuantitySummary; boq: Boq; cost: CostResult; quality: QualityReport }>(`/api/projects/${pid}/cost`),
     excelUrl: (pid: number) => `/api/projects/${pid}/cost.xlsx`,
+    /** mahal bazında metraj tablosu (mahal listesi + mahal × kalem) */
+    spacesExcelUrl: (pid: number) => `/api/projects/${pid}/spaces.xlsx`,
   },
   catalog: {
     get: () => request<Catalog>('/api/catalog'),

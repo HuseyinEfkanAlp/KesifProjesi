@@ -124,11 +124,18 @@ DEFAULT_PROFILE: dict[str, list[str]] = {
     # elektrik
     "tray": [r"TAVA", r"\bTRAY", r"KABLO\s*KANAL", r"CABLE\s*TRAY", r"\bKT\b", r"BUSBAR", r"MERDIVEN\s*TAVA"],
     "cable": [r"KABLO", r"\bCABLE", r"\bWIRE", r"E[-_]?WIRE", r"BESLEME", r"L[Iİ]NYE", r"SORT[Iİ]", r"KOLON\s*HAT",
-              r"E[-_]?POWR", r"CIRCUIT", r"\bHAT\b", r"DATA", r"\bCAT\s?[56]", r"ZAYIF\s*AK"],
+              r"E[-_]?POWR", r"CIRCUIT", r"\bHAT\b", r"DATA", r"\bCAT\s?[56]", r"ZAYIF\s*AK",
+              # kısaltmalar: LNY (linye), SRT (sorti), KUV (kuvvetli akım) — hat çizgileridir
+              r"[-_]LNY([-_]|$)", r"[-_]SRT([-_]|$)", r"[-_]KUV[-_]"],
     "conduit": [r"\bBORU", r"CONDUIT", r"\bPVC\b", r"SP[Iİ]RAL", r"^(?!.*(?:HAVA|EGZO|TAZE|\bHT\b|KL[Iİ]MA|DUCT|MENFEZ)).*KANAL\b"],
     "fixture": [r"ARMAT[UÜ]R", r"AYDINLATMA", r"\bLIGHT", r"E[-_]?LITE", r"FIXTURE", r"LUMIN", r"PR[Iİ]Z", r"SOCKET",
                 r"ANAHTAR", r"SWITCH", r"\bBUAT", r"S[Iİ]GORTA", r"PANO", r"\bDEV[Iİ]CE", r"DETEKT[OÖ]R", r"SENS[OÖ]R",
-                r"S[Iİ]REN", r"YANGIN", r"ACIL", r"EXIT", r"\bTV\b", r"DATA\s*PR"],
+                r"S[Iİ]REN", r"YANGIN", r"ACIL", r"EXIT", r"\bTV\b", r"DATA\s*PR",
+                # Türk elektrik projelerinin katman kısaltmaları: E-AYD-BLK (aydınlatma bloğu), E-AYO
+                # (aydınlatma otomatiği / anahtar), E-PRZ, E-PAN-BLK (pano), E-ZAY-KAM (kamera), E-YNG.
+                # "BLK / SEM" eki şart: "E-KUV-LNY-HAT-AYD" bir armatür değil aydınlatma LİNYESİDİR.
+                r"[-_]AYD[-_](BLK|BLOK|SEM|SMB|SYM)", r"[-_]AYO\b", r"[-_]PRZ([-_]|$)",
+                r"[-_]PAN[-_](BLK|BLOK)", r"[-_]KAM([-_]|$)", r"[-_]YNG([-_]|$)"],
     # mekanik: boru hatları (sistem adıyla), hava kanalları, cihaz / vitrifiye blokları
     "pipe": [r"\bBORU", r"\bPIPE", r"PPRC", r"\bPVC\b", r"TEM[Iİ]Z\s*SU", r"P[Iİ]S\s*SU", r"P[Iİ]SSU", r"SO[GĞ]UK\s*SU", r"SICAK\s*SU",
              r"KULLANMA\s*SU", r"AT[Iİ]K\s*SU", r"DRENAJ", r"YA[GĞ]MUR\s*(SU|HAT|BORU)", r"ISITMA", r"SO[GĞ]UTMA", r"\bCHW\b", r"\bHHW\b",

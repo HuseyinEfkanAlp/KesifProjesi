@@ -298,3 +298,18 @@ def test_parapet_detected_with_section_label(tmp_path):
     assert len(par) == 1 and par[0].length == pytest.approx(10.0, abs=0.05) and par[0].b == pytest.approx(0.20) and par[0].h == pytest.approx(0.15)
     ln = compute_element(ElementData.from_obj(par[0], id=1), QuantityParams(storey_height=3.0, slab_thickness=0.15))
     assert ln.concrete_m3 == pytest.approx(0.2 * 0.15 * 10.0, rel=1e-2) and ln.formwork_m2 == pytest.approx(2 * 0.15 * 10.0, rel=1e-2)
+
+
+def test_turkish_electrical_layer_abbreviations():
+    """Gerçek Türk elektrik projelerinin katman kısaltmaları tanınmalı (L BLOK AYDINLATMA TESİSATI).
+
+    Ayrım kritik: "E-AYD-BLK" armatür bloğu, "E-KUV-LNY-HAT-AYD" ise aydınlatma LİNYESİ (kablo)."""
+    from app.parser.layer_profile import LayerProfile
+    p = LayerProfile()
+    assert p.classify("E-AYD-BLK", "electrical") == "fixture"          # aydınlatma bloğu = armatür
+    assert p.classify("E-AYD-AYO", "electrical") == "fixture"          # aydınlatma otomatiği / anahtar
+    assert p.classify("E-PAN-BLK-", "electrical") == "fixture"         # pano bloğu
+    assert p.classify("E-PRZ-BLK", "electrical") == "fixture"
+    assert p.classify("E-KUV-LNY-HAT-AYD", "electrical") == "cable"    # linye: armatür değil hat
+    assert p.classify("E-KUV-LNY-KOM-AYD", "electrical") == "cable"
+    assert p.classify("E-SRT-AYD", "electrical") == "cable"            # sorti
