@@ -20,6 +20,7 @@ from ..parser.analyzer import HEURISTIC_DISCIPLINES
 from ..parser.blocks import detect_block, detect_with_known, normalize as normalize_block
 from ..parser.dwg import convert_dwg_to_dxf, dwg_supported
 from ..parser.loader import UNIT_SCALE, load_dxf
+from ..intake import auto_pick_sheets, sheet_verdict
 from ..parser.sheets import BIG_FILE_BYTES, Sheet, SheetScan, crop_sheets, scan_sheets
 from ..parser.titleblock import TitleBlock
 from ..planset import PLAN_TYPE_BY_CODE, resolve_plan
@@ -152,30 +153,9 @@ def _resolve(discipline: str, plan_type: str | None, titles: list[str], layers: 
     return discipline, code
 
 
-FRAGMENT_MAX_ENTITIES = 200   # başlıksız ve bu kadar az nesneli küme: detay / tablo / lejant parçası, plan değil
-# Pafta olmayan içerik türlerinin listedeki açıklaması
-KIND_NOTE = {"antet": "antet / proje bilgi tablosu — plan değil, ölçülecek geometri taşımaz",
-             "bos": "boş çerçeve — başlığı var ama çizim yok",
-             "cetvel": "cetvel / liste — geometrisi ölçülmez, yazılarındaki poz ve adet okunur"}
-# Bu türlerin geometrisi ölçülmez; listede işaretsiz gelir. "cetvel" bunlara dahil DEĞİLDİR: okunacak
-# verisi olduğu için eklenir (doğrama poz listesi tek başına 170 adet taşıyabilir).
-NOT_A_PLAN = {"antet", "bos"}
-
-
-def _sheet_out(sh: Sheet) -> dict:
-    """Pafta bilgisi + başlığından / katmanlarından tanınan plan tipi ve disiplin önerisi.
-
-    Plan olmayan içerik seçili gelmez: başlıksız küçük kümeler (merdiven detayı, pano tablosu, lejant) ve
-    başlığı olduğu hâlde plan olmayan çerçeveler — ruhsat antedi (etiket–değer listesi) ve boş şablon kutusu.
-    Bunlar listede kalır ama etiketlenir; kullanıcı isterse yine seçebilir."""
-    code, disc = resolve_plan([sh.title, *sh.titles], sh.layers)
-    fragment = (not sh.titled and (sh.entity_count < FRAGMENT_MAX_ENTITIES or not disc)) or sh.kind in NOT_A_PLAN
-    if fragment:
-        code, disc = "", ""
-    pt = PLAN_TYPE_BY_CODE.get(code)
-    return {**sh.to_dict(), "plan_type": code, "plan_type_label": pt.label if pt else "",
-            "discipline": disc if (pt or disc) else "", "analyze": (pt.analyze if pt else bool(disc)) and not fragment,
-            "fragment": fragment, "kind_note": KIND_NOTE.get(sh.kind, "")}
+# Sınıflandırma kararı `app/intake.py` içindedir (saf ve test edilebilir olsun diye);
+# buradaki adlar geriye dönük uyum için korunur.
+_sheet_out = sheet_verdict
 
 
 def apply_titleblock(project: Project, tb: TitleBlock, session: Session) -> list[str]:
@@ -340,14 +320,20 @@ def _source_out(src: Path, scan: SheetScan) -> dict:
 def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = Form(""),
                          storey_count: int = Form(1), unit_override: str | None = Form(None),
                          discipline: str = Form(AUTO_DISCIPLINE), plan_type: str = Form(""),
+                         auto: bool = Form(True),
                          session: Session = Depends(get_session)):
-    """DXF yükler. Dosya tek paftaysa hemen analiz edilir (201 + çizim).
+    """DXF / DWG yükler ve analiz eder. Kullanıcıya pafta seçimi SORULMAZ.
+
+    Tek paftalı dosya doğrudan analiz edilir (201 + çizim). Çok paftalı (ruhsat projesi gibi bütün
+    paftalar yan yana) ya da büyük dosyada sistem **paftaları kendisi seçer** (`intake.auto_pick_sheets`):
+    plan tipi tanınan paftalar alınır, antet / boş çerçeve / detay parçası atlanır, tipi tanınmayan büyük
+    paftalar **rapora yazılır** (metraja sessizce girmeyen hiçbir şey olmamalı). Dönüş:
+    201 + {"drawings": [...], "intake": {...}}.
+
+    auto=false: eski davranış — pafta listesi döner (200 + needs_sheet_selection) ve kullanıcı
+    /drawings/from-source ile seçer. Uzman görünümü bunu kullanır.
 
     discipline "auto" (varsayılan): plan tipi dosya adı ve çizimdeki başlıktan tanınır, disiplin ondan gelir.
-
-    Çok paftalı (ruhsat projesi gibi bütün paftalar yan yana) ya da çok büyük dosyalarda ise dosya kaynak
-    olarak saklanır ve pafta listesi döner (200 + needs_sheet_selection); kullanıcı paftaları seçince
-    /drawings/from-source ile her pafta ayrı çizim olarak kırpılıp analiz edilir.
     """
     project = get_project(project_id, session)
     discipline = _check_discipline(discipline, allow_auto=True)
@@ -389,10 +375,19 @@ def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = F
         raise HTTPException(400, f"DXF okunamadı: {ex}")
     if scan.multi_sheet or src.stat().st_size > BIG_FILE_BYTES:
         scan.save()
-        return JSONResponse(status_code=200, content={
-            "needs_sheet_selection": True, "source": _source_out(src, scan),
-            "sheets": [_sheet_out(sh) for sh in scan.sheets],
-        })
+        if not auto:
+            return JSONResponse(status_code=200, content={
+                "needs_sheet_selection": True, "source": _source_out(src, scan),
+                "sheets": [_sheet_out(sh) for sh in scan.sheets],
+            })
+        picks, rapor = auto_pick_sheets(scan)
+        if not picks:
+            raise HTTPException(400, "Dosyada ölçülebilir plan bulunamadı: " + rapor.note)
+        secimler = [SheetPick(index=p["index"], discipline=p["discipline"] or discipline,
+                              plan_type=p["plan_type"] or None, storey_count=storey_count) for p in picks]
+        created = ingest_sheets(project, src, scan, secimler, session, file_label,
+                                unit_override or None, discipline, plan_type or None)
+        return {"drawings": [drawing_out(d, session) for d in created], "intake": rapor.to_dict()}
     dest = UPLOAD_DIR / f"{project_id}_{token[:8]}_{safe}"
     src.rename(dest)
     discipline, plan_type = _resolve(discipline, plan_type, [label, Path(fname).stem, *scan.titles], scan.layers)
@@ -433,28 +428,26 @@ def source_sheets(token: str):
     return {"source": _source_out(src, scan), "sheets": [_sheet_out(sh) for sh in scan.sheets]}
 
 
-@router.post("/projects/{project_id}/drawings/from-source", status_code=201)
-def drawings_from_source(project_id: int, body: FromSourceIn, session: Session = Depends(get_session)):
-    """Kaynak dosyadan seçilen paftaları kırpar, her birini ayrı çizim olarak ekleyip analiz eder."""
-    project = get_project(project_id, session)
-    if body.unit_override and body.unit_override not in UNIT_SCALE:
-        raise HTTPException(400, "Birim mm, cm veya m olmalı")
-    discipline = _check_discipline(body.discipline, allow_auto=True)
-    src = _source_path(body.token)
-    scan = SheetScan.load(src) or scan_sheets(src)
-    orig = src.name[len(f"src_{body.token}_"):]
+def ingest_sheets(project: Project, src: Path, scan: SheetScan, picks: list, session: Session,
+                 orig: str, unit_override: str | None = None, discipline: str = AUTO_DISCIPLINE,
+                 plan_type: str | None = None, whole: bool = False) -> list[Drawing]:
+    """Seçilen paftaları kırpar, her birini ayrı çizim olarak ekleyip analiz eder.
+
+    Hem otomatik yükleme (`upload_drawing`) hem uzman seçimi (`drawings_from_source`) buraya gelir;
+    kararlar farklı, yürütme aynıdır."""
+    project_id = project.id
     created: list[Drawing] = []
-    if body.whole:
+    if whole:
         if src.stat().st_size > BIG_FILE_BYTES:
             raise HTTPException(400, "Dosya tüm çizim olarak analiz edilemeyecek kadar büyük; pafta seçin")
         dest = UPLOAD_DIR / f"{project_id}_{uuid.uuid4().hex[:8]}_{orig}"
         shutil.copyfile(src, dest)
-        disc, ptype = _resolve(discipline, body.plan_type, [Path(orig).stem, *scan.titles], scan.layers)
-        created.append(_create_drawing(project, dest, orig, Path(orig).stem, 1, body.unit_override, session,
+        disc, ptype = _resolve(discipline, plan_type, [Path(orig).stem, *scan.titles], scan.layers)
+        created.append(_create_drawing(project, dest, orig, Path(orig).stem, 1, unit_override, session,
                                        discipline=disc, plan_type=ptype))
     jobs = []
     seen: set[int] = set()
-    for pick in body.sheets:
+    for pick in picks:
         if pick.index in seen:
             continue
         seen.add(pick.index)
@@ -472,11 +465,11 @@ def drawings_from_source(project_id: int, body: FromSourceIn, session: Session =
             disc, ptype = _resolve(_check_discipline(pick.discipline or discipline, allow_auto=True), pick.plan_type,
                                    [sheet.title if sheet.titled else "", *sheet.titles, Path(orig).stem], sheet.layers)
             created.append(_create_drawing(project, dest, f"{orig} › {sheet.title}", pick.label or sheet.title,
-                                           pick.storey_count, body.unit_override, session,
+                                           pick.storey_count, unit_override, session,
                                            storey_height=pick.storey_height, discipline=disc, plan_type=ptype))
     if not created:
         raise HTTPException(400, "Eklenecek pafta seçilmedi")
-    if not body.unit_override:
+    if not unit_override:
         _harmonize_units(project, created, session)
     applied = apply_titleblock(project, scan.titleblock, session)
     if applied:
@@ -487,6 +480,21 @@ def drawings_from_source(project_id: int, body: FromSourceIn, session: Session =
     _refresh_openings(project, session)
     for d in created:
         session.refresh(d)
+    return created
+
+
+@router.post("/projects/{project_id}/drawings/from-source", status_code=201)
+def drawings_from_source(project_id: int, body: FromSourceIn, session: Session = Depends(get_session)):
+    """Uzman seçimi: kaynak dosyadan SEÇİLEN paftaları ekler. Otomatik yükleme bunu kullanmaz."""
+    project = get_project(project_id, session)
+    if body.unit_override and body.unit_override not in UNIT_SCALE:
+        raise HTTPException(400, "Birim mm, cm veya m olmalı")
+    discipline = _check_discipline(body.discipline, allow_auto=True)
+    src = _source_path(body.token)
+    scan = SheetScan.load(src) or scan_sheets(src)
+    orig = src.name[len(f"src_{body.token}_"):]
+    created = ingest_sheets(project, src, scan, body.sheets, session, orig, body.unit_override,
+                            discipline, body.plan_type, body.whole)
     return [drawing_out(d, session) for d in created]
 
 

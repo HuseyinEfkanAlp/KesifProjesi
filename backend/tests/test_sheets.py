@@ -99,7 +99,8 @@ def test_crop_and_analyze(multi_dxf, tmp_path):
 def test_api_sheet_selection_flow(client, multi_dxf):
     pid = client.post("/api/projects", json={"name": "Çok pafta", "storey_height": 3.0}).json()["id"]
     with open(multi_dxf, "rb") as f:
-        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("proje.dxf", f, "application/dxf")})
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("proje.dxf", f, "application/dxf")},
+                        data={"auto": "false"})   # uzman seçim akışı: pafta listesi dönmeli
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["needs_sheet_selection"] and len(body["sheets"]) == 3
@@ -222,3 +223,67 @@ def test_kaynak_kopyalari_suresi_dolunca_silinir(tmp_path, monkeypatch):
     assert n == 2 and size == 1002   # 1000 baytlık kopya + 2 baytlık önbellek
     assert not eski.exists() and not onbellek.exists()
     assert yeni.exists() and cizim.exists()
+
+
+def test_autonomous_upload(client, multi_dxf):
+    """Kullanıcıya pafta seçimi SORULMAZ: çok paftalı dosyada sistem kendisi seçip analiz eder.
+
+    Ürün prensibi — teknik olmayan kullanıcı "hangi paftaları analiz edelim?" sorusunu geçemez.
+    Seçilmeyen her pafta gerekçesiyle rapora girer; metraja sessizce girmeyen hiçbir şey olmamalı."""
+    pid = client.post("/api/projects", json={"name": "Otonom", "storey_height": 3.0}).json()["id"]
+    with open(multi_dxf, "rb") as f:
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("proje.dxf", f, "application/dxf")})
+    assert r.status_code == 201, r.text                      # 200 + "seçim gerekli" DEĞİL
+    body = r.json()
+    assert "needs_sheet_selection" not in body
+    assert len(body["drawings"]) == 3                        # üç pafta da kendiliğinden eklendi
+    assert {d["plan_type"] for d in body["drawings"]} == {"sta_temel_kalip", "sta_kat_kalip", "sta_kolon"}
+    rapor = body["intake"]
+    assert len(rapor["picked"]) == 3 and "3 pafta ölçüldü" in rapor["note"]
+    assert all(p["plan_type"] for p in rapor["picked"])
+    # aynı akış yeniden analiz gerektirmeden proje listesine yansır
+    ds = client.get(f"/api/projects/{pid}/drawings").json()
+    assert len(ds) == 3 and all(d["status"] in ("ok", "empty") for d in ds)
+
+
+def test_auto_pick_skips_non_plans():
+    """Antet, boş çerçeve ve başlıksız küçük küme seçilmez; gerekçesiyle raporlanır."""
+    from types import SimpleNamespace as NS
+    from app.intake import auto_pick_sheets
+
+    def sh(i, title, kind="plan", n=5000, titled=True):
+        return NS(index=i, title=title, titles=[], layers={}, kind=kind, entity_count=n, titled=titled,
+                  to_dict=lambda: {"index": i, "title": title, "entity_count": n})
+
+    scan = NS(sheets=[sh(0, "ZEMİN KAT KALIP PLANI"), sh(1, "PROJE BİLGİ TABLOSU", kind="antet"),
+                      sh(2, "", n=40, titled=False), sh(3, "DOĞRAMA LİSTESİ", kind="cetvel")])
+    picks, rapor = auto_pick_sheets(scan)
+    alinan = {p["index"] for p in picks}
+    assert 0 in alinan                                        # plan
+    assert 3 in alinan                                        # cetvel: geometrisi yok ama poz/adet taşır
+    assert 1 not in alinan and 2 not in alinan
+    sebepler = {s["index"]: s["reason"] for s in rapor.skipped}
+    assert "antet" in sebepler[1] and "detay / lejant" in sebepler[2]
+
+
+def test_auto_pick_takes_evidence_sheets():
+    """Kesit / detay / vaziyet paftası KANIT için alınır: geometrisi ölçülmez ama notları okunur.
+
+    "Bilgiyi önce projede ara" ilkesinin en verimli kaynağı burasıdır — kat yüksekliği kotlardan,
+    şap kalınlığı ve kazı kotu kesit notlarından, blok listesi vaziyet planından gelir.
+    Sahte metraj riski yok: services.analyze_and_store bu tiplerde otomatik eşlemeyi kapatıyor."""
+    from types import SimpleNamespace as NS
+    from app.intake import auto_pick_sheets
+
+    def sh(i, title, kind="plan", n=5000, titled=True):
+        return NS(index=i, title=title, titles=[], layers={}, kind=kind, entity_count=n, titled=titled,
+                  to_dict=lambda: {})
+
+    scan = NS(sheets=[sh(0, "L BLOK / ZEMİN KAT PLANI"), sh(1, "L BLOK KESİTLER:1/100"),
+                      sh(2, "VAZİYET PLANI"), sh(3, "PROJE BİLGİ TABLOSU", kind="antet")])
+    picks, rapor = auto_pick_sheets(scan)
+    assert {p["index"] for p in picks} == {0, 1, 2}            # antet dışında hepsi alındı
+    assert [e["index"] for e in rapor.picked] == [0]           # yalnız kat planı ÖLÇÜLÜR
+    assert {e["index"] for e in rapor.evidence} == {1, 2}      # kesit ve vaziyet KANIT olarak okunur
+    assert {e["plan_type"] for e in rapor.evidence} == {"mim_kesit", "mim_vaziyet"}
+    assert "kanıt için okundu" in rapor.note

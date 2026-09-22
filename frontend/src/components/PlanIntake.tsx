@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Api, type SheetPick } from '../api/client'
-import { DISCIPLINES, isSheetSelection, type Discipline, type DisciplineChoice, type Drawing, type SheetInfo, type SheetSelection } from '../types'
+import { DISCIPLINES, isIntakeResult, isSheetSelection, type Discipline, type DisciplineChoice, type Drawing, type SheetInfo, type SheetSelection } from '../types'
 import { planTypeGroups, usePlanTypes } from '../hooks/usePlanTypes'
 
 /** Bir paftanın seçim durumu (çok paftalı dosya) */
@@ -67,7 +67,19 @@ export default function PlanIntake({ projectId, storeyHeight, onChanged, compact
     setBusy(`${file.name} yükleniyor / analiz ediliyor...`)
     Api.drawings.upload(projectId, file, { unitOverride: unit })
       .then((res) => {
-        if (isSheetSelection(res)) {
+        if (isIntakeResult(res)) {
+          // Otonom akış: pafta seçimi sorulmadı, sistem seçti. Seçilmeyen her pafta gerekçesiyle günlüğe düşer.
+          addLog({ file: file.name, kind: 'ok', text: res.intake.note })
+          for (const d of res.drawings) {
+            addLog({ file: file.name, kind: d.plan_type ? 'ok' : 'warn',
+                     text: `${d.label} → ${describe(d)} · ${DISCIPLINES[d.discipline]} · ${d.element_count} eleman` })
+          }
+          for (const u of res.intake.unknown) {
+            addLog({ file: file.name, kind: 'warn',
+                     text: `“${u.title}” ${u.reason} (${u.entity_count.toLocaleString('tr')} nesne) — metraja girmedi` })
+          }
+          changed.current()
+        } else if (isSheetSelection(res)) {
           const init: Record<number, PickState> = {}
           for (const s of res.sheets) {
             init[s.index] = {

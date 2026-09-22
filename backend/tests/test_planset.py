@@ -113,7 +113,8 @@ def test_api_plan_flow(client, multi_dxf, storey_dxf, elec_dxf):
 
     # çok paftalı: paftalarda plan tipi ve disiplin önerisi
     with open(multi_dxf, "rb") as f:
-        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("ruhsat.dxf", f, "application/dxf")})
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("ruhsat.dxf", f, "application/dxf")},
+                        data={"auto": "false"})   # uzman seçim akışı
     assert r.status_code == 200 and r.json()["needs_sheet_selection"]
     sheets = {s["title"]: s for s in r.json()["sheets"]}
     assert sheets["TEMEL KALIP PLANI"]["plan_type"] == "sta_temel_kalip" and sheets["TEMEL KALIP PLANI"]["discipline"] == "structural"

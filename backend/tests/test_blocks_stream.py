@@ -63,7 +63,8 @@ def test_api_schedule_to_boq(client, block_dxf, monkeypatch):
     monkeypatch.setattr(sheets, "STREAM_BLOCK_MIN_BYTES", 0)
     pid = client.post("/api/projects", json={"name": "Blok"}).json()["id"]
     with open(block_dxf, "rb") as f:
-        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("proje.dxf", f, "application/dxf")})
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("proje.dxf", f, "application/dxf")},
+                        data={"auto": "false"})   # uzman seçim akışı
     assert r.status_code == 200 and r.json()["needs_sheet_selection"]
     sheets_ = {s["title"]: s for s in r.json()["sheets"]}
     dog = sheets_["DOĞRAMA DETAYLARI"]

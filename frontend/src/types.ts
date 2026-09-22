@@ -305,10 +305,26 @@ export interface SheetSelection {
   sheets: SheetInfo[]
 }
 
-export type UploadResult = Drawing | SheetSelection
+/** Otonom yükleme: sistem paftaları kendisi seçti, hangisini neden aldığını rapor eder */
+export interface IntakeResult {
+  drawings: Drawing[]
+  intake: {
+    picked: { index: number; title: string; plan_type: string; plan_type_label: string
+              discipline: string; entity_count: number }[]
+    skipped: { index: number; title: string; reason: string; entity_count: number }[]
+    /** plan büyüklüğünde ama tipi tanınamayan paftalar — metraja girmedi, bildirilir */
+    unknown: { index: number; title: string; reason: string; entity_count: number }[]
+    note: string
+  }
+}
+
+export type UploadResult = Drawing | SheetSelection | IntakeResult
 
 export const isSheetSelection = (r: UploadResult): r is SheetSelection =>
   (r as SheetSelection).needs_sheet_selection === true
+
+export const isIntakeResult = (r: UploadResult): r is IntakeResult =>
+  Array.isArray((r as IntakeResult).drawings) && !!(r as IntakeResult).intake
 
 export interface Element {
   id: number
