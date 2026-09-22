@@ -226,21 +226,34 @@ def test_kaynak_kopyalari_suresi_dolunca_silinir(tmp_path, monkeypatch):
 
 
 def test_autonomous_upload(client, multi_dxf):
+    from app.jobs import run_pending
+
     """Kullanıcıya pafta seçimi SORULMAZ: çok paftalı dosyada sistem kendisi seçip analiz eder.
 
     Ürün prensibi — teknik olmayan kullanıcı "hangi paftaları analiz edelim?" sorusunu geçemez.
     Seçilmeyen her pafta gerekçesiyle rapora girer; metraja sessizce girmeyen hiçbir şey olmamalı."""
     pid = client.post("/api/projects", json={"name": "Otonom", "storey_height": 3.0}).json()["id"]
     with open(multi_dxf, "rb") as f:
-        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("proje.dxf", f, "application/dxf")})
-    assert r.status_code == 201, r.text                      # 200 + "seçim gerekli" DEĞİL
+        # background=true: ürünün VARSAYILAN yolu. (Testler genelinde senkron çalışılır ki
+        # 52 yükleme çağrısı iş takibiyle dolmasın; arka plan yolu burada sınanır.)
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("proje.dxf", f, "application/dxf")},
+                        data={"background": "true"})
+    # 200 + "seçim gerekli" DEĞİL; 202 + iş kaydı: kırpma ve analiz istek içinde beklenmez
+    assert r.status_code == 202, r.text
     body = r.json()
     assert "needs_sheet_selection" not in body
-    assert len(body["drawings"]) == 3                        # üç pafta da kendiliğinden eklendi
-    assert {d["plan_type"] for d in body["drawings"]} == {"sta_temel_kalip", "sta_kat_kalip", "sta_kolon"}
+    job = body["job"]
+    assert job["status"] == "kuyrukta" and job["kind"] == "upload"
+    # alım raporu HEMEN döner: kullanıcı neyin alındığını analiz bitmeden görür
     rapor = body["intake"]
     assert len(rapor["picked"]) == 3 and "3 pafta ölçüldü" in rapor["note"]
     assert all(p["plan_type"] for p in rapor["picked"])
+
+    run_pending()
+    j = client.get(f"/api/jobs/{job['id']}").json()
+    assert j["status"] == "bitti", j.get("error")
+    assert len(j["result"]["drawings"]) == 3                 # üç pafta da kendiliğinden eklendi
+    assert {d["plan_type"] for d in j["result"]["drawings"]} == {"sta_temel_kalip", "sta_kat_kalip", "sta_kolon"}
     # aynı akış yeniden analiz gerektirmeden proje listesine yansır
     ds = client.get(f"/api/projects/{pid}/drawings").json()
     assert len(ds) == 3 and all(d["status"] in ("ok", "empty") for d in ds)

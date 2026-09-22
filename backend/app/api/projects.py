@@ -59,8 +59,22 @@ def _clean_params(raw: dict | None) -> dict:
     return out
 
 
+def tenant_filter(session: Session):
+    """İsteğin şirketine ait projeleri süzen koşul (app/tenancy.py)."""
+    from ..tenancy import DEFAULT_COMPANY_SLUG, current_company, get_slug, owned_or_legacy
+    sirket = current_company(session)
+    varsayilan = not get_slug() or get_slug() == DEFAULT_COMPANY_SLUG
+    return owned_or_legacy(sirket.id, varsayilan), sirket
+
+
 def get_project(project_id: int, session: Session) -> Project:
-    p = session.get(Project, project_id)
+    """Projeyi getirir — **kiracı süzgeciyle birlikte**.
+
+    Projeye ulaşan bütün uçlar buradan geçiyor; süzgeci burada tutmak onu unutulabilir olmaktan
+    çıkarır. Başka kiracının projesi **404** döner, 403 değil: projenin varlığını bile sızdırmamak
+    gerekir."""
+    kosul, _ = tenant_filter(session)
+    p = session.exec(select(Project).where(Project.id == project_id, kosul)).first()
     if not p:
         raise HTTPException(404, "Proje bulunamadı")
     return p
@@ -87,13 +101,17 @@ def project_out(p: Project, session: Session) -> dict:
 
 @router.get("")
 def list_projects(session: Session = Depends(get_session)):
-    return [project_out(p, session) for p in session.exec(select(Project).order_by(Project.created_at.desc()))]
+    kosul, _ = tenant_filter(session)
+    return [project_out(p, session)
+            for p in session.exec(select(Project).where(kosul).order_by(Project.created_at.desc()))]
 
 
 @router.post("", status_code=201)
 def create_project(body: ProjectIn, session: Session = Depends(get_session)):
+    _, sirket = tenant_filter(session)
     p = Project(**body.model_dump(exclude={"rebar_ratios", "params"}), rebar_ratios=body.rebar_ratios or {},
-                params=_clean_params(body.params), layer_profile={})   # yalnızca kullanıcı eşlemeleri saklanır
+                params=_clean_params(body.params), layer_profile={},   # yalnızca kullanıcı eşlemeleri saklanır
+                company_id=sirket.id)
     session.add(p)
     session.commit()
     session.refresh(p)

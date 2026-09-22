@@ -7,8 +7,21 @@ from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
 
 
+class Company(SQLModel, table=True):
+    """Kiracı: projelerin sahibi olan şirket / ofis.
+
+    Tek kiracılı kurulumda tek satır vardır (`tenancy.DEFAULT_COMPANY_SLUG`), ama tablo ve bağ
+    baştan durur — kiracı ayrımı sonradan eklenemez."""
+    id: int | None = Field(default=None, primary_key=True)
+    slug: str = Field(index=True, unique=True)     # URL / başlıkta kullanılan kısa ad
+    name: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Project(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
+    # Kiracı. None = kiracılık öncesi kayıt; varsayılan şirket onları da görür (bkz. tenancy.owned).
+    company_id: int | None = Field(default=None, foreign_key="company.id", index=True)
     name: str
     description: str = ""
     storey_height: float = 3.0
@@ -31,6 +44,30 @@ class Project(SQLModel, table=True):
     # Katmanlı sistem bileşen kararları: {sistem_kodu: {bileşen_kodu: {"include": bool, "spec": str}}} (bkz. services.project_systems)
     systems: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Job(SQLModel, table=True):
+    """Arka planda çalışan uzun iş (büyük dosya analizi). Bkz. app/jobs.py.
+
+    177 MB'lık bir ruhsat dosyasında kırpma + analiz 6 dakika sürüyor; tarayıcı ve vekil sunucu
+    o kadar beklemez. Yükleme bu kaydı açar ve hemen döner, istemci ilerlemeyi buradan okur."""
+    id: int | None = Field(default=None, primary_key=True)
+    project_id: int | None = Field(default=None, foreign_key="project.id", index=True)
+    # Kiracı: iş başka bir iş parçacığında çalışır, bağlam değişkeni oraya taşınmaz — kaydın
+    # kendisiyle taşınır ve işçi onu `tenancy.use_company` ile yeniden kurar.
+    company_slug: str = ""
+    kind: str = ""                   # "upload" gibi iş türü (jobs.register ile kaydedilir)
+    label: str = ""                  # kullanıcıya gösterilen ad (dosya adı)
+    status: str = "kuyrukta"         # kuyrukta | calisiyor | bitti | hata
+    progress: float = 0.0            # %
+    message: str = ""                # "3/6 pafta analiz edildi"
+    payload: dict[str, Any] = Field(default_factory=dict, sa_column=Column("payload", JSON))
+    result: dict[str, Any] = Field(default_factory=dict, sa_column=Column("result", JSON))
+    error: str = ""                  # kullanıcıya tek cümle
+    detail: str = ""                 # yığın izi (kayıt için)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class QuantityOverride(SQLModel, table=True):

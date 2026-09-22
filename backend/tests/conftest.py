@@ -80,6 +80,14 @@ def client(tmp_path, monkeypatch):
     importlib.reload(dbmod)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     dbmod.engine = engine
+    from app import jobs as jobsmod
+    # Testte arka plan iş parçacığı çalışmaz: işler `jobs.run_pending()` ile denetimli çalışır,
+    # yoksa iddialar yarış durumuna girer ("calisiyor" mı "bitti" mi belli olmaz).
+    jobsmod.AUTO_START = False
+    from app.api import drawings as drawingsmod
+    # Testler yüklemeyi senkron çalıştırır: 52 çağrı yerini iş takibiyle doldurmak testleri
+    # okunmaz yapardı. Arka plan yolu `test_autonomous_upload` ve `test_saas` ile ayrıca sınanır.
+    drawingsmod.BACKGROUND_UPLOAD = False
     from app import main as mainmod
     importlib.reload(mainmod)
     from app import models  # noqa: F401

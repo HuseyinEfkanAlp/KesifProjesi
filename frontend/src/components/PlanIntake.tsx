@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Api, type SheetPick } from '../api/client'
-import { DISCIPLINES, isIntakeResult, isSheetSelection, type Discipline, type DisciplineChoice, type Drawing, type SheetInfo, type SheetSelection } from '../types'
+import { DISCIPLINES, isIntakeResult, isJobStarted, isSheetSelection, type Discipline, type DisciplineChoice, type Drawing, type SheetInfo, type SheetSelection } from '../types'
 import { planTypeGroups, usePlanTypes } from '../hooks/usePlanTypes'
 
 /** Bir paftanın seçim durumu (çok paftalı dosya) */
@@ -67,6 +67,27 @@ export default function PlanIntake({ projectId, storeyHeight, onChanged, compact
     setBusy(`${file.name} yükleniyor / analiz ediliyor...`)
     Api.drawings.upload(projectId, file, { unitOverride: unit })
       .then((res) => {
+        if (isJobStarted(res)) {
+          // Büyük dosya: kırpma + analiz arka planda. Alım raporu HEMEN görünür, çizimler iş bitince.
+          addLog({ file: file.name, kind: 'ok', text: res.intake.note })
+          for (const u of res.intake.unknown) {
+            addLog({ file: file.name, kind: 'warn',
+                     text: `“${u.title}” ${u.reason} (${u.entity_count.toLocaleString('tr')} nesne) — metraja girmedi` })
+          }
+          return Api.jobs.wait(res.job.id, (j) => {
+            setBusy(`${file.name}: ${j.message || 'analiz ediliyor'}${j.seconds ? ` (${Math.round(j.seconds)} sn)` : ''}`)
+          }).then((j) => {
+            if (j.status === 'hata') {
+              addLog({ file: file.name, kind: 'error', text: j.error || 'analiz başarısız' })
+              return
+            }
+            for (const d of j.result.drawings ?? []) {
+              addLog({ file: file.name, kind: d.plan_type ? 'ok' : 'warn',
+                       text: `${d.label} → ${describe(d)} · ${DISCIPLINES[d.discipline]} · ${d.element_count} eleman` })
+            }
+            changed.current()
+          })
+        }
         if (isIntakeResult(res)) {
           // Otonom akış: pafta seçimi sorulmadı, sistem seçti. Seçilmeyen her pafta gerekçesiyle günlüğe düşer.
           addLog({ file: file.name, kind: 'ok', text: res.intake.note })

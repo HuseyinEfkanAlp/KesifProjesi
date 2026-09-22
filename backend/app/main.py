@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import catalog, drawings, pricebook, prices, projects, quantities, reports, review
+from .api import catalog, drawings, jobs, pricebook, prices, projects, quantities, reports, review
 from .db import init_db
 
 
@@ -26,8 +26,19 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Keşif - DXF Metraj ve Maliyet", version="0.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+
+@app.middleware("http")
+async def kiraci_baglami(request, call_next):
+    """İsteğin şirketini bağlam değişkenine koyar; `get_project` süzgeci oradan okur.
+
+    Uca parametre olarak geçirmek yerine bağlamda taşınır: 35 uçtan birine eklemeyi unutmak,
+    tam olarak veri sızıntısının olacağı yerdir."""
+    from .tenancy import COMPANY_HEADER, set_slug
+    set_slug(request.headers.get(COMPANY_HEADER, ""))
+    return await call_next(request)
+
 for r in (projects.router, drawings.router, quantities.router, prices.router, pricebook.router, reports.router,
-          catalog.router, review.router):
+          catalog.router, review.router, jobs.router):
     app.include_router(r)
 
 

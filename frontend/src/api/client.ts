@@ -1,4 +1,4 @@
-import type { QualityReport, Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, LayerCheck, MaterialIn, MaterialOptions, MaterialPrice, PlanCheck, PlanLevel, PlanType, PozBook, PozImportResult, PriceBook, PriceBookIn, PriceIn, PriceItem, Project, ProjectSystems, Supplier, SupplierIn, QuantitiesResponse, QuantitySummary, UploadResult, SpaceBreakdown } from '../types'
+import type { QualityReport, Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, JobRow, LayerCheck, MaterialIn, MaterialOptions, MaterialPrice, PlanCheck, PlanLevel, PlanType, PozBook, PozImportResult, PriceBook, PriceBookIn, PriceIn, PriceItem, Project, ProjectSystems, Supplier, SupplierIn, QuantitiesResponse, QuantitySummary, UploadResult, SpaceBreakdown } from '../types'
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
@@ -120,6 +120,20 @@ export const Api = {
   elements: {
     patch: (id: number, body: Partial<Element>) => request<Element>(`/api/elements/${id}`, { method: 'PATCH', body: json(body) }),
     remove: (id: number) => request<void>(`/api/elements/${id}`, { method: 'DELETE' }),
+  },
+  jobs: {
+    get: (id: number) => request<JobRow>(`/api/jobs/${id}`),
+    list: (pid: number, active = false) =>
+      request<JobRow[]>(`/api/projects/${pid}/jobs${active ? '?active=true' : ''}`),
+    /** İş bitene kadar aralıklı sorar. Uzun analizde (dakikalar) tek uzun istek yerine kısa sorgular. */
+    wait: async (id: number, onProgress?: (j: JobRow) => void, everyMs = 1500): Promise<JobRow> => {
+      for (;;) {
+        const j = await request<JobRow>(`/api/jobs/${id}`)
+        onProgress?.(j)
+        if (j.status === 'bitti' || j.status === 'hata') return j
+        await new Promise((r) => setTimeout(r, everyMs))
+      }
+    },
   },
   quantities: (pid: number) => request<QuantitiesResponse>(`/api/projects/${pid}/quantities`),
   /** Metraj kontrolü: keşif satırını onaylama / reddetme / elle düzeltme */

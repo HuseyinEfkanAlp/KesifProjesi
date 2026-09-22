@@ -27,6 +27,8 @@ from ..planset import PLAN_TYPE_BY_CODE, resolve_plan
 from ..quantity.grouping import annotate
 from ..services import (analyze_and_store, apply_storey_counts, boq_payload, detect_params, drawing_boq,
                         load_catalog, recompute_derived, refresh_wall_areas)
+from ..jobs import enqueue, job_out, progress, register
+from ..tenancy import get_slug
 from .projects import get_project
 
 router = APIRouter(prefix="/api", tags=["drawings"])
@@ -327,7 +329,7 @@ def _source_out(src: Path, scan: SheetScan) -> dict:
 def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = Form(""),
                          storey_count: int = Form(1), unit_override: str | None = Form(None),
                          discipline: str = Form(AUTO_DISCIPLINE), plan_type: str = Form(""),
-                         auto: bool = Form(True),
+                         auto: bool = Form(True), background: bool | None = Form(None),
                          session: Session = Depends(get_session)):
     """DXF / DWG yükler ve analiz eder. Kullanıcıya pafta seçimi SORULMAZ.
 
@@ -390,14 +392,35 @@ def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = F
         picks, rapor = auto_pick_sheets(scan)
         if not picks:
             raise HTTPException(400, "Dosyada ölçülebilir plan bulunamadı: " + rapor.note)
-        secimler = [SheetPick(index=p["index"], discipline=p["discipline"] or discipline,
-                              plan_type=p["plan_type"] or None, storey_count=storey_count) for p in picks]
-        created = ingest_sheets(project, src, scan, secimler, session, file_label,
-                                unit_override or None, discipline, plan_type or None)
-        return {"drawings": [drawing_out(d, session) for d in created], "intake": rapor.to_dict()}
+        # Kırpma + analiz dakikalar sürüyor (177 MB'lık dosyada 6 dakika); istek içinde beklenmez.
+        # İş kaydı açılır ve hemen dönülür; istemci /api/jobs/{id} ile ilerlemeyi okur.
+        if not (BACKGROUND_UPLOAD if background is None else background):
+            secimler = [SheetPick(index=x["index"], discipline=x["discipline"] or discipline,
+                                  plan_type=x["plan_type"] or None, storey_count=storey_count)
+                        for x in picks]
+            created = ingest_sheets(project, src, scan, secimler, session, file_label,
+                                    unit_override or None, discipline, plan_type or None)
+            return {"drawings": [drawing_out(d, session) for d in created], "intake": rapor.to_dict()}
+        job = enqueue(session, project.id, "upload",
+                      payload={"src": str(src), "file_label": file_label, "picks": picks,
+                               "unit_override": unit_override or None, "discipline": discipline,
+                               "plan_type": plan_type or None, "storey_count": storey_count,
+                               "intake": rapor.to_dict()},
+                      label=file_label, company_slug=get_slug())
+        return JSONResponse(status_code=202, content={"job": job_out(job), "intake": rapor.to_dict()})
     dest = UPLOAD_DIR / f"{project_id}_{token[:8]}_{safe}"
     src.rename(dest)
     discipline, plan_type = _resolve(discipline, plan_type, [label, Path(fname).stem, *scan.titles], scan.layers)
+    if BACKGROUND_UPLOAD if background is None else background:
+        # Tek pafta da uzun sürebilir: gerçek aydınlatma planı (7 MB, 29 bin nesne) 24 saniye.
+        job = enqueue(session, project.id, "analyze",
+                      payload={"dest": str(dest), "file_label": file_label,
+                               "label": label or Path(fname).stem, "storey_count": storey_count,
+                               "unit_override": unit_override or None,
+                               "discipline": discipline, "plan_type": plan_type,
+                               "titleblock": scan.titleblock.to_dict()},
+                      label=file_label, company_slug=get_slug())
+        return JSONResponse(status_code=202, content={"job": job_out(job)})
     d = _create_drawing(project, dest, file_label, label or Path(fname).stem, storey_count,
                         unit_override or None, session, discipline=discipline, plan_type=plan_type)
     applied = apply_titleblock(project, scan.titleblock, session)
@@ -490,6 +513,62 @@ def ingest_sheets(project: Project, src: Path, scan: SheetScan, picks: list, ses
     for d in created:
         session.refresh(d)
     return created
+
+
+# Yükleme varsayılan olarak ARKA PLANDA analiz eder: 7 MB'lık bir aydınlatma planı bile istek
+# içinde 24 saniye sürüyor ve bu bir web kullanıcısı için "site dondu" demektir. Boyut ayırt edici
+# değil — süreyi belirleyen nesne sayısı ve hizalama araması. Senkron çalışma isteğe bağlı kalır
+# (betik / toplu işlem ve testler): `background=false` ya da bu bayrak.
+BACKGROUND_UPLOAD = True
+
+
+def _run_upload(session: Session, job) -> dict:
+    """İş kuyruğundaki çok paftalı yükleme: pafta kırpılır, analiz edilir, çizimler eklenir.
+
+    Kendi oturumunda çalışır (jobs.py açar). Hata olursa iş "hata" durumuna düşer ve sebebi
+    kullanıcıya tek cümleyle gösterilir — dosya sessizce kaybolmaz."""
+    from ..api.projects import get_project as _get
+    d = job.payload or {}
+    src = Path(d["src"])
+    if not src.exists():
+        raise RuntimeError("Yüklenen dosya bulunamadı (geçici kaynak silinmiş olabilir); yeniden yükleyin.")
+    project = _get(job.project_id, session)
+    scan = SheetScan.load(src) or scan_sheets(src)
+    secimler = [SheetPick(index=x["index"], discipline=x["discipline"] or d["discipline"],
+                          plan_type=x["plan_type"] or None, storey_count=d.get("storey_count") or 1)
+                for x in d["picks"]]
+    progress(session, job.id, 5.0, f"{len(secimler)} pafta kırpılıp analiz edilecek")
+    created = ingest_sheets(project, src, scan, secimler, session, d["file_label"],
+                            d.get("unit_override"), d["discipline"], d.get("plan_type"))
+    return {"drawings": [drawing_out(x, session) for x in created], "intake": d.get("intake") or {}}
+
+
+def _run_analyze(session: Session, job) -> dict:
+    """Tek paftalı yüklemenin analizi (kuyrukta)."""
+    from ..api.projects import get_project as _get
+    from ..parser.titleblock import TitleBlock
+    d = job.payload or {}
+    dest = Path(d["dest"])
+    if not dest.exists():
+        raise RuntimeError("Yüklenen dosya bulunamadı; yeniden yükleyin.")
+    project = _get(job.project_id, session)
+    progress(session, job.id, 10.0, "çizim analiz ediliyor")
+    dr = _create_drawing(project, dest, d["file_label"], d["label"], d.get("storey_count") or 1,
+                         d.get("unit_override"), session, discipline=d["discipline"], plan_type=d["plan_type"])
+    applied = apply_titleblock(project, TitleBlock.from_dict(d.get("titleblock")), session)
+    if applied:
+        dr.warnings = [f"Dosyanın antedinden okundu ve boş proje parametrelerine yazıldı: "
+                       f"{', '.join(applied)}."] + list(dr.warnings)
+        session.add(dr)
+        session.commit()
+    _refresh_openings(project, session)
+    apply_storey_counts(project, session)
+    session.refresh(dr)
+    return {"drawings": [drawing_out(dr, session)]}
+
+
+register("upload", _run_upload)
+register("analyze", _run_analyze)
 
 
 @router.post("/projects/{project_id}/drawings/from-source", status_code=201)

@@ -318,7 +318,30 @@ export interface IntakeResult {
   }
 }
 
-export type UploadResult = Drawing | SheetSelection | IntakeResult
+/** Arka plan işi (backend: app/jobs.py). Büyük dosyada kırpma + analiz istek içinde beklenmez. */
+export interface JobRow {
+  id: number
+  project_id: number | null
+  kind: string
+  label: string
+  status: 'kuyrukta' | 'calisiyor' | 'bitti' | 'hata'
+  progress: number
+  message: string
+  error: string
+  result: { drawings?: Drawing[]; intake?: IntakeResult['intake'] }
+  seconds: number | null
+}
+
+/** Yükleme iş açtı: alım raporu hemen döner, çizimler iş bitince gelir. */
+export interface JobStarted {
+  job: JobRow
+  intake: IntakeResult['intake']
+}
+
+export type UploadResult = Drawing | SheetSelection | IntakeResult | JobStarted
+
+export const isJobStarted = (r: UploadResult): r is JobStarted =>
+  !!(r as JobStarted).job && typeof (r as JobStarted).job.id === 'number' 
 
 export const isSheetSelection = (r: UploadResult): r is SheetSelection =>
   (r as SheetSelection).needs_sheet_selection === true
