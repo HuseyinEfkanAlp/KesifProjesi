@@ -34,8 +34,12 @@ export default function SpacesPanel({ projectId, refreshKey }: Props) {
   }
 
   const groups = data.spaces.filter((s) => s.kind === 'grup')
-  const loose = data.spaces.filter((s) => s.kind !== 'grup' && !s.parent)
   const childrenOf = (g: SpaceRow) => data.spaces.filter((s) => s.parent === g.key)
+  /** Mahaller geldikleri paftaya (kata) göre gruplanır: "hangi katta hangi mahal" görünsün */
+  const katlar = Array.from(data.spaces.reduce((m, s) => {
+    m.set(s.drawing, [...(m.get(s.drawing) ?? []), s])
+    return m
+  }, new Map<string, SpaceRow[]>()).entries())
 
   /** Kalemleri iş grubuna göre ayırır: Kaba / İnce / Mekanik / Elektrik / Altyapı */
   const byGroup = (rows: { work_group_label?: string; work_group?: string }[]) => {
@@ -118,18 +122,20 @@ export default function SpacesPanel({ projectId, refreshKey }: Props) {
         </div>
       )}
       {data.warnings.map((w, i) => <div key={i} className="muted hint">⚠ {w}</div>)}
-      {groups.map((g) => (
-        <div key={g.key} style={{ marginTop: 10 }}>
-          {spaceBlock(g, true)}
-          <div style={{ marginLeft: 18 }}>{childrenOf(g).map((c) => spaceBlock(c))}</div>
+      {katlar.map(([kat, liste]) => (
+        <div key={kat} style={{ marginTop: 14 }}>
+          <div style={{ borderBottom: '2px solid #dce3ee', paddingBottom: 2, marginBottom: 4 }}>
+            <b>{kat}</b> <span className="muted">({liste.length} mahal · {fmt(liste.reduce((t, s) => t + s.area, 0))} m²)</span>
+          </div>
+          {liste.filter((s) => s.kind === 'grup').map((g) => (
+            <div key={g.key}>
+              {spaceBlock(g, true)}
+              <div style={{ marginLeft: 18 }}>{childrenOf(g).map((c) => spaceBlock(c))}</div>
+            </div>
+          ))}
+          {liste.filter((s) => s.kind !== 'grup' && !s.parent).map((s) => spaceBlock(s))}
         </div>
       ))}
-      {loose.length > 0 && (
-        <div style={{ marginTop: 10 }}>
-          <b className="muted">Bağımsız bölüme girmeyen mahaller</b>
-          {loose.map((s) => spaceBlock(s))}
-        </div>
-      )}
       {data.unassigned.length > 0 && (
         <div className="facade-info" style={{ marginTop: 10 }}>
           <b>Mahale atanamayan kalemler</b> <span className="muted">({data.unassigned_reason})</span>

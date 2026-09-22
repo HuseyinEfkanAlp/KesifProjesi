@@ -35,6 +35,8 @@ WALL_MATERIALS: dict[str, tuple[str, list[str]]] = {
     "tugla": ("Tuğla", [r"TU[GĞ]LA", r"BRICK", r"HARMAN"]),
     "bims": ("Bims blok", [r"B[Iİ]MS", r"PONZA"]),
     "alcipan": ("Alçıpan bölme", [r"AL[CÇ][Iİ]PAN", r"GYPSUM", r"DRYWALL", r"BÖLME\s*DUVAR", r"BOLME"]),
+    "boardex": ("Boardex / çimento esaslı levha", [r"BOARDEX", r"AQUAPANEL", r"[CÇ][Iİ]MENTO\s*ESASLI\s*LEVHA",
+                                                 r"F[Iİ]BER\s*[CÇ][Iİ]MENTO"]),
     "beton": ("Betonarme duvar", [r"BETON", r"CONCRETE", r"B\.?A\.?\s*DUVAR"]),
     "tas": ("Taş duvar", [r"TA[SŞ]\s*DUVAR", r"STONE"]),
 }

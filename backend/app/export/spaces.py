@@ -44,16 +44,17 @@ def build_spaces_workbook(project: dict, breakdown: dict) -> bytes:
     ws2 = wb.create_sheet("Mahal metrajı")
     ws2["A1"] = f"Proje: {project.get('name', '')} — mahal bazında keşif"
     ws2["A1"].font = Font(bold=True, size=13)
-    _basliklar(ws2, 3, ["Mahal kodu", "Mahal", "Alan (m²)", "İş grubu", "Disiplin", "Kalem",
+    _basliklar(ws2, 3, ["Kat / Pafta", "Mahal kodu", "Mahal", "Alan (m²)", "İş grubu", "Disiplin", "Kalem",
                         "Birim", "Miktar", "Kaynak", "Not"])
     for sp in sorted(spaces, key=lambda s: (s.get("drawing") or "", -float(s.get("area") or 0))):
         for it in (sp.get("items") or []) + (sp.get("derived") or []):
-            ws2.append([sp.get("code") or "", sp.get("name") or "", round(float(sp.get("area") or 0), 2),
+            ws2.append([sp.get("drawing") or "", sp.get("code") or "", sp.get("name") or "",
+                        round(float(sp.get("area") or 0), 2),
                         it.get("work_group_label") or "", it.get("discipline_label") or "", it.get("label") or "",
                         it.get("unit") or "", it.get("quantity") or 0,
                         "türetildi" if it.get("derived") else "çizimden ölçüldü",
                         it.get("note") or "; ".join(it.get("notes") or [])])
-    for c, w in zip("ABCDEFGHIJ", (14, 24, 11, 12, 20, 34, 8, 12, 18, 60)):
+    for c, w in zip("ABCDEFGHIJK", (30, 14, 24, 11, 12, 20, 34, 8, 12, 18, 60)):
         ws2.column_dimensions[c].width = w
 
     ws3 = wb.create_sheet("Mahale girmeyen")

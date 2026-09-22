@@ -117,8 +117,11 @@ DEFAULT_PROFILE: dict[str, list[str]] = {
     "foundation": [r"TEMEL", r"RADYE", r"FOUND", r"FOOTING", r"RAFT", r"S[-_]?FND"],
     "hole": [r"[SŞ]AFT", r"SHAFT", r"BO[SŞ]LUK", r"OPENING", r"VOID"],
     # mimari
-    "wall": [r"DUVAR", r"\bWALL", r"A[-_]?WALL", r"YTONG", r"GAZBETON", r"TU[GĞ]LA", r"B[Iİ]MS", r"AL[CÇ][Iİ]PAN",
-             r"DRYWALL", r"PARTITION", r"BÖLME", r"BOLME"],
+    # "WALL" kelime sınırıyla aranmaz: gerçek projelerde "brn_wall_constr", "A_WALL_INT" gibi
+    # alt çizgiyle bitişik yazılır ve \b alt çizgiden sonra sınır görmez — katman tanınmayıp
+    # duvarların tamamı metrajdışı kalıyordu. Önceki harf yoksa (DRYWALL değilse) duvar sayılır.
+    "wall": [r"DUVAR", r"(?<![A-Za-z])WALL", r"YTONG", r"GAZBETON", r"TU[GĞ]LA", r"B[Iİ]MS", r"AL[CÇ][Iİ]PAN",
+             r"DRYWALL", r"PARTITION", r"BÖLME", r"BOLME", r"BOARDEX", r"AQUAPANEL"],
     "door": [r"KAPI", r"(?<![A-Z])DOOR", r"A[-_]?DOOR", r"KAPILAR"],
     "window": [r"PENCERE", r"(?<![A-Z])WINDOW", r"A[-_]?WIND", r"A[-_]?GLAZ", r"DO[GĞ]RAMA", r"CAM\b"],
     # elektrik

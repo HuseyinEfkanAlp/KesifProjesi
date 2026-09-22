@@ -313,3 +313,22 @@ def test_turkish_electrical_layer_abbreviations():
     assert p.classify("E-KUV-LNY-HAT-AYD", "electrical") == "cable"    # linye: armatür değil hat
     assert p.classify("E-KUV-LNY-KOM-AYD", "electrical") == "cable"
     assert p.classify("E-SRT-AYD", "electrical") == "cable"            # sorti
+
+
+def test_wall_layer_underscore_naming():
+    """Gerçek projelerde duvar katmanı "brn_wall_constr" gibi alt çizgiyle yazılır.
+
+    \bWALL deseni alt çizgiden sonra sınır görmediği için bu katmanlar tanınmıyordu ve
+    duvarların tamamı metraj dışında kalıyordu (Yat Kulübü zemin katında 83 m duvar)."""
+    from app.parser.layer_profile import LayerProfile
+    from app.parser.labels_ext import wall_material
+    p = LayerProfile()
+    for ad in ("brn_wall_constr", "brn_wall_20", "A_WALL_INT", "brn_duvar_gazbeton", "ALÇIPAN BÖLME DUVAR"):
+        assert p.classify(ad, "architectural") == "wall", ad
+    assert p.classify("FIREWALL", "architectural") is None        # kelime içinde geçen "wall" duvar değil
+    # malzeme katman adından okunur: mahalleri ayıran şeyin ne olduğu planda yazılıdır
+    assert wall_material("brn_duvar_gazbeton") == "ytong"
+    assert wall_material("brn_wall gypsum") == "alcipan"
+    assert wall_material("tugla") == "tugla"
+    assert wall_material("BOARDEX BÖLME") == "boardex"
+    assert wall_material("brn_wall_constr") is None               # yazmıyorsa uydurulmaz

@@ -852,8 +852,12 @@ COUNT_TYPES = {"fixture", "dograma", "door", "window"}
 
 
 def _space_polys(spaces: list[dict]):
+    """Mahal çokgenleri. İç içe mahallerde üsttekiİN geometrisinden alttakiler DÜŞÜLÜR: spor salonunun
+    içindeki havuz deposu ayrı mahaldir, alanı iki kez sayılmamalı. Üst mahal listede kalır — eskiden
+    "yaprak olmayan" mahaller atamadan tamamen dışlanıyor ve 1.200 m²'lik salon hiç kalem almıyordu."""
     from shapely.geometry import Polygon
-    out = []
+    from shapely.ops import unary_union
+    ham = []
     for sp in spaces:
         pts = sp.get("points") or []
         if len(pts) < 3:
@@ -863,9 +867,21 @@ def _space_polys(spaces: list[dict]):
             if not poly.is_valid:
                 poly = poly.buffer(0)
             if poly.area > 0:
-                out.append((sp, poly))
+                ham.append((sp, poly))
         except Exception:
             continue
+    out = []
+    for sp, g in ham:
+        icindekiler = [h for sp2, h in ham if sp2 is not sp and h.area < g.area - 1e-9
+                       and g.contains(h.representative_point())]
+        if icindekiler:
+            try:
+                net = g.difference(unary_union(icindekiler))
+                if not net.is_empty and net.area > 0.5:
+                    g = net
+            except Exception:
+                pass
+        out.append((sp, g))
     return out
 
 
@@ -875,7 +891,9 @@ def _shares(el, polys, leaf_only: bool = True, offset: tuple[float, float] = (0.
     from shapely.geometry import LineString, Point as SPoint, Polygon
     dx, dy = offset
     pts = [(p[0] + dx, p[1] + dy) for p in (el.points or []) if len(p) >= 2]
-    cand = [(sp, poly) for sp, poly in polys if not leaf_only or not sp.get("children")]
+    # Tüm mahaller adaydır: "en küçük içeren mahal" kuralı zaten doğru mahali seçer ve çokgenler
+    # birbirinden düşülmüş olduğu için alan çift sayılmaz.
+    cand = list(polys)
     if not cand or not pts:
         return {}
     etype = el.etype or ""
@@ -992,6 +1010,7 @@ def space_derived(project: Project, sp: dict, catalog: Catalog, params: dict, dr
 ALIGN_MIN_HIT = 0.05        # elemanların en az bu oranı mahale düşmeli (bir dosyada birden çok kat
                             # olabilir: her katın payı küçüktür; eşik düşük ama eşleşme doğrulanır)
 ALIGN_MIN_COUNT = 3         # ve en az bu kadar eleman
+ALIGN_BOX_MARGIN = 5.0      # m — hizalama kutusuna bu kadar pay verilir (kutu isabet eden noktalardan çıkar)
 NOKTA_MAX_AREA = 4.0        # m² — bundan küçük ve uzunluğu olmayan eleman "nokta" sayılır (armatür, priz,
                             # kamera, menfez): hizalama aramaşı yalnız bunları kullanır
 
@@ -1071,21 +1090,32 @@ def _point_clusters(pts: list[tuple[float, float]], gap: float) -> list[list[tup
     return [c for c in out if len(c) >= 5]
 
 
-def _hit_count(pts, tree, polys, dx: float, dy: float) -> int:
-    """Bu kaymayla kaç nokta bir mahalin içine düşüyor."""
+def _hit_count(pts, tree, polys, dx: float, dy: float, kutu: bool = False):
+    """Bu kaymayla kaç nokta bir mahalin içine düşüyor. kutu=True ise isabet eden noktaların
+    (ÇİZİMDEKİ özgün koordinatlarıyla) sınır kutusunu da döndürür."""
     from shapely.geometry import Point as SPoint
     n = 0
+    xs: list[float] = []
+    ys: list[float] = []
     for x, y in pts:
         p = SPoint(x + dx, y + dy)
         for i in tree.query(p):
             if polys[int(i)][1].contains(p):
                 n += 1
+                if kutu:
+                    xs.append(x)
+                    ys.append(y)
                 break
-    return n
+    if not kutu:
+        return n
+    return n, ((min(xs), min(ys), max(xs), max(ys)) if xs else None)
 
 
-def _refine(pts, tree, polys, seed: tuple[float, float], adim: float = 8.0) -> tuple[tuple[float, float], int]:
-    """Aday kaymayı yerel aramayla keskinleştirir (kaba adımdan ince adıma tepe tırmanışı)."""
+def _refine(pts, tree, polys, seed: tuple[float, float], adim: float = 32.0) -> tuple[tuple[float, float], int]:
+    """Aday kaymayı yerel aramayla keskinleştirir (kaba adımdan ince adıma tepe tırmanışı).
+
+    Başlangıç adımı büyük tutulur: tohum (küme merkezi farkı) gerçek kaymadan on metrelerce uzak
+    olabiliyor ve küçük adımla yola çıkınca arama yerel tepeye takılıp yanlış kata oturuyordu."""
     en_iyi, skor = seed, _hit_count(pts, tree, polys, *seed)
     while adim >= 0.25:
         gelisti = False
@@ -1114,7 +1144,7 @@ def align_drawing(target: Drawing, source: Drawing, elements, polys) -> dict:
              and (getattr(e, "area", 0) or 0) <= NOKTA_MAX_AREA]
     kaynak_els = nokta or [e for e in elements if e.points]
     pts = [(e.points[0][0], e.points[0][1]) for e in kaynak_els]
-    out = {"dx": 0.0, "dy": 0.0, "hit": 0, "total": len(pts), "source": ""}
+    out = {"dx": 0.0, "dy": 0.0, "hit": 0, "total": len(pts), "source": "", "bbox": None}
     if not pts or not polys:
         return out
     if len(pts) > 1500:
@@ -1127,15 +1157,22 @@ def align_drawing(target: Drawing, source: Drawing, elements, polys) -> dict:
     adaylar: list[tuple[tuple[float, float], str]] = [((0.0, 0.0), "aynı koordinat sistemi")]
     for off in dict.fromkeys(_label_offsets(target, source)):
         adaylar.append((off, "mahal yazılarından"))
-    for kume in _point_clusters(pts, max(genislik, 20.0)):
-        cx = sum(x for x, _ in kume) / len(kume)
-        cy = sum(y for _, y in kume) / len(kume)
-        adaylar.append(((round(mx - cx, 2), round(my - cy, 2)), "çizim konumlarından aranarak"))
+    # Tohumlar birden çok ölçekte kümelenerek üretilir: tek bir boşluk eşiği, yan yana duran kat
+    # planlarını kimi dosyada birleştirip kimi dosyada parçalıyor. Zengin tohum = yerel tepeye takılmamak.
+    gorulen: set[tuple[float, float]] = set()
+    for bosluk in (20.0, 60.0, max(genislik, 20.0)):
+        for kume in _point_clusters(pts, bosluk):
+            cx = sum(x for x, _ in kume) / len(kume)
+            cy = sum(y for _, y in kume) / len(kume)
+            aday = (round(mx - cx, 2), round(my - cy, 2))
+            if aday not in gorulen:
+                gorulen.add(aday)
+                adaylar.append((aday, "çizim konumlarından aranarak"))
     for (dx, dy), kaynak in adaylar:
         (ndx, ndy), _ = _refine(kaba, tree, polys, (dx, dy))
-        hit = _hit_count(pts, tree, polys, ndx, ndy)
+        hit, kutu = _hit_count(pts, tree, polys, ndx, ndy, kutu=True)
         if hit > out["hit"]:
-            out = {"dx": ndx, "dy": ndy, "hit": hit, "total": len(pts), "source": kaynak}
+            out = {"dx": ndx, "dy": ndy, "hit": hit, "total": len(pts), "source": kaynak, "bbox": kutu}
     return out
 
 
@@ -1214,14 +1251,17 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
             # Bir tesisat dosyasında kat planları yan yana durabilir (aydinlatma planının bodrum / zemin /
             # çatı katı birlikte çizilmesi gibi): HER kat için ayrı kayma aranır, eleman hangi katın
             # mahaline düşüyorsa oraya yazılır.
-            kabul: list[tuple[Drawing, tuple[float, float]]] = []
+            # (pafta, kayma, hizalama kutusu): kutu, o kaymayla mahale düşen noktaların çizimdeki
+            # sınırıdır. Bir kat, başka katın bölgesindeki elemanı kapmasın diye atama bu kutuyla sınırlanır:
+            # büyük bir mahal (1.200 m² spor salonu) yanlış kaymayla komşu katın armatürünü içine alabiliyor.
+            kabul: list[tuple[Drawing, tuple[float, float], tuple | None]] = []
             en_iyi = None
             for src in sources:
                 a = align_drawing(d, src, els, polys_by_src[src.id])
                 if en_iyi is None or a["hit"] > en_iyi["hit"]:
                     en_iyi = a
                 if a["hit"] >= ALIGN_MIN_COUNT and a["hit"] >= ALIGN_MIN_HIT * max(a["total"], 1):
-                    kabul.append((src, (a["dx"], a["dy"])))
+                    kabul.append((src, (a["dx"], a["dy"]), a.get("bbox")))
                     nasil = ("aynı koordinatta" if (a["dx"], a["dy"]) == (0.0, 0.0)
                              else f"({a['dx']:+.1f}, {a['dy']:+.1f}) m kaydırılarak")
                     hizalama[(d.id, src.id)] = {"drawing": d.label or d.filename, "to": src.label or src.filename,
@@ -1238,7 +1278,12 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
                 continue
             for e in els:
                 kondu = False
-                for src, o in kabul:
+                for src, o, kutu in kabul:
+                    if kutu is not None and e.points:
+                        x, y = e.points[0][0], e.points[0][1]
+                        pay = ALIGN_BOX_MARGIN
+                        if not (kutu[0] - pay <= x <= kutu[2] + pay and kutu[1] - pay <= y <= kutu[3] + pay):
+                            continue        # bu eleman o katın bölgesinde değil
                     rapor = hizalama.get((d.id, src.id))
                     if rapor is not None:
                         rapor["total"] += 1

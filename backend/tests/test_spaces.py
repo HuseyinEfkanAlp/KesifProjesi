@@ -261,10 +261,12 @@ def test_spaces_xlsx(client, tmp_path):
     assert {r[1] for r in mahaller} == {"SALON", "HOL"}
     assert all(r[5] == "çizimden ölçüldü" for r in mahaller)          # sınır doğrulandı
     metraj = [[c.value for c in row] for row in wb["Mahal metrajı"].iter_rows(min_row=4)]
-    armatur = [r for r in metraj if r[1] == "SALON" and "armat" in (r[5] or "").lower()]
-    assert armatur and armatur[0][7] == 3                              # SALON: 3 armatür
-    assert any(r[1] == "HOL" and "Kamera" in (r[5] or "") and r[7] == 1 for r in metraj)
-    assert any("Şap" in (r[5] or "") and r[8] == "türetildi" for r in metraj)
+    # ilk kolon KAT (pafta): "hangi kattaki hangi mahalde ne var" tek satırda okunur
+    assert all("KAT PLANI" in (r[0] or "") for r in metraj)
+    armatur = [r for r in metraj if r[2] == "SALON" and "armat" in (r[6] or "").lower()]
+    assert armatur and armatur[0][8] == 3                              # SALON: 3 armatür
+    assert any(r[2] == "HOL" and "Kamera" in (r[6] or "") and r[8] == 1 for r in metraj)
+    assert any("Şap" in (r[6] or "") and r[9] == "türetildi" for r in metraj)
 
 
 def test_alignment_ignores_lines(client, tmp_path):
