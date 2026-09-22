@@ -101,3 +101,37 @@ def test_label_clustering_real_world(tmp_path):
     # aynı adlı ve aynı alanlı iki merdiven AYRI mahaldir: kodları farklı
     assert labs["L_Z_M01"].name == labs["L_Z_M02"].name == "MERDİVEN"
     assert labs["L_Z_M01"].area == labs["L_Z_M02"].area == 32.37
+
+
+def test_area_boundary_layer_offset(tmp_path):
+    """Mahal alan sınırı ayrı katmanda ve planın AYRI BİR KOPYASINDA çizilmiş olabilir.
+
+    (Yat Kulübü projesindeki gerçek durum: 'alan çizgisi' katmanındaki çokgenler, mahal
+    yazılarının 240 m altındaki alan hesabı kopyasında duruyor.) Alan eşleşmesinden kayma
+    bulunup çokgenler plana taşınır; alanlar yazıyı tutmazsa çokgen kullanılmaz."""
+    import ezdxf
+    from app.parser.loader import load_dxf
+    from app.parser.spaces import detect_spaces
+    doc = ezdxf.new("R2010"); doc.header["$INSUNITS"] = 6
+    for n in ("YAZI", "alan çizgisi"):
+        doc.layers.add(n)
+    msp = doc.modelspace()
+    DY = 240.0                                   # alan hesabı kopyasının kayması
+    odalar = [("RESTORAN", "L_Z_01", 0.0, 0.0, 20.0, 15.0),      # 300 m²
+              ("HOL", "L_Z_06", 22.0, 0.0, 10.0, 5.0),           # 50 m²
+              ("MUTFAK", "L_Z_12", 34.0, 0.0, 8.0, 5.0)]         # 40 m²
+    for ad, kod, x, y, w, h in odalar:
+        msp.add_lwpolyline([(x, y - DY), (x + w, y - DY), (x + w, y + h - DY), (x, y + h - DY)],
+                           close=True, dxfattribs={"layer": "alan çizgisi"})
+        cx, cy = x + w / 2, y + h / 2            # etiket odanın ortasında, ASIL planda
+        msp.add_text(ad, dxfattribs={"layer": "YAZI", "height": 0.24}).set_placement((cx, cy + 0.6))
+        msp.add_text(kod, dxfattribs={"layer": "YAZI", "height": 0.24}).set_placement((cx - 0.9, cy))
+        msp.add_text(f"{w * h:.2f} m²", dxfattribs={"layer": "YAZI", "height": 0.24}).set_placement((cx, cy))
+    p = tmp_path / "alan.dxf"; doc.saveas(p)
+    spaces, warns = detect_spaces(load_dxf(str(p)), ["alan çizgisi"])
+    by = {s.code: s for s in spaces}
+    assert set(by) == {"L_Z_01", "L_Z_06", "L_Z_12"}
+    assert by["L_Z_01"].name == "RESTORAN" and by["L_Z_01"].area == pytest.approx(300.0, abs=0.5)
+    # sınır çizimden ölçüldü ve yazıdaki alanı doğruluyor
+    assert all(s.area_source == "drawing" for s in by.values())
+    assert any("alan çizgilerinden alındı" in w and "240" in w for w in warns)

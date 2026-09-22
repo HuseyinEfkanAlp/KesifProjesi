@@ -586,6 +586,25 @@ Mimari planda mahal sınırı ayrı çizilmez, **duvarlar** çizilir; mahaller o
 4. Mahal araması yalnız **mahal yazısı olan** paftada yapılır (`has_space_labels`): kalıp / donatı paftasında
    boşuna çokgen aranmaz. Sonuç `drawing.spaces` alanında saklanır.
 
+**Mahal sınırı önce “alan çizgisi”nden** (`spaces.area_boundary_faces`). Mimar mahal alanlarını hesaplamak için
+her mahalin sınırını ayrı bir katmana zaten çizer; bu çizim çoğu projede planın **ayrı bir kopyasında** durur
+(alan hesabı paftası), yani mahal yazılarıyla çakışmaz. Bu yüzden eşleştirme konumla değil **alanla** yapılır:
+
+1. Alanı bir mahal yazısını ±%1,5 tutan her kapalı çokgen aday eşleştir.
+2. Her aday için kayma = yazı konumu − çokgen merkezi; kaymalar 0,5 m ızgaraya yuvarlanıp oylanır.
+3. Kazanan kayma uygulanır ve **doğrulanır**: o kaymayla kaç yazı kendi çokgeninin içine düşüyor.
+   En az 3 eşleşme gerekir; sağlanmazsa bu kaynak hiç kullanılmaz.
+
+Alan çizgisi yoksa duvar ağından kapalı yüzlere düşülür. Her iki durumda da çokgen, mahal yazısındaki alanı
+±%12 tutmuyorsa **atılır** ve mahal yazıdaki alanıyla listede kalır (`area_source`: `drawing` / `label`):
+mahal listesi eksilmez, uydurma sınır üretilmez. Yazıyı içeren birden çok yüz varsa (mobilya / tefriş çizgisi de
+yazıyı içerebilir) **alanı tutan** seçilir.
+
+> Gerçek ölçüm (Yat Kulübü uygulama projesi, 177 MB, 6 pafta): zemin katta 19 mahal okundu,
+> **18'inin sınırı doğrulandı**; alan çizgileri plandan (+1,0, +239,5) m kaydırılarak hizalandı.
+> Aynı dosyada DXF başlığı birimi `mm` diyordu, yazı yükseklikleri `cm` dedi ve doğrusu cm çıktı —
+> birim uyarısına uyulmasaydı bütün metraj 10 kat yanlış olurdu.
+
 **Eleman → mahal dağıtımı** (`services.space_breakdown`, `GET /api/projects/{id}/spaces`) eleman türüne göre:
 
 | Eleman | Kural |

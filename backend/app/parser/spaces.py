@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from shapely.geometry import LineString, Point as SPoint, Polygon
 from shapely.ops import polygonize, unary_union
 import shapely
+import shapely.affinity
 
 from .detectors.base import _bridge_gaps
 from .loader import Drawing, Point
@@ -32,10 +33,12 @@ from .schedules import parse_room_area
 
 # Bir GRUP (bağımsız bölüm) adı: içindeki odalar onun mahalleridir.
 GROUP_WORDS = re.compile(r"DA[İI]RE|D[AÜU]KKAN|MA[GĞ]AZA|OF[İI]S|B[ÜU]RO|BLOK|V[İI]LLA|BA[GĞ]IMSIZ\s*B[ÖO]L[ÜU]M"
-                         r"|[İI][SŞ]\s*YER[İI]|KAT\s*\d|UN[İI]TE|[ÜU]N[İI]TE", re.IGNORECASE)
+                         r"|[İI][SŞ]\s*YER[İI]|UN[İI]TE|[ÜU]N[İI]TE", re.IGNORECASE)
 # Mahal adı sayılmayan yazılar: kotlar, poz / eleman adları, ölçüler, pafta işaretleri.
 _NOT_NAME = re.compile(r"^[+\-±]?\d[\d.,/xX*\s-]*$|^[SKPDTM]\d+([./]\d+)?$|KES[İI]T|DETAY|PLAN\b|[ÖO]L[ÇC]EK|KOT"
-                       r"|^\d+[.,]\d+$|^[A-Z]$", re.IGNORECASE)
+                       r"|^\d+[.,]\d+$|^[A-Z]$"
+                       # ölçü / poz notu mahal adı değildir: "30X(31 / 16.33)", "27X34", "1/100"
+                       r"|\d\s*[xX×]\s*[\d(]|\(\s*\d|\d\s*/\s*\d", re.IGNORECASE)
 MIN_SPACE_AREA = 1.0        # m² — bundan küçük yüz mahal sayılmaz
 AREA_TOLERANCE_PCT = 12.0   # ölçülen çokgen ile yazıdaki alan arasında kabul edilen azami fark (%)
 MIN_NAMELESS_AREA = 4.0     # m² — adı olmayan bu kadar büyük alan "adı yazılmamış mahal" diye bildirilir
@@ -183,10 +186,93 @@ def has_space_labels(drawing: Drawing) -> bool:
     return False
 
 
+# Mahal alan sınırı çokgenleri ("alan çizgisi" / "ALAN" gibi katmanlar): mimar mahal alanlarını hesaplamak
+# için her mahalin sınırını ayrı çizer. Çoğu projede bu çizim planın AYRI BİR KOPYASINDA durur (alan hesabı
+# paftası), yani konumları plandaki yazılarla çakışmaz. Bu yüzden önce ALAN eşleşmesiyle aday çiftler kurulur,
+# aday kaymaların en sık tekrar edeni gerçek kayma kabul edilir ve çokgenler plan koordinatına taşınır.
+AREA_MATCH_PCT = 1.5        # çokgen alanı mahal yazısını bu kadar tutuyorsa aynı mahaldir (%)
+SHIFT_GRID = 0.5            # m — aday kayma bu ızgaraya yuvarlanıp oylanır
+MIN_SHIFT_VOTES = 3         # bir kaymanın gerçek sayılması için gereken eşleşme sayısı
+
+
+def _closed_polygons(drawing: Drawing) -> list[tuple[Polygon, str]]:
+    out = []
+    for e in drawing.entities:
+        if e.kind not in ("polygon", "polyline") or len(e.points) < 3:
+            continue
+        try:
+            poly = Polygon([q[:2] for q in e.points])
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+        except Exception:
+            continue
+        if poly.geom_type == "Polygon" and poly.area >= MIN_SPACE_AREA:
+            out.append((poly, e.layer or ""))
+    return out
+
+
+def area_boundary_faces(drawing: Drawing, labels: list[Label]) -> tuple[list[Polygon], str]:
+    """Mahal alanını tutan çokgenleri plan koordinatına taşıyarak döndürür. (çokgenler, açıklama)"""
+    wanted = [l for l in labels if l.area > 0]
+    if not wanted:
+        return [], ""
+    polys = _closed_polygons(drawing)
+    if not polys:
+        return [], ""
+    pairs: list[tuple[Polygon, Label]] = []
+    for poly, _lay in polys:
+        for lab in wanted:
+            if abs(poly.area - lab.area) / lab.area * 100.0 <= AREA_MATCH_PCT:
+                pairs.append((poly, lab))
+    if not pairs:
+        return [], ""
+    # aday kayma: yazı zaten çokgenin içindeyse kayma yok; değilse yazı − çokgen merkezi
+    votes: dict[tuple[float, float], list[tuple[Polygon, Label]]] = {}
+    for poly, lab in pairs:
+        c = poly.centroid
+        dx, dy = lab.pt.x - c.x, lab.pt.y - c.y
+        key = (round(dx / SHIFT_GRID) * SHIFT_GRID, round(dy / SHIFT_GRID) * SHIFT_GRID)
+        votes.setdefault(key, []).append((poly, lab))
+    # kayma adayı tek tek sınanır: o kaymayla kaç yazı kendi çokgeninin içine düşüyor?
+    best, best_hit = None, 0
+    for (dx, dy) in list(votes) + [(0.0, 0.0)]:
+        hit = 0
+        for poly, lab in pairs:
+            if shapely.affinity.translate(poly, dx, dy).contains(lab.pt):
+                hit += 1
+        if hit > best_hit:
+            best, best_hit = (dx, dy), hit
+    if best is None or best_hit < MIN_SHIFT_VOTES:
+        return [], ""
+    dx, dy = best
+    moved, seen = [], set()
+    for poly, lab in pairs:
+        m = shapely.affinity.translate(poly, dx, dy)
+        if not m.contains(lab.pt):
+            continue
+        k = (round(m.centroid.x, 2), round(m.centroid.y, 2), round(m.area, 2))
+        if k in seen:
+            continue
+        seen.add(k)
+        moved.append(m)
+    if not moved:
+        return [], ""
+    nerede = "planın kendi üzerinde" if abs(dx) < 0.01 and abs(dy) < 0.01 else f"plandan ({dx:+.1f}, {dy:+.1f}) m kaydırılarak"
+    return moved, f"{len(moved)} mahal sınırı alan çizgilerinden alındı ({nerede}; alanlar mahal yazısıyla tutuyor)"
+
+
 def detect_spaces(drawing: Drawing, layers: list[str], snap_tol: float = DOOR_GAP) -> tuple[list[Space], list[str]]:
     """Mahalleri ve aralarındaki daire / mahal hiyerarşisini çıkarır. Döner: mahaller, uyarılar."""
     warnings: list[str] = []
-    faces = _faces(drawing, layers, snap_tol)
+    labels = _labels(drawing)
+    # 1) mahalin alan sınırı çizilmişse onu kullan: alanı mahal yazısını tutuyor, yani kendini doğrulamış olur
+    faces, note = area_boundary_faces(drawing, labels)
+    if note:
+        warnings.append(note)
+    # 2) yoksa duvar ağından kapalı yüzler (kapı boşlukları köprülenir)
+    wall_faces = _faces(drawing, layers, snap_tol)
+    known = [f.centroid for f in faces]
+    faces += [f for f in wall_faces if not any(f.contains(c) for c in known)]
     if not faces:
         return [], []
     faces.sort(key=lambda p: -p.area)
@@ -204,14 +290,19 @@ def detect_spaces(drawing: Drawing, layers: list[str], snap_tol: float = DOOR_GA
         if best is not None:
             spaces[best].children.append(i)
     # 2) yazılar: her yazı kendisini içeren EN KÜÇÜK alanın adı olur
-    for lab in _labels(drawing):
+    for lab in labels:
         name, label_area, pt, raw = lab.name, lab.area, lab.pt, lab.raw
-        hit, hit_area = None, None
-        for i, p in enumerate(faces):
-            if p.contains(pt) and (hit_area is None or p.area < hit_area):
-                hit, hit_area = i, p.area
-        if hit is None:
+        # yazıyı içeren yüzlerden ALANI TUTANI seç (mobilya / tefriş çizgisi de yazıyı içerebilir);
+        # yazıda alan yoksa en küçük yüz.
+        cont = [i for i, p in enumerate(faces) if p.contains(pt)]
+        if not cont:
             continue
+        if label_area > 0:
+            hit = min(cont, key=lambda i: abs(faces[i].area - label_area) / label_area)
+            if abs(faces[hit].area - label_area) / label_area * 100.0 > AREA_TOLERANCE_PCT:
+                hit = min(cont, key=lambda i: faces[i].area)
+        else:
+            hit = min(cont, key=lambda i: faces[i].area)
         sp = spaces[hit]
         group = bool(GROUP_WORDS.search(name))
         # daire sınırı çizili ama yazı içindeki odaya yazılmış: adı adsız üst alana taşı
@@ -253,7 +344,7 @@ def detect_spaces(drawing: Drawing, layers: list[str], snap_tol: float = DOOR_GA
 
     placed = [(sp.name, sp.label_area, sp.code) for sp in spaces if sp.name]
     nxt = len(spaces)
-    for lab in _labels(drawing):
+    for lab in labels:
         if not lab.name or lab.area <= 0 or any(dup(n, a, c, lab.name, lab.area, lab.code) for n, a, c in placed):
             continue
         placed.append((lab.name, lab.area, lab.code))
