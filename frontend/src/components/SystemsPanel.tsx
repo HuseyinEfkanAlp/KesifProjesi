@@ -62,20 +62,63 @@ export default function SystemsPanel({ projectId, refreshKey, onChanged }: Props
     </div>
   ) : null
   const ROOF_SRC = { measured: 'çizimden ölçüldü', manual: 'elle girildi', estimated: 'kat planı oturumundan tahmin', none: '' }
+  const ROOF_SYS_SRC: Record<string, string> = { evidence: 'kesit notlarından', zones: 'bölge bazlı, plandaki notlardan', manual: 'seçildi' }
   const roof = data.roof && data.roof.area > 0 ? (
     <div className="facade-info">
       <b>Çatı alanı:</b> {fmt(data.roof.area)} m² <span className="muted">({ROOF_SRC[data.roof.source]})</span>
-      {' · '}<b>Çatı sistemi:</b> {data.roof.system ? <>{data.roof.system} <span className="muted">({data.roof.system_source === 'evidence' ? 'kesit notlarından' : 'seçildi'})</span></> : <span className="badge st-missing">seçilmedi</span>}
-      <div className="muted hint">{data.roof.detail}{data.roof.candidates.length > 0 && <> · notlarda: {data.roof.candidates.join(', ')}</>} Çatı alanı ve sistemi proje parametrelerinden düzeltilir.</div>
+      {' · '}<b>Çatı sistemi:</b> {data.roof.system ? <>{data.roof.system} <span className="muted">({ROOF_SYS_SRC[data.roof.system_source] ?? 'seçildi'})</span></> : <span className="badge st-missing">seçilmedi</span>}
+      {(data.roof.zones ?? []).length > 0 && (
+        <div className="hint" style={{ marginTop: 4 }}>
+          <b>Bölgeler:</b>{' '}
+          {data.roof.zones.map((z, i) => (
+            <span key={i} className={`chip${z.source === 'note' ? '' : ' st-missing'}`}
+                  title={[z.drawing, z.note || (z.conflict.length ? `çakışma: ${z.conflict.join(', ')}` : 'içinde sistem yazısı yok')].filter(Boolean).join(' · ')}>
+              {i + 1}. bölge {fmt(z.area)} m² · {z.system}{' '}
+              <span className="muted">({z.source === 'note' ? 'plandaki nottan' : z.source === 'conflict' ? 'çakışma — seçin' : 'yazısız — katmandan'})</span>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="muted hint">{data.roof.detail}{data.roof.candidates.length > 0 && <> · notlarda: {data.roof.candidates.join(', ')}</>} Çatı alanı ve sistemi proje parametrelerinden düzeltilir;
+        {' '}bölge sistemi çatı planında alanın içine yazılan nottan (“KENET ÇATI”, “ÇELİK ÇATI”) okunur.</div>
     </div>
   ) : null
+  const SCREED_SRC = { rooms: 'mahal notundan', drawing: 'çizim notundan', param: 'siz girdiniz', default: 'VARSAYILAN — çizimde yazmıyor' }
   const finish = data.finish ? (
     <div className="facade-info">
       <b>Şap / döşeme kaplaması alanı:</b> {data.finish.area > 0 ? <>{fmt(data.finish.area)} m² <span className="muted">({data.finish.detail})</span></> : <span className="badge st-missing">alan yok</span>}
-      <div className="muted hint">Mahal türleri: {data.finish.keywords.join(', ')} · proje parametrelerinden değiştirilir; alan elle de girilir.</div>
+      {(data.finish.by_screed ?? []).length > 0 && (
+        <div className="hint" style={{ marginTop: 4 }}>
+          <b>Şap kalınlığı:</b>{' '}
+          {data.finish.by_screed.map((s, i) => (
+            <span key={i} className={`chip${s.source === 'default' ? ' st-missing' : ''}`} title={s.detail}>
+              {s.cm} cm · {fmt(s.area)} m² <span className="muted">({SCREED_SRC[s.source]})</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {(data.finish.by_finish ?? []).length > 0 && (
+        <div className="hint" style={{ marginTop: 4 }}>
+          <b>Kaplama tipi:</b>{' '}
+          {data.finish.by_finish.map((g, i) => (
+            <span key={i} className="chip" title={`${g.texts.join('; ')} — ${g.rooms.join(', ')}`}>
+              {g.code}{g.spec ? ` ${g.spec}` : ''} · {fmt(g.area)} m² <span className="muted">(mahal notundan)</span>
+            </span>
+          ))}
+          {data.finish.untyped_area > 0 && <span className="chip st-missing">tipi yazılmamış {fmt(data.finish.untyped_area)} m²</span>}
+        </div>
+      )}
+      <div className="muted hint">Mahal türleri: {data.finish.keywords.join(', ')} · proje parametrelerinden değiştirilir; alan elle de girilir.
+        {' '}Kaplama tipi ve şap kalınlığı mahal yazısının yanındaki nottan (“ŞAP 5 CM + SERAMİK 60x60”) okunur.</div>
       {data.finish.rooms.length > 0 && (
         <div className="hint" style={{ marginTop: 4 }}>
-          {data.finish.rooms.map((r, i) => <span key={i} className={`chip${r.included ? '' : ' muted'}`} title={r.drawing}>{r.included ? '✔ ' : '– '}{r.name} {fmt(r.area_m2, 1)} m²</span>)}
+          {data.finish.rooms.map((r, i) => (
+            <span key={i} className={`chip${r.included ? '' : ' muted'}`} title={[r.drawing, r.finish_text].filter(Boolean).join(' · ')}>
+              {r.included ? '✔ ' : '– '}{r.name} {fmt(r.area_m2, 1)} m²
+              {r.finish ? <span className="muted"> · {r.finish}{r.finish_spec ? ` ${r.finish_spec}` : ''}</span> : null}
+              {r.screed_cm ? <span className="muted"> · şap {r.screed_cm} cm</span> : null}
+            </span>
+          ))}
         </div>
       )}
     </div>

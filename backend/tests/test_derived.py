@@ -125,3 +125,102 @@ def test_rooms_finish_area(client, tmp_path):
     client.patch(f"/api/projects/{pid}", json={"params": {"finish_rooms": "LOBİ, VİTRİN, CALZEDONIA, TWIST, WC"}})
     fin = client.get(f"/api/projects/{pid}/systems").json()["finish"]
     assert fin["area"] == pytest.approx((45.2 + 12.5 + 106.6 + 199.85 + 8.0) * 2) and not fin["excluded"]
+
+
+def test_finish_note_reading():
+    """Mahal notu: kaplama tipi, ebat ve şap kalınlığı tek yazıdan okunur; eğim / koruma şapı kaplama şapı değildir."""
+    from app.parser.materials import finish_of, screed_cm_from
+    f = finish_of("ŞAP 5 CM + SERAMİK 60x60")
+    assert f["code"] == "SERAMIK_ZEMIN" and f["spec"] == "60x60" and f["screed_cm"] == 5.0
+    assert finish_of("LAMİNAT PARKE")["code"] == "LAMINAT"
+    assert finish_of("EPOKSİ ZEMİN") == {"code": "DOSEME_KAPLAMA", "spec": "EPOKSI", "screed_cm": 0.0, "text": "EPOKSİ ZEMİN"}
+    assert finish_of("TESVİYE ŞAPI 70 MM")["screed_cm"] == 7.0        # mm -> cm
+    assert finish_of("EĞİM ŞAPI 8 CM") is None and finish_of("KORUMA ŞAPI 5 CM") is None
+    assert finish_of("PARKE TAŞI") is None and finish_of("ŞAP") is None   # kalınlıksız şap bilgi taşımaz
+    assert screed_cm_from(["LOBİ 45 m2", "ŞAP 6 CM"]) == (6.0, "ŞAP 6 CM")
+
+
+def test_room_finish_from_plan(client, tmp_path):
+    """Mahal yazısının yanındaki not: kaplama TiPİ ve şap KALINLIĞI plandan okunur, varsayılana düşülmez.
+
+    Not, en yakın mahallin sayılır; notu olan mahal (DEPO) mahal türü listesinde geçmese de kapsama girer."""
+    doc = ezdxf.new("R2010"); doc.header["$INSUNITS"] = 5
+    for n in ("DUVAR", "YAZI"):
+        doc.layers.add(n)
+    msp = doc.modelspace()
+    for y in (0, 400):
+        msp.add_lwpolyline(_rect(0, y, 600, 20), close=True, dxfattribs={"layer": "DUVAR"})
+    rooms = ("LOBİ\\P45.20 m2", "VİTRİN 1\\P12.50 m2", "DEPO\\P20.00 m2", "HOL\\P10.00 m2")
+    notes = ("ŞAP 6 CM + SERAMİK 60x60", "LAMİNAT PARKE", "EPOKSİ ZEMİN", None)
+    for i, (t, note) in enumerate(zip(rooms, notes)):
+        msp.add_mtext(t, dxfattribs={"layer": "YAZI", "char_height": 15}).set_location((60 + i * 150, 250))
+        if note:
+            msp.add_text(note, dxfattribs={"layer": "YAZI", "height": 15}).set_placement((60 + i * 150, 220))
+    for i in range(22):
+        msp.add_text(f"M{i}", dxfattribs={"layer": "YAZI", "height": 20}).set_placement((20 + i * 25, 100))
+    p = tmp_path / "kaplama.dxf"; doc.saveas(p)
+    pid = client.post("/api/projects", json={"name": "Kaplama"}).json()["id"]
+    with open(p, "rb") as f:
+        assert client.post(f"/api/projects/{pid}/drawings", files={"file": ("ZEMİN KAT PLANI.dxf", f, "application/dxf")}).status_code == 201
+    fin = client.get(f"/api/projects/{pid}/systems").json()["finish"]
+    by_fin = {(g["code"], g["spec"]): g["area"] for g in fin["by_finish"]}
+    assert by_fin == {("SERAMIK_ZEMIN", "60x60"): 45.2, ("LAMINAT", ""): 12.5, ("DOSEME_KAPLAMA", "EPOKSI"): 20.0}
+    assert fin["untyped_area"] == 10.0                       # HOL: notu yok, anahtar kelimeden girdi
+    assert fin["area"] == pytest.approx(87.7)                # DEPO tür listesinde yok ama notu var
+    # Şap: LOBİ kendi notundan 6 cm, kalan mahaller çizimin genel notundan (yine 6) — hiçbiri varsayılan değil
+    assert [s["cm"] for s in fin["by_screed"]] == [6.0]
+    assert fin["by_screed"][0]["source"] == "rooms" and fin["by_screed"][0]["area"] == pytest.approx(87.7)
+    by = {i["key"]: i for i in client.get(f"/api/projects/{pid}/quantities").json()["boq"]["items"]}
+    assert by["seramik_zemin:60x60"]["quantity"] == pytest.approx(45.2)
+    assert by["laminat:*"]["quantity"] == pytest.approx(12.5)
+    assert by["doseme_kaplama:epoksi"]["quantity"] == pytest.approx(20.0)
+    assert by["doseme_kaplama:*"]["quantity"] == pytest.approx(10.0)
+    assert by["sap:6"]["quantity"] == pytest.approx(87.7 * 0.06, rel=1e-3)
+    assert "mahal notundan" in by["sap:6"]["notes"][0] and "VARSAYILAN" not in by["sap:6"]["notes"][0]
+    assert "mahal notundan" in by["seramik_zemin:60x60"]["notes"][0]
+
+
+def test_excavation_levels_parse():
+    """Kesitteki kazı yazıları: tabii zemin kotu, kazı tabanı ve doğrudan yazılmış derinlik."""
+    from app.parser.levels import excavation_levels
+    e = excavation_levels(["TABİİ ZEMİN KOTU -0.45", "KAZI TABANI -3.20", "+0.00 SİFıR KOTU"])
+    assert e["ground"] == -0.45 and e["bottom"] == -3.20 and e["depth"] is None
+    assert excavation_levels(["KAZI DERİNLİĞİ 2.80 M"])["depth"] == 2.80
+    assert excavation_levels(["DOĞAL ZEMİN -1.10"])["ground"] == -1.10
+    assert excavation_levels(["KAT PLANI", "S1 30/60"]) == {"ground": None, "bottom": None, "depth": None,
+                                                            "ground_note": "", "bottom_note": "", "depth_note": ""}
+
+
+def test_excavation_depth_chain(tmp_path):
+    """Derinlik zinciri: kesit notu > kotlar > temel kotu > parametre > varsayılan."""
+    from types import SimpleNamespace as NS
+    from app.services import excavation_depth
+    prj = NS(params={})
+    pars = {"lean_concrete_cm": 10.0, "excavation_depth_m": 1.5}
+
+    def dw(**mats):
+        return [NS(materials={k: {"evidence": [f"{k} yazısı"], "spec": str(v)} for k, v in mats.items()})]
+
+    assert excavation_depth(prj, dw(KAZI_DERINLIK=2.8), pars)["m"] == 2.8
+    r = excavation_depth(prj, dw(KOT_ZEMIN=-0.45, KOT_KAZI_TABAN=-3.2), pars)
+    assert r["m"] == 2.75 and r["source"] == "kots"
+    # kot yazısı yok: temel paftasının kotu − temel kalınlığı − grobeton (zemin ±0,00 kabulü)
+    r = excavation_depth(prj, dw(), pars, found_kot=-2.55, found_thickness=0.60)
+    assert r["m"] == 3.25 and r["source"] == "foundation_kot"
+    # hiçbir şey okunamadı: önce kullanıcı parametresi, o da yoksa varsayılan (soru listesine düşer)
+    assert excavation_depth(NS(params={"excavation_depth_m": 4}), dw(), pars)["source"] == "param"
+    assert excavation_depth(prj, dw(), pars) == {"m": 1.5, "source": "default",
+                                                 "detail": "program varsayılanı — kesitte kazı / tabii zemin kotu yazmıyor"}
+
+
+def test_excavation_default_is_asked(client, storey_dxf, foundation_dxf):
+    """Derinlik okunamazsa sessizce varsayılmaz: kontrol listesinde sorulur ve kalemin notunda yazar."""
+    pid = client.post("/api/projects", json={"name": "Kazı", "storey_height": 3.0}).json()["id"]
+    with open(foundation_dxf, "rb") as f:
+        client.post(f"/api/projects/{pid}/drawings", files={"file": ("TEMEL KALIP PLANI.dxf", f, "application/dxf")})
+    sy = client.get(f"/api/projects/{pid}/systems").json()
+    assert any(c["code"] == "kazi_derinligi" for c in sy["checklist"])
+    kazi = next(i for i in client.get(f"/api/projects/{pid}/quantities").json()["boq"]["items"] if i["kind"] == "kazi")
+    assert "VARSAYILAN" in kazi["notes"][0]
+    q = client.get(f"/api/projects/{pid}/quantities").json().get("quality", {})
+    assert {a["key"]: a["source"] for a in q.get("assumptions", [])}.get("excavation_depth_m") == "default"

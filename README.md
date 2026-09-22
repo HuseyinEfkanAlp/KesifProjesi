@@ -542,16 +542,78 @@ Detaylı maliyette gözden kaçmasın diye çizimden **türetilen** kalemler ke�
 |---|---|---|
 | Boya | Boya astarı | boya m² |
 | Kat planı oturumu (statik ya da mimari) | Tavan sıva + astar + boya | oturum × kat sayısı |
-| Mahal alanı yazıları ("LOBİ 45,20 m²", "CALZEDONIA 106.60m2") | Şap; döşeme kaplaması (tip seçilecek) — **yalnız seçili mahal türlerinde** (`finish_rooms`: LOBİ, VİTRİN, GİRİŞ, HOL, KORİDOR, FUAYE; ya da `finish_area_m2` elle) | seçili mahaller × kat sayısı (şap × kalınlık) |
-| Temel (radye / sürekli) | Temel su yalıtımı; grobeton; koruma şapı | temel alanı (grobeton × kalınlık) |
+| Mahal alanı yazıları ("LOBİ 45,20 m²", "CALZEDONIA 106.60m2") | Şap (kalınlığıyla); döşeme kaplaması **tipiyle** (zemin seramiği / laminat / epoksi…) — mahal notu olan her mahal, notu olmayanlarda seçili mahal türleri (`finish_rooms`: LOBİ, VİTRİN, GİRİŞ, HOL, KORİDOR, FUAYE; ya da `finish_area_m2` elle) | seçili mahaller × kat sayısı (şap × plandan okunan kalınlık) |
+| Temel (radye / sürekli) | Temel su yalıtımı; grobeton (kalınlığı çizim notundan); koruma şapı; kazı + geri dolgu | temel alanı × plandan okunan kalınlık / derinlik |
 | Çatı sistemi biliniyor (parametre ya da kesit notu) | Çatı alanı bilgi satırı + sistem kalemi → bileşenler | çatı alanı |
 
 **Çatı alanı**: çizimde ölçülen çatı kalemi > parametre > en büyük (bodrum olmayan) kat planı oturumu. **Çatı sistemi**: parametre >
-kesit / detay notlarındaki tek kanıt (KENET / KİREMİT / TERAS). Bina oturumu artık mimari plandaki duvar çokgenlerinden de
-çıkar (`building_footprint`: en büyük parça), cephe brüt alanı için bodrum paftaları atlanır.
+**bölge bazlı okuma** > kesit / detay notlarındaki tek kanıt (KENET / KİREMİT / TERAS / ÇELİK). Bina oturumu artık mimari plandaki
+duvar çokgenlerinden de çıkar (`building_footprint`: en büyük parça), cephe brüt alanı için bodrum paftaları atlanır.
+
+**Çatı bölge bazlı okunur** — bir projede tek çatı sistemi olmak zorunda değil. Çatı planındaki her kapalı alan ayrı bölgedir ve
+sistemini **kendi içine yazılmış nottan** alır (`detectors/standard.py: assign_roof_zones`; not tarama: `materials.system_notes`,
+nokta-içinde testi shapely ile). Sonuç: "1. bölge 300 m² kenet · 2. bölge 150 m² çelik çatı", her biri **kendi reçetesiyle**
+ayrı keşif kalemi. Bölgeler `GET /systems` → `roof.zones` altında kanıtıyla listelenir; `roof.system_source = "zones"` olur.
+
+- İçinde iki farklı sistem yazan bölge seçilmez: kontrol listesinde **sorulur** (`cati_bolge_cakisma`).
+- İçinde yazı olmayan bölge katmanın kalemiyle ölçülür ve "yazısız bölge" olarak sorulur (`cati_bolge_yazisiz`).
+- **Çelik çatı artık zincire bağlı**: katman adı ("ÇELİK ÇATI", "ÇATI MAKAS", "ÇATI TRAPEZ SAC") → `CELIK_CATI`;
+  düz "ÇATI" katmanı + kesitte "ÇELİK ÇATI" yazısı → sisteme yükselir; ölçülen türler ve kesit kanıtı listelerinde yer alır.
+  Cephedeki "SANDVİÇ PANEL" çatı sayılmaz (trapez / sandviç yalnız çatı bağlamında).
+
+**Kazı derinliği ve grobeton kalınlığı da plandan** (`services.excavation_depth`, `services.lean_concrete_cm`):
+kesitte yazılı kazı derinliği > tabii zemin kotu − kazı tabanı kotu > temel paftasının kotu − temel kalınlığı − grobeton >
+kullanıcı parametresi > program varsayılanı. Kot yazıları `parser/levels.py: excavation_levels` ile okunur ("TABİİ ZEMİN KOTU
+-0.45", "KAZI TABANI -3.20", "KAZI DERİNLİĞİ 2.80 M") ve çizimin malzeme kanıtına yazılır. **Varsayılana düşüldüğünde sessiz
+kalınmaz**: kalemin notunda "VARSAYILAN — çizimde yazmıyor" yazar ve kontrol listesinde sorulur (`kazi_derinligi`).
 
 Mahal yazıları `drawing.rooms` alanında saklanır (`parser/schedules.py: parse_rooms`); mağaza gibi kapsam dışı mahaller kontrol listesinde
 "kaplama dışı" olarak sayılır, mahal yazısı hiç yoksa "alan yok" uyarısı verilir (bloğun tamamı şaplanmaz; B2'de yalnız vitrin ve lobiler).
+
+## Mahaller: keşif mahal bazında
+
+Keşif yalnız bina toplamı değil, **mahal bazında** da çıkar: "Hol: 2 kamera, 1 priz · Daire 1 (ev): 5 kamera".
+Mimari planda mahal sınırı ayrı çizilmez, **duvarlar** çizilir; mahaller oradan türetilir (`parser/spaces.py`):
+
+1. Duvar / kolon / perde katmanlarındaki çizgiler ağ olarak birleştirilir, `polygonize` ile kapalı yüzler bulunur.
+   **Kapı boşluğu** duvarda gedik bırakır ve yüz kapanmaz: sarkan uçlar 1,2 m'ye kadar köprülenir
+   (`detectors/base._bridge_gaps`). Duvar gövdesine denk gelen ince dilimler (alan/çevre oranı küçük) elenir.
+2. Yazılar alanlara dağılır: bir yazı kendisini içeren **en küçük** alanın adıdır. "SALON 64.00 m²" hem ad
+   hem beyan alanı verir (çizimden ölçülen alanla karşılaştırılır); "DAİRE 1", "HOL" gibi yalın adlar da geçerlidir.
+3. **Hiyerarşi kapsamadan** kurulur: bir alan diğerini içeriyorsa üsttedir. `GROUP_WORDS` geçen ad
+   (DAİRE, DÜKKAN, OFİS, BLOK, VİLLA…) bir **bağımsız bölümdür**; içindeki odalar onun mahalleridir.
+   Daire sınırı çizili ama "DAİRE 1" yazısı içerideki bir odaya yazılmışsa ad adsiz üst alana taşınır.
+4. Mahal araması yalnız **mahal yazısı olan** paftada yapılır (`has_space_labels`): kalıp / donatı paftasında
+   boşuna çokgen aranmaz. Sonuç `drawing.spaces` alanında saklanır.
+
+**Eleman → mahal dağıtımı** (`services.space_breakdown`, `GET /api/projects/{id}/spaces`) eleman türüne göre:
+
+| Eleman | Kural |
+|---|---|
+| adet (kamera, priz, armatür, doğrama) | noktası hangi mahalin içindeyse **tamamı** o mahalin |
+| alan (döşeme, kaplama, tavan) | mahal çokgenleriyle **kesişim oranı** |
+| uzunluk / duvar | mahalin içinde değil SINIRINDA durur: 0,6 m tampon içinde kalan mahaller arasında kesişim oranında **bölüşülür** (iki oda arasındaki duvar yarı yarıya) |
+
+Kalemler keşifteki **aynı ölçüm kurallarıyla** üretilir (mimari / elektrik / KÇS motorları mahalin elemanlarıyla
+yeniden çalıştırılır), böylece mahal metrajı ile proje metrajı aynı kuralı kullanır. Bağımsız bölüm satırı
+kendi kalemleri + çocuklarının toplamını gösterir (`total_items` — "evde 5 kamera"). Mahale düşmeyen miktar
+**"atanmamış"** satırında toplanır (başka paftanın koordinatı farklıdır: statik / cephe / çatı paftaları);
+sessizce kaybolmaz. Arayüzde **Mahaller** paneli daire → mahal ağacını ve her mahalin kalemlerini listeler.
+
+**Şap kalınlığı ve kaplama tipi plandan okunur** (varsayılan son çaredir). Mahal yazısının yanına yazılmış not
+— "ŞAP 5 CM + SERAMİK 60x60", "LAMİNAT PARKE", "EPOKSİ ZEMİN" — `parser/materials.py: finish_of` ile çözülür ve
+`parser/analyzer.py: room_rows` her notu **en yakın mahalle** bağlar (mahal yarı genişliği 0,6·√alan, en az 2 m; komşu
+mahalle taşmaz). Sonuç `drawing.rooms[].finish` / `.screed_cm` alanlarında durur:
+
+- **Kaplama tipi**: not katalog kalemine gider (SERAMİK → `SERAMIK_ZEMIN 60x60`, PARKE → `LAMINAT`); katalogda karşılığı
+  olmayan tipler (epoksi, mermer, halı, doğaltaş) `DOSEME_KAPLAMA`'nın özelliği olur. Notu olan mahal, mahal türü listesinde
+  geçmese de kapsama girer — çizim öyle diyor. Tipi yazılmamış alan tek "tip seçin" kalemi olarak kalır (`finish.untyped_area`).
+- **Şap kalınlığı**: mahal notu > çizimin genel notu (`materials.SAP`, `scan_materials` ile taranır) > `screed_cm` parametresi >
+  program varsayılanı 5 cm. Her kalınlık kendi kalemidir (`sap:6`, `sap:8`); kalemin notu kaynağını yazar, varsayılana
+  düşüldüyse "VARSAYILAN — çizimde yazmıyor" der. Eğim / koruma şapı notları kaplama şapı sayılmaz.
+- Islak hacim zemini (WC / banyo / duş) ayrı kuralla gelir; çift saymamak için not üzerinden kapsama alınmaz (mahal
+  türlerine açıkça yazılırsa girer). Sistem panelinde kalınlık ve tip **kaynağıyla** görünür; kalite raporunda çizimden
+  okunan değer "program varsayılanı" sayılmaz (`detail.param_source`).
 
 **Tamlık kontrol listesi** (miktarı türetilemeyen ama olması gereken işler; sistem panelinde uyarı): çatı sistemi seçilmedi
 (betonarme teras ise eğim betonu + buhar kesici + ısı yalıtımı + su yalıtımı + koruma betonu), cephe sistemi seçilmedi (cephe boyası /

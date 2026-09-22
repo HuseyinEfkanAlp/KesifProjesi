@@ -1,4 +1,4 @@
-import type { QualityReport, Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, LayerCheck, MaterialIn, MaterialOptions, MaterialPrice, PlanCheck, PlanLevel, PlanType, PozBook, PozImportResult, PriceBook, PriceBookIn, PriceIn, PriceItem, Project, ProjectSystems, Supplier, SupplierIn, QuantitiesResponse, QuantitySummary, UploadResult } from '../types'
+import type { QualityReport, Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, LayerCheck, MaterialIn, MaterialOptions, MaterialPrice, PlanCheck, PlanLevel, PlanType, PozBook, PozImportResult, PriceBook, PriceBookIn, PriceIn, PriceItem, Project, ProjectSystems, Supplier, SupplierIn, QuantitiesResponse, QuantitySummary, UploadResult, SpaceBreakdown } from '../types'
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
@@ -66,6 +66,8 @@ export const Api = {
     setBlocks: (id: number, blocks: string[]) =>
       request<PlanCheck>(`/api/projects/${id}/blocks`, { method: 'PUT', body: json(blocks) }),
     planTypes: () => request<{ groups: Record<string, string>; types: PlanType[]; levels: PlanLevel[] }>('/api/projects/meta/plan-types'),
+    /** mahal bazında keşif: mimari plandan çıkan mahaller + her mahalin kalemleri */
+    spaces: (id: number) => request<SpaceBreakdown>(`/api/projects/${id}/spaces`),
     systems: (id: number) => request<ProjectSystems>(`/api/projects/${id}/systems`),
     /** {sistem: {bileşen: {include?, spec?}}}; boş nesne kararı siler (kanıta döner) */
     setSystems: (id: number, body: Record<string, Record<string, { include?: boolean | null; spec?: string | null }>>) =>

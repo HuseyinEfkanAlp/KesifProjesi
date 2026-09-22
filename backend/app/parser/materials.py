@@ -20,6 +20,7 @@ MATERIAL_RULES: list[tuple[str, str]] = [
     ("KENET_CATI", r"KENET"),
     ("TERAS_CATI", r"TERAS\s*CATI|GEZIL(EN|MEYEN)\s*(TERAS|CATI)|TERS\s*CATI"),
     ("KIREMIT_CATI", r"KIREMIT|SHINGLE"),
+    ("CELIK_CATI", r"CELIK\s*CATI|CATI\s*MAKAS|MAKAS\s*CATI|CELIK\s*KONSTR\w*\s*CATI"),
     ("MANTOLAMA_SISTEM", r"MANTOLAMA|ISI\s*YALITIM\s*SISTEM|ETICS|DIS\s*CEPHE\s*ISI"),
     # çatı bileşenleri
     ("KENET_KAPLAMA", r"KENET\s*(KAPLAMA|LEVHA|SAC)|KENETLI|GALVANIZ\s*SAC|TITANYUM\s*CINKO|CINKO\s*(KAPLAMA|LEVHA)|ALUMINYUM\s*KENET"),
@@ -31,9 +32,11 @@ MATERIAL_RULES: list[tuple[str, str]] = [
     ("CATI_LATA", r"\bLATA\b|KONTR\s*LATA|KONTRLATA"),
     ("CATI_KIREMIT", r"KIREMIT|SHINGLE"),
     ("EGIM_BETONU", r"EGIM\s*(BETON|SAP)|MEYIL\s*(BETON|SAP)"),
+    ("GROBETON", r"GROBETON|GROB\s*BETON|TEMEL\s*ALTI\s*BETON|BLOKAJ\s*BETON"),
     ("KORUMA_BETONU", r"KORUMA\s*(BETON|SAP)"),
     ("CATI_CAKIL", r"\bCAKIL\b|BALAST"),
     ("CELIK_PROFIL", r"CELIK\s*(KIRIS|PROFIL|KONSTR)"),
+    ("CATI_SANDVIC_PANEL", r"SANDVIC\s*PANEL|TRAPEZ\s*(SAC|PANEL|LEVHA)"),
     ("CATI_MEMBRAN", r"CATI\s*MEMBRAN|\bPVC\s*MEMBRAN|TPO"),
     # yalıtım
     ("TASYUNU", r"TAS\s*YUNU|TASYUNU|MINERAL\s*YUN|ROCKWOOL|CAM\s*YUNU"),
@@ -93,8 +96,19 @@ def scan_texts(texts: list[str]) -> dict[str, dict]:
 
 
 def scan_materials(drawing: Drawing) -> dict[str, dict]:
-    """Çizimdeki bütün yazılardan (blok içi dahil) malzeme kanıtı."""
-    return scan_texts([e.text for e in drawing.entities if e.kind == "text" and e.text])
+    """Çizimdeki bütün yazılardan (blok içi dahil) malzeme kanıtı; şap kalınlığı da buraya yazılır."""
+    texts = [e.text for e in drawing.entities if e.kind == "text" and e.text]
+    found = scan_texts(texts)
+    cm, note = screed_cm_from(texts)
+    if cm > 0:
+        found.setdefault("SAP", {"evidence": [note], "spec": f"{cm:g}"})
+    # kazı kotları da kanıt olarak saklanır: derinlik varsayılana düşmeden kesitten okunsun
+    from .levels import excavation_levels
+    exc = excavation_levels(texts)
+    for key, code in (("ground", "KOT_ZEMIN"), ("bottom", "KOT_KAZI_TABAN"), ("depth", "KAZI_DERINLIK")):
+        if exc.get(key) is not None:
+            found.setdefault(code, {"evidence": [exc[f"{key}_note"]], "spec": f"{exc[key]:g}"})
+    return found
 
 
 def merge_materials(per_drawing: list[dict]) -> dict[str, dict]:
@@ -108,4 +122,87 @@ def merge_materials(per_drawing: list[dict]) -> dict[str, dict]:
                     cur["evidence"].append(e)
             if not cur["spec"] and ev.get("spec"):
                 cur["spec"] = ev["spec"]
+    return out
+
+
+# ---------- Döşeme bitişi: mahal yazısının yanındaki / döşeme kaplama planındaki notlar
+# "ŞAP 5 CM", "SERAMİK 60x60", "LAMİNAT PARKE" — kaplamanın TİPİ ve şapın KALINLIĞI buradan okunur;
+# karşılığı katalogda olmayan tipler (epoksi, mermer, halı) DOSEME_KAPLAMA'nın özelliği olur.
+FINISH_RULES: list[tuple[str, str, str]] = [   # (katalog kodu, sabit özellik, desen)
+    ("SERAMIK_ZEMIN", "", r"SERAMIK|FAYANS|PORSELEN|SIRLI\s*GRANIT|GRANIT\s*SERAMIK"),
+    ("LAMINAT", "", r"LAMINAT|\bPARKE\b(?!\s*TAS)|AHSAP\s*(ZEMIN|KAPLAMA\s*ZEMIN)"),
+    ("DOSEME_KAPLAMA", "EPOKSI", r"EPOKSI|POLIURETAN\s*ZEMIN"),
+    ("DOSEME_KAPLAMA", "MERMER", r"\bMERMER\b"),
+    ("DOSEME_KAPLAMA", "HALI", r"\bHALI\b|KARO\s*HALI"),
+    ("DOSEME_KAPLAMA", "DOGALTAS", r"DOGAL\s*TAS|ANDEZIT|BAZALT|TRAVERTEN"),
+]
+_FINISH = [(code, spec, re.compile(pat)) for code, spec, pat in FINISH_RULES]
+# "60x60", "30 X 60", "20*20" -> seramik / doğaltaş ebadı
+_SIZE = re.compile(r"(\d{1,3})\s*[X*]\s*(\d{1,3})")
+# şap: "ŞAP 5 CM", "5 CM ŞAP", "TESVİYE ŞAPI". Eğim / koruma şapı ayrı kalemdir, kaplama altı şapı değildir.
+_SCREED = re.compile(r"\bSAP\b|\bSAPI\b|SAP\s*BETON|TESVIYE\s*(SAP|BETON)")
+_SCREED_SKIP = re.compile(r"EGIM|MEYIL|KORUMA|SIZDIRMAZ|ASFALT|CATI")
+
+
+def _cm(text: str) -> float:
+    """Yazıdaki kalınlık, cm cinsinden (0 = yazmıyor)."""
+    m = _THICK.search(text)
+    if not m:
+        return 0.0
+    try:
+        v = float(m.group(1).replace(",", "."))
+    except ValueError:
+        return 0.0
+    return v / 10.0 if m.group(2) == "MM" else v
+
+
+def finish_of(text: str) -> dict | None:
+    """Tek yazıdan döşeme bitişi: {"code", "spec", "screed_cm", "text"} ya da None.
+    Aynı yazı hem kaplamayı hem şapı anlatabilir ("ŞAP + SERAMİK 60x60")."""
+    raw = (text or "").strip()
+    if not raw or len(raw) > MAX_TEXT:
+        return None
+    t = normalize_title(raw)
+    if not t:
+        return None
+    out = {"code": "", "spec": "", "screed_cm": 0.0, "text": re.sub(r"\s+", " ", raw.replace(r"\P", " "))[:60]}
+    for code, spec, pat in _FINISH:
+        if pat.search(t):
+            out["code"], out["spec"] = code, spec
+            if not spec:
+                m = _SIZE.search(t)
+                if m:
+                    out["spec"] = f"{m.group(1)}x{m.group(2)}"
+            break
+    if _SCREED.search(t) and not _SCREED_SKIP.search(t):
+        out["screed_cm"] = _cm(t)
+    # kalınlıksız yalın "ŞAP" yazısı bilgi taşımaz; kaplama tipi de yoksa not değildir
+    return out if out["code"] or out["screed_cm"] > 0 else None
+
+
+def screed_cm_from(texts: list[str]) -> tuple[float, str]:
+    """Çizimin genel notlarından şap kalınlığı (cm) ve kanıt yazısı; bulunamazsa (0, "")."""
+    for raw in texts:
+        f = finish_of(raw)
+        if f and f["screed_cm"] > 0:
+            return f["screed_cm"], f["text"]
+    return 0.0, ""
+
+# ---------- Konumlu sistem yazıları: çatı planında "burası kenet, şurası kiremit" yazar.
+# Bölge bazlı okuma (detectors/standard.py: assign_roof_zones) bu yazıların hangi kapalı alanın içine
+# düştüğüne bakar. Sıra önceliktir: bir yazı birden çok sisteme uyarsa ilki seçilir.
+ROOF_SYSTEM_CODES = ("CELIK_CATI", "KENET_CATI", "TERAS_CATI", "KIREMIT_CATI", "CATI_MEMBRAN")
+
+
+def system_notes(drawing: Drawing, codes: tuple[str, ...] = ROOF_SYSTEM_CODES) -> list[dict]:
+    """Konumu bilinen sistem yazıları: [{"code", "text", "pt"}]. Konumsuz yazı (blok içi) bölgeye bağlanamaz."""
+    out: list[dict] = []
+    for e in drawing.entities:
+        if e.kind != "text" or not e.text or not e.points:
+            continue
+        hits = scan_texts([e.text])
+        code = next((c for c in codes if c in hits), "")
+        if code:
+            out.append({"code": code, "text": re.sub(r"\s+", " ", e.text.replace(r"\P", " ")).strip()[:60],
+                        "pt": tuple(e.points[0][:2])})
     return out

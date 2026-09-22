@@ -174,3 +174,38 @@ def floor_rank(label: str) -> float | None:
     if "NORMAL" in n or "TIP" in n:
         return 1
     return None
+
+# ---------- Kazı kotları: kesitte "TABİİ ZEMİN KOTU -0.45", "KAZI TABANI -3.20", "TEMEL ALT KOTU -3.05"
+# yazılıdır. Kazı derinliği varsayılana düşmesin diye önce bunlar okunur (services.excavation_depth).
+_GROUND_WORDS = re.compile(r"TAB[İI]{1,2}\s*ZEM[İI]N|DO[ĞG]AL\s*ZEM[İI]N|MEVCUT\s*ZEM[İI]N|ZEM[İI]N\s*KOT", re.IGNORECASE)
+_BOTTOM_WORDS = re.compile(r"KAZI\s*(TABAN|KOT|SEV[İI]YE)|TEMEL\s*ALT\s*KOT|GROBETON\s*(ALT|KOT)", re.IGNORECASE)
+_DEPTH_WORDS = re.compile(r"KAZI\s*DER[İI]NL[İI][ĞG]", re.IGNORECASE)
+MAX_EXC_TEXT = 80
+
+
+def excavation_levels(texts: list[str]) -> dict:
+    """Kazı için yazıdan okunan değerler: tabii zemin kotu, kazı tabanı kotu, doğrudan kazı derinliği.
+
+    Döner: {"ground", "bottom", "depth"} (bulunamayan None) + her biri için kanıt yazısı."""
+    out: dict = {"ground": None, "bottom": None, "depth": None,
+                 "ground_note": "", "bottom_note": "", "depth_note": ""}
+    for raw in texts:
+        t = (raw or "").replace(chr(92) + "P", " ").strip()
+        if not t or len(t) > MAX_EXC_TEXT:
+            continue
+        vals = [_val(v.group("v")) for v in _SIGNED.finditer(t)]
+        if not vals:
+            vals = [_val(v.group("v")) for v in _UNSIGNED.finditer(t)]
+        vals = [v for v in vals if LEVEL_RANGE[0] <= v <= LEVEL_RANGE[1]]
+        if not vals:
+            continue
+        if out["depth"] is None and _DEPTH_WORDS.search(t):
+            d = abs(vals[0])
+            if 0.2 <= d <= 30:
+                out["depth"], out["depth_note"] = d, t[:60]
+            continue
+        if out["ground"] is None and _GROUND_WORDS.search(t):
+            out["ground"], out["ground_note"] = vals[0], t[:60]
+        if out["bottom"] is None and _BOTTOM_WORDS.search(t):
+            out["bottom"], out["bottom_note"] = min(vals), t[:60]
+    return out

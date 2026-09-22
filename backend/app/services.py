@@ -181,6 +181,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.poz = result.poz or {}
     drawing.unit_verdict = result.unit_verdict
     drawing.discipline_hints = result.discipline_hints or {}
+    drawing.spaces = result.spaces or []
     drawing.levels = [float(v) for v in (result.levels or [])]
     drawing.kot = result.kot
     drawing.analyzed_at = datetime.utcnow()
@@ -808,8 +809,268 @@ def drawing_boq(project: Project, drawing: Drawing, session: Session) -> list[Bo
     return project_boq(project, session, drawings=[drawing], measured_only=True)
 
 
-ROOF_KINDS = {"kenet_cati", "kiremit_cati", "teras_cati", "cati_kiremit", "cati_membran", "cati_sandvic_panel"}
-ROOF_SYSTEM_EVIDENCE = ("KENET_CATI", "KIREMIT_CATI", "TERAS_CATI")
+ROOF_KINDS = {"kenet_cati", "kiremit_cati", "teras_cati", "celik_cati", "cati_kiremit", "cati_membran", "cati_sandvic_panel"}
+ROOF_SYSTEM_EVIDENCE = ("KENET_CATI", "KIREMIT_CATI", "TERAS_CATI", "CELIK_CATI")
+
+
+def _cm_from_notes(drawings: list[Drawing], code: str) -> tuple[float, str]:
+    """Çizim notlarından bir kalemin kalınlığı (cm) ve kanıt yazısı; yoksa (0, "")."""
+    ev = merge_materials([d.materials or {} for d in drawings]).get(code) or {}
+    spec = str(ev.get("spec") or "")
+    if spec.endswith("MM"):
+        spec = spec[:-2]
+        try:
+            return float(spec.replace(",", ".")) / 10.0, (ev.get("evidence") or [""])[0]
+        except ValueError:
+            return 0.0, ""
+    try:
+        return float(spec.replace(",", ".")), (ev.get("evidence") or [""])[0]
+    except ValueError:
+        return 0.0, ""
+
+
+def lean_concrete_cm(project: Project, drawings: list[Drawing], params: dict) -> dict:
+    """Grobeton kalınlığı (cm): çizim notu > kullanıcı parametresi > program varsayılanı."""
+    cm, note = _cm_from_notes(drawings, "GROBETON")
+    if cm > 0:
+        return {"cm": cm, "source": "drawing", "detail": f"çizim notundan: “{note}”"}
+    raw = project.params or {}
+    if raw.get("lean_concrete_cm"):
+        return {"cm": float(raw["lean_concrete_cm"]), "source": "param", "detail": "proje parametresi (siz girdiniz)"}
+    return {"cm": float(params.get("lean_concrete_cm") or 10.0), "source": "default",
+            "detail": "program varsayılanı — çizimde grobeton kalınlığı yazmıyor"}
+
+
+# ---------------------------------------------------------------- mahal bazında keşif
+# Eleman → mahal dağıtım kuralı (eleman türüne göre, hepsi çizimin kendi koordinatında):
+#   adet   : elemanın noktası hangi mahalin içindeyse tamamı o mahalin (kamera, priz, armatür, doframa)
+#   alan   : mahal çokgenleriyle kesişim oranı (döşeme, kaplama, tavan)
+#   uzunluk: duvar / tava / boru mahalin *içinde* değil SINIRINDA durur; WALL_REACH kadar tampon içinde kalan
+#            mahaller arasında kesişim alanı oranında bölüşülür (iki oda arasındaki duvar yarı yarıya)
+WALL_REACH = 0.6          # m — duvar / hat elemanının komşu mahale erişimi
+COUNT_TYPES = {"fixture", "dograma", "door", "window"}
+
+
+def _space_polys(spaces: list[dict]):
+    from shapely.geometry import Polygon
+    out = []
+    for sp in spaces:
+        pts = sp.get("points") or []
+        if len(pts) < 3:
+            continue
+        try:
+            poly = Polygon(pts)
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+            if poly.area > 0:
+                out.append((sp, poly))
+        except Exception:
+            continue
+    return out
+
+
+def _shares(el, polys, leaf_only: bool = True) -> dict[int, float]:
+    """Bir elemanın mahallere dağılımı: {mahal index: pay (0-1)}. Boş dönerse mahale atanamadı."""
+    from shapely.geometry import LineString, Point as SPoint, Polygon
+    pts = [tuple(p[:2]) for p in (el.points or []) if len(p) >= 2]
+    cand = [(sp, poly) for sp, poly in polys if not leaf_only or not sp.get("children")]
+    if not cand or not pts:
+        return {}
+    etype = el.etype or ""
+    area = float(el.area or 0.0)
+    length = float(el.length or 0.0)
+    if etype in COUNT_TYPES or (area <= 0 and length <= 0) or len(pts) < 2:
+        p = SPoint(pts[0]) if len(pts) == 1 else Polygon(pts).centroid if len(pts) >= 3 else LineString(pts).centroid
+        hit = min((sp for sp, poly in cand if poly.contains(p)), key=lambda sp: sp["area"], default=None)
+        return {hit["index"]: 1.0} if hit else {}
+    if area > 0 and len(pts) >= 3:
+        try:
+            g = Polygon(pts)
+            g = g if g.is_valid else g.buffer(0)
+        except Exception:
+            return {}
+        w = {sp["index"]: g.intersection(poly).area for sp, poly in cand}
+        tot = sum(w.values())
+        if tot > 1e-9:
+            return {i: v / tot for i, v in w.items() if v > 1e-9}
+        # duvar gövdesi mahallerin dışında kalır: komşuluk kuralına düşer
+    geom = Polygon(pts) if (len(pts) >= 3 and area > 0) else LineString(pts)
+    try:
+        reach = geom.buffer(WALL_REACH)
+    except Exception:
+        return {}
+    w = {sp["index"]: reach.intersection(poly).area for sp, poly in cand}
+    tot = sum(w.values())
+    return {i: v / tot for i, v in w.items() if v > 1e-9} if tot > 1e-9 else {}
+
+
+def _scaled(e, share: float) -> dict:
+    """Elemanın mahale düşen payı: miktarlar ölçeklenir (adet tam sayı kalır)."""
+    return {"etype": e.etype, "subtype": e.subtype, "name": e.name, "layer": e.layer,
+            "count": e.count if share >= 0.999 else round((e.count or 0) * share, 3),
+            "length": (e.length or 0.0) * share, "area": (e.area or 0.0) * share,
+            "thickness": e.thickness, "points": e.points, "id": e.id, "b": e.b, "h": e.h, "meta": e.meta or {}}
+
+
+def space_breakdown(project: Project, session: Session, drawings: list[Drawing] | None = None) -> dict:
+    """Mahal bazında keşif: her mahalin kendi kalemleri, keşifteki aynı ölçüm kurallarıyla.
+
+    Mahaller mimari paftadan çıkar (`parser/spaces.py`); eleman ancak KENDİ paftasının mahalleriyle
+    eşleşir (başka paftanın koordinatı farklıdır). Mahale düşmeyen miktar "atanmamış" satırında
+    toplanır — mahal toplamları + atanmamış = keşif toplamı."""
+    from .quantity.boq import architectural_items, electrical_items, standard_items
+    if drawings is None:
+        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    params = project_params(project)
+    catalog = load_catalog()
+    sh = storey_heights(project, drawings)
+    els_by_id, _ = measured_elements(project, session, drawings)
+    spaces: dict[str, dict] = {}        # key -> mahal
+    buckets: dict[str, list[dict]] = {}  # key -> ölçeklenmiş eleman dictleri
+    unassigned: list[tuple[Drawing, dict]] = []
+    warnings: list[str] = []
+    for d in drawings:
+        sps = d.spaces or []
+        by_index = {sp["index"]: sp for sp in sps}
+        for sp in sps:
+            key = f"{d.id}:{sp['index']}"
+            path, cur, guard = [sp["name"]], sp, 0
+            while cur.get("parent") is not None and by_index.get(cur["parent"]) and guard < 8:
+                cur = by_index[cur["parent"]]
+                path.insert(0, cur["name"] or "?")
+                guard += 1
+            spaces[key] = {"key": key, "name": sp["name"], "kind": sp["kind"], "area": sp["area"],
+                           "label_area": sp.get("label_area") or 0.0, "drawing": d.label or d.filename,
+                           "drawing_id": d.id, "path": " / ".join(x for x in path if x),
+                           "parent": f"{d.id}:{sp['parent']}" if sp.get("parent") is not None else None,
+                           "children": [f"{d.id}:{c}" for c in (sp.get("children") or [])]}
+            buckets[key] = []
+        polys = _space_polys(sps)
+        for e in els_by_id[d.id]:
+            share = _shares(e, polys) if polys else {}
+            if not share:
+                unassigned.append((d, _scaled(e, 1.0)))
+                continue
+            for idx, w in share.items():
+                buckets[f"{d.id}:{idx}"].append(_scaled(e, w))
+    if not spaces:
+        return {"spaces": [], "unassigned": [], "unassigned_reason": "Mimari paftada mahal sınırı bulunamadı.",
+                "warnings": ["Mahal listesi yok: mimari kat planı yükleyin (mahal sınırları duvarlardan çıkarılır)."]}
+
+    def items_of(entries: list[dict]) -> list[dict]:
+        """Verilen elemanlar için keşif kalemleri (mimari + elektrik + KSF kurallarıyla)."""
+        if not entries:
+            return []
+        arch = [x for x in entries if TYPE_DISCIPLINE.get(_g_etype(x["e"])) == "architectural"]
+        elec = [x for x in entries if TYPE_DISCIPLINE.get(_g_etype(x["e"])) == "electrical"]
+        ksf = [x for x in entries if (x["e"].get("meta") or {}).get("ksf_code") or parse_layer(x["e"].get("layer") or "", catalog)]
+        out: list[BoqItem] = []
+
+        def pack(rows):
+            per: dict[int, dict] = {}
+            for r in rows:
+                ent = per.setdefault(r["drawing"].id, {"id": r["drawing"].id, "label": r["drawing"].label or r["drawing"].filename,
+                                                       "storey_count": r["drawing"].storey_count,
+                                                       "storey_height": storey_height_of(project, r["drawing"], sh),
+                                                       "slab_thickness": project.slab_thickness, "elements": []})
+                ent["elements"].append(r["e"])
+            return list(per.values())
+
+        if arch:
+            out += architectural_items(pack(arch), params)
+        if elec:
+            out += electrical_items(pack(elec), params)
+        if ksf:
+            out += standard_items(pack(ksf), params, catalog)
+        out = [it for it in sort_items(merge_duplicates(out)) if it.group != "fire"]
+        return [it.to_dict() for it in out]
+
+    rows = []
+    for key, sp in spaces.items():
+        d = next(x for x in drawings if x.id == sp["drawing_id"])
+        sp = {**sp, "items": items_of([{"drawing": d, "e": e} for e in buckets[key]])}
+        rows.append(sp)
+    # grup (daire) toplamları: kendi kalemleri + çocuklarının kalemleri
+    by_key = {r["key"]: r for r in rows}
+    for r in rows:
+        if r["kind"] != "grup":
+            continue
+        kids = [by_key[k] for k in r["children"] if k in by_key]
+        tot: dict[str, dict] = {}
+        for src in [r] + kids:
+            for it in src["items"]:
+                cur = tot.setdefault(it["key"], {**it, "quantity": 0.0})
+                cur["quantity"] = round(cur["quantity"] + it["quantity"], 3)
+        r["total_items"] = sorted(tot.values(), key=lambda i: (i["work_group"], i["kind"], i["group"]))
+        r["total_area"] = round(r["area"], 2)
+    un_items = items_of([{"drawing": d, "e": e} for d, e in unassigned])
+    if un_items:
+        warnings.append(f"{len(un_items)} kalem mahale atanamadı: elemanı mahal sınırının dışında ya da "
+                        "mahal çıkarılmayan bir paftada (statik / cephe / çatı). Mahal toplamlarına girmez.")
+    return {"spaces": rows, "unassigned": un_items,
+            "unassigned_reason": "Mahal sınırı dışında kalan ya da mahal çıkarılmayan paftalardaki elemanlar",
+            "warnings": warnings}
+
+
+def excavation_depth(project: Project, drawings: list[Drawing], params: dict,
+                     found_kot: float | None = None, found_thickness: float = 0.0) -> dict:
+    """Temel altı kazı derinliği (m) ve NEREDEN geldiği — varsayılan son çaredir.
+
+    Sıra: (1) kesitte yazılı kazı derinliği, (2) tabii zemin kotu − kazı tabanı kotu,
+    (3) tabii zemin (yoksa ±0,00) − (temel paftasının kotu − temel kalınlığı − grobeton),
+    (4) kullanıcının girdiği parametre, (5) program varsayılanı (kontrol listesinde sorulur)."""
+    ev = merge_materials([d.materials or {} for d in drawings])
+
+    def val(code: str) -> tuple[float | None, str]:
+        e = ev.get(code) or {}
+        try:
+            return float(str(e.get("spec")).replace(",", ".")), (e.get("evidence") or [""])[0]
+        except (TypeError, ValueError):
+            return None, ""
+
+    depth, note = val("KAZI_DERINLIK")
+    if depth and depth > 0:
+        return {"m": round(depth, 2), "source": "note", "detail": f"kesitte yazılı: “{note}”"}
+    ground, g_note = val("KOT_ZEMIN")
+    bottom, b_note = val("KOT_KAZI_TABAN")
+    if ground is not None and bottom is not None and ground - bottom > 0.2:
+        return {"m": round(ground - bottom, 2), "source": "kots",
+                "detail": f"tabii zemin {ground:+.2f} − kazı tabanı {bottom:+.2f} (“{g_note}”; “{b_note}”)"}
+    if found_kot is not None:
+        lean = float(params.get("lean_concrete_cm") or 0.0) / 100.0
+        top = ground if ground is not None else 0.0
+        d = top - (found_kot - found_thickness - lean)
+        if d > 0.2:
+            src = f"tabii zemin {ground:+.2f}" if ground is not None else "zemin ±0,00 kabulü"
+            return {"m": round(d, 2), "source": "foundation_kot",
+                    "detail": f"{src} − (temel kotu {found_kot:+.2f} − kalınlık {found_thickness:g} m − grobeton {lean:g} m)"}
+    raw = project.params or {}
+    if raw.get("excavation_depth_m"):
+        return {"m": float(raw["excavation_depth_m"]), "source": "param", "detail": "proje parametresi (siz girdiniz)"}
+    return {"m": float(params.get("excavation_depth_m") or 0.0), "source": "default",
+            "detail": "program varsayılanı — kesitte kazı / tabii zemin kotu yazmıyor"}
+
+
+def roof_zones(project: Project, session: Session, drawings: list[Drawing] | None = None) -> list[dict]:
+    """Çatı planındaki bölgeler: her kapalı alanın sistemi, alanı ve kanıtı.
+
+    Sistem bölgenin içine yazılmış nottan gelir (`detectors/standard.py: assign_roof_zones`). İçinde yazı
+    olmayan bölge katmanın kalemiyle kalır ("layer"), iki sistem yazan bölge seçim bekler ("conflict")."""
+    from .parser.detectors.standard import ROOF_ZONE_BASE
+    if drawings is None:
+        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    rows: list[dict] = []
+    for d in drawings:
+        for e in _included_elements(d, session):
+            meta = e.meta or {}
+            code = str(meta.get("ksf_code") or e.etype or "").upper()
+            if code not in ROOF_ZONE_BASE or (e.area or 0.0) <= 0:
+                continue
+            rows.append({"drawing": d.label or d.filename, "system": code, "area": round(e.area, 2),
+                         "note": meta.get("zone_note") or "",
+                         "conflict": meta.get("zone_conflict") or [],
+                         "source": "note" if meta.get("zone_note") else ("conflict" if meta.get("zone_conflict") else "layer")})
+    return sorted(rows, key=lambda z: -z["area"])
 
 
 def roof_area(project: Project, session: Session, items: list[BoqItem] | None = None,
@@ -823,7 +1084,8 @@ def roof_area(project: Project, session: Session, items: list[BoqItem] | None = 
         items = project_boq(project, session, expand=False)
     measured = sum(it.quantity for it in items if it.kind in ROOF_KINDS and it.unit == "m²" and not it.detail.get("info")
                    and not it.detail.get("roof_auto"))
-    out = {"area": 0.0, "source": "none", "detail": "", "system": "", "system_source": "", "candidates": []}
+    out = {"area": 0.0, "source": "none", "detail": "", "system": "", "system_source": "", "candidates": [],
+           "zones": roof_zones(project, session, drawings)}
     if measured > 0:
         out.update(area=round(measured, 2), source="measured", detail="çizimde ölçülen çatı kalemi")
     elif params.get("roof_area_m2"):
@@ -862,8 +1124,13 @@ def roof_area(project: Project, session: Session, items: list[BoqItem] | None = 
     cands = [c for c in ROOF_SYSTEM_EVIDENCE if c in evidence]
     out["candidates"] = cands
     code = str(params.get("roof_system") or "").strip().upper()
+    zoned = [z for z in out["zones"] if z["source"] == "note"]
     if code:
         out.update(system=code, system_source="manual")
+    elif zoned:
+        # bölge bazlı okundu: proje geneli tek sistem yok, her bölge kendi sistemiyle ölçüldü
+        systems = sorted({z["system"] for z in out["zones"]})
+        out.update(system=" + ".join(systems), system_source="zones")
     elif len(cands) == 1:
         out.update(system=cands[0], system_source="evidence")
     return out
@@ -889,36 +1156,104 @@ def roof_items(project: Project, session: Session, catalog: Catalog, items: list
 
 
 DEFAULT_FINISH_KEYWORDS = "LOBİ,LOBI,VİTRİN,VITRIN,GİRİŞ,GIRIS,HOL,KORİDOR,KORIDOR,FUAYE"
+# Islak hacim mahal adı: zemin / duvar seramiği ve sürme izolasyon ayrı kuralla gelir, şap / kaplama kuralına girmez.
+WET_ROOM = re.compile(r"\bWC\b|BANYO|DU[SŞ]\b|ISLAK|LAVABO|TUVALET|BATHROOM|TOILET", re.IGNORECASE)
 
 
 def finish_area(project: Project, drawings: list[Drawing], params: dict | None = None) -> dict:
-    """Şap / döşeme kaplaması alanı: (1) finish_area_m2 parametresi, (2) planlardaki mahal alanı yazılarından seçili
-    mahal türleri (finish_rooms anahtar kelimeleri; kiracı mağazaları gibi diğerleri dışarıda kalır)."""
+    """Şap / döşeme kaplaması: alan, kaplama TİPİ ve şap KALINLIĞI — hepsi çizimden.
+
+    Mahal yazısının yanına yazılmış not ("ŞAP 5 CM", "SERAMİK 60x60", parser/analyzer.room_rows) o mahallin
+    kaplamasını ve şap kalınlığını verir; notu olan mahal, mahal türü listesinde geçmese de kapsama girer.
+    Notu olmayan mahaller için sıra: (1) finish_area_m2 parametresi, (2) mahal türü anahtar kelimeleri."""
     from .planset import normalize_title
     params = params or project_params(project)
     kws = [k.strip() for k in str(params.get("finish_rooms") or DEFAULT_FINISH_KEYWORDS).split(",") if k.strip()]
     kws_n = [normalize_title(k) for k in kws]
-    out = {"area": 0.0, "source": "none", "detail": "", "keywords": kws, "rooms": [], "excluded": [], "excluded_area": 0.0}
+    out = {"area": 0.0, "source": "none", "detail": "", "keywords": kws, "rooms": [], "excluded": [], "excluded_area": 0.0,
+           "by_finish": [], "by_screed": [], "untyped_area": 0.0}
     if params.get("finish_area_m2"):
-        out.update(area=float(params["finish_area_m2"]), source="manual", detail="şap / kaplama alanı (elle girildi)")
+        a = float(params["finish_area_m2"])
+        cm, src, det = _screed_fallback(project, drawings, params)
+        out.update(area=a, source="manual", detail="şap / kaplama alanı (elle girildi)", untyped_area=a,
+                   by_screed=[{"cm": cm, "area": a, "rooms": [], "source": src, "detail": det}] if cm > 0 else [])
         return out
     total = 0.0
+    groups: dict[tuple[str, str], dict] = {}
+    screeds: dict[float, dict] = {}
     for d in drawings:
         mult = max(1, d.storey_count or 1)
         for r in (d.rooms or []):
-            name_n = normalize_title(r.get("name") or "")
-            hit = any(k and k in name_n for k in kws_n)
-            row = {"drawing": d.label or d.filename, "name": r.get("name"), "area_m2": r.get("area_m2", 0.0), "included": hit}
+            name = str(r.get("name") or "")
+            name_n = normalize_title(name)
+            note = r.get("finish") or {}
+            wet = bool(WET_ROOM.search(name))
+            # notu olan mahal, tür listesinde geçmese de kapsamdadır (çizim öyle diyor). Islak hacim zemini
+            # ayrı kuralla (seramik + sürme izolasyon) gelir: çift saymamak için yalnız açıkça istenirse girer.
+            by_note = bool(note) or bool(r.get("screed_cm"))
+            by_kw = any(k and k in name_n for k in kws_n)
+            hit = by_kw or (by_note and not wet)
+            area = float(r.get("area_m2") or 0.0) * mult
+            row = {"drawing": d.label or d.filename, "name": r.get("name"), "area_m2": r.get("area_m2", 0.0), "included": hit,
+                   "finish": note.get("code", ""), "finish_spec": note.get("spec", ""), "finish_text": note.get("text", ""),
+                   "screed_cm": r.get("screed_cm") or 0.0}
             out["rooms"].append(row)
-            if hit:
-                total += float(r.get("area_m2") or 0.0) * mult
+            if not hit:
+                out["excluded"].append(f"{name} {r.get('area_m2', 0):,.0f} m²" + (" (ıslak hacim)" if wet else ""))
+                out["excluded_area"] += area
+                continue
+            total += area
+            if note.get("code"):
+                g = groups.setdefault((note["code"], note.get("spec") or ""),
+                                      {"code": note["code"], "spec": note.get("spec") or "", "area": 0.0, "rooms": [], "texts": []})
+                g["area"] += area
+                g["rooms"].append(name)
+                if note.get("text") and note["text"] not in g["texts"]:
+                    g["texts"].append(note["text"])
             else:
-                out["excluded"].append(f"{r.get('name')} {r.get('area_m2', 0):,.0f} m²")
-                out["excluded_area"] += float(r.get("area_m2") or 0.0) * mult
+                out["untyped_area"] += area
+            cm = float(r.get("screed_cm") or 0.0)
+            if cm > 0:
+                sc = screeds.setdefault(cm, {"cm": cm, "area": 0.0, "rooms": [], "source": "rooms",
+                                             "detail": r.get("screed_note") or ""})
+                sc["area"] += area
+                sc["rooms"].append(name)
     if total > 0:
         n = sum(1 for r in out["rooms"] if r["included"])
-        out.update(area=round(total, 2), source="rooms", detail=f"seçili mahaller ({n} mahal: {', '.join(kws[:4])}…) toplamı")
+        typed = sum(g["area"] for g in groups.values())
+        det = f"seçili mahaller ({n} mahal: {', '.join(kws[:4])}…) toplamı"
+        if typed > 0:
+            det = f"{n} mahal; {typed:,.0f} m²'sinin kaplama tipi mahal notundan okundu"
+        out.update(area=round(total, 2), source="rooms", detail=det)
+    out["by_finish"] = sorted(groups.values(), key=lambda g: -g["area"])
+    # kalınlığı yazmayan mahaller: çizimin genel notu, yoksa kullanıcı parametresi, yoksa program varsayılanı
+    rest = round(total - sum(s["area"] for s in screeds.values()), 2)
+    if total > 0 and (rest > 0.01 or not screeds):
+        cm, src, det = _screed_fallback(project, drawings, params)
+        if cm > 0:
+            sc = screeds.setdefault(cm, {"cm": cm, "area": 0.0, "rooms": [], "source": src, "detail": det})
+            sc["area"] += max(rest, 0.0)
+            if sc["source"] != src and rest > 0:
+                # aynı kalınlık hem mahal notundan hem genel nottan geldi: ikinci kaynağı da yaz
+                sc["also"] = {"area": round(rest, 2), "source": src, "detail": det}
+    out["by_screed"] = sorted(screeds.values(), key=lambda s: -s["area"])
     return out
+
+
+def _screed_fallback(project: Project, drawings: list[Drawing], params: dict) -> tuple[float, str, str]:
+    """Mahal notu olmayan alan için şap kalınlığı: çizimin genel notu > kullanıcı parametresi > varsayılan."""
+    ev = merge_materials([d.materials or {} for d in drawings]).get("SAP") or {}
+    try:
+        cm = float(str(ev.get("spec") or "").replace(",", "."))
+    except ValueError:
+        cm = 0.0
+    if cm > 0:
+        note = (ev.get("evidence") or [""])[0]
+        return cm, "drawing", f"çizim notundan: “{note}”"
+    raw = project.params or {}
+    if raw.get("screed_cm"):
+        return float(raw["screed_cm"]), "param", "proje parametresi (siz girdiniz)"
+    return float(params.get("screed_cm") or 5.0), "default", "program varsayılanı — çizimde şap kalınlığı yazmıyor"
 
 
 # Kavisli / kemerli doğrama: bu sözcükler geçen poz yazısı kemer detayı demektir.
@@ -964,15 +1299,17 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
     out: list[BoqItem] = []
     check: list[dict] = []
 
-    def add(code: str, spec: str, q: float, note: str, rule: str):
+    def add(code: str, spec: str, q: float, note: str, rule: str, source: str = ""):
+        """source: kalemin dayandığı parametre nereden geldi (rooms / drawing / param / default) — kalite raporu bunu kullanır."""
         it = catalog.get(code)
         if not it or q <= 0 or rule in off:
             return
         group = slug(spec) if spec else "*"
+        detail = {"derived": True, "rule": rule} | ({"param_source": source} if source else {})
         out.append(BoqItem(key=f"{it.code.lower()}:{group}", kind=it.code.lower(), group=group,
                            label=it.name + (f" {spec}" if spec else ""), unit=it.unit, quantity=round(q, 3),
                            discipline=f"ksf:{it.discipline}", kind_label=it.name, discipline_label=catalog.discipline_name(it.discipline),
-                           notes=[f"Türetildi: {note}"], detail={"derived": True, "rule": rule}))
+                           notes=[f"Türetildi: {note}"], detail=detail))
 
     def ask(code: str, text: str, level: str = "required"):
         check.append({"code": code, "text": text, "level": level})
@@ -999,7 +1336,7 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
         mult = max(1, d.storey_count or 1)
         for r in (d.rooms or []):
             name = str(r.get("name") or "")
-            if re.search(r"\bWC\b|BANYO|DU[SŞ]\b|ISLAK|LAVABO|TUVALET|BATHROOM|TOILET", name, re.IGNORECASE):
+            if WET_ROOM.search(name):
                 wet_rooms.append((name, float(r.get("area_m2") or 0.0), mult))
     wet_area = sum(a * m for _, a, m in wet_rooms)
     if wet_area > 0:
@@ -1016,10 +1353,28 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
     fin = finish_area(project, drawings, params)
     if fin["area"] > 0:
         if "sap" not in kinds:
-            t = float(params.get("screed_cm") or 5.0)
-            add("SAP", f"{t:g}", fin["area"] * t / 100.0, f"{fin['detail']} × {t:g} cm", "sap")
+            # kalınlık mahal notundan okunduysa her kalınlık kendi kalemi olur; okunamayan alan tek kaleme düşer
+            for sc in fin["by_screed"]:
+                if sc["area"] <= 0:
+                    continue
+                def kaynak(src_code: str, detail: str, n: int = 0) -> str:
+                    return {"rooms": f"mahal notundan ({n} mahal)", "drawing": detail,
+                            "param": "proje parametresi (siz girdiniz)",
+                            "default": "VARSAYILAN — çizimde yazmıyor"}[src_code]
+                src = kaynak(sc["source"], sc["detail"], len(sc["rooms"]))
+                if sc.get("also"):
+                    a = sc["also"]
+                    src += f"; {a['area']:,.0f} m²'si {kaynak(a['source'], a['detail'], len(sc['rooms']))}"
+                add("SAP", f"{sc['cm']:g}", sc["area"] * sc["cm"] / 100.0,
+                    f"{sc['area']:,.0f} m² × {sc['cm']:g} cm; kalınlık: {src}", "sap", sc["source"])
         if "doseme_kaplama" not in kinds and not any(k in kinds for k in ("seramik_zemin", "laminat", "epoksi")):
-            add("DOSEME_KAPLAMA", "", fin["area"], f"{fin['detail']}; tip seçin (seramik / parke / epoksi)", "kaplama")
+            for g in fin["by_finish"]:
+                rooms = ", ".join(g["rooms"][:4]) + ("…" if len(g["rooms"]) > 4 else "")
+                add(g["code"], g["spec"], g["area"],
+                    f"{g['area']:,.0f} m² — tip mahal notundan: “{'; '.join(g['texts'][:2])}” ({rooms})", "kaplama", "rooms")
+            if fin["untyped_area"] > 0:
+                add("DOSEME_KAPLAMA", "", fin["untyped_area"],
+                    f"{fin['untyped_area']:,.0f} m² — mahal notunda kaplama tipi yazmıyor; tip seçin (seramik / parke / epoksi)", "kaplama")
     if fin["source"] == "none":
         ask("kaplama_alani", "Şap / döşeme kaplaması için alan yok: planda mahal alanı yazısı (LOBİ 45 m²) bulunamadı ya da seçili mahal "
                             "türleri (" + ", ".join(fin["keywords"]) + ") geçmiyor. Proje parametrelerinden mahal türlerini ya da alanı elle girin.")
@@ -1028,22 +1383,42 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                             + ("…" if len(fin["excluded"]) > 8 else "") + " — kiracı işi değilse mahal türlerine ekleyin.", "optional")
     # 3) temel -> su yalıtımı, grobeton, koruma şapı
     found_area = 0.0
+    found_kots: list[float] = []
+    found_thick: list[float] = []
     for d in drawings:
         if d.discipline == DEFAULT_DISCIPLINE:
-            found_area += sum((e.area or 0.0) for e in _included_elements(d, session) if e.etype == "foundation")
+            fnd = [e for e in _included_elements(d, session) if e.etype == "foundation"]
+            found_area += sum((e.area or 0.0) for e in fnd)
+            if fnd and d.kot is not None:
+                found_kots.append(float(d.kot))
+            found_thick += [float(e.thickness) for e in fnd if e.thickness]
     if found_area > 0:
         if "temel_su_yalitimi" not in kinds and "su_yalitim_membran" not in kinds:
             add("TEMEL_SU_YALITIMI", "", found_area, f"temel alanı {found_area:,.0f} m² (radye / sürekli temel)", "temel_yalitim")
+        lean = lean_concrete_cm(project, drawings, params)
         if "grobeton" not in kinds:
-            t = float(params.get("lean_concrete_cm") or 10.0)
-            add("GROBETON", f"{t:g}", found_area * t / 100.0, f"temel alanı × {t:g} cm", "grobeton")
+            t = lean["cm"]
+            add("GROBETON", f"{t:g}", found_area * t / 100.0,
+                f"temel alanı × {t:g} cm; kalınlık: "
+                + ("VARSAYILAN — çizimde yazmıyor" if lean["source"] == "default" else lean["detail"]),
+                "grobeton", lean["source"])
         if "koruma_sapi" not in kinds:
             add("KORUMA_SAPI", "5", found_area, "temel yalıtımı üstü koruma şapı 5 cm", "koruma_sapi")
-        depth = float(params.get("excavation_depth_m") or 0.0)
+        params = {**params, "lean_concrete_cm": lean["cm"]}      # kazi / geri dolgu aynı kalınlığı kullansın
+        exc_d = excavation_depth(project, drawings, params, min(found_kots) if found_kots else None,
+                                 max(found_thick) if found_thick else 0.0)
+        depth = exc_d["m"]
+        if exc_d["source"] == "default" and depth > 0:
+            ask("kazi_derinligi", f"Kazı derinliği çizimden okunamadı, {depth:g} m VARSAYILDI (temel alanı {found_area:,.0f} m² ile "
+                                  "çarpılıyor — metrajı doğrudan etkiler). Kesitte tabii zemin / kazı tabanı kotu varsa o paftayı yükleyin, "
+                                  "yoksa proje parametrelerinden derinliği girin.")
         if depth > 0 and "kazi" not in kinds:
             margin = float(params.get("excavation_margin") or 1.0)
             exc = found_area * depth * margin
-            add("KAZI", f"{depth*100:.0f}", exc, f"temel alanı {found_area:,.0f} m² × derinlik {depth:g} m × şev / çalışma payı {margin:g}", "kazi")
+            add("KAZI", f"{depth*100:.0f}", exc,
+                f"temel alanı {found_area:,.0f} m² × derinlik {depth:g} m × şev / çalışma payı {margin:g}; derinlik: "
+                + ("VARSAYILAN — çizimde yazmıyor" if exc_d["source"] == "default" else exc_d["detail"]),
+                "kazi", exc_d["source"])
             found_conc = sum(it.quantity for it in items if it.kind == "beton" and it.group == "foundation")
             lean = float(params.get("lean_concrete_cm") or 0.0) / 100.0 * found_area
             # bodrumlu yapıda çukuru bodrum yapısı doldurur: geri dolgu yalnız çevre şeridi
@@ -1057,6 +1432,14 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
             ask("drenaj", f"Temel var ({found_area:,.0f} m²): perimetre drenajı (drenaj borusu + levha) gerekiyorsa ekleyin.", "optional")
     # 4) çatı
     ra = roof_area(project, session, items, drawings, params)
+    for z in ra["zones"]:
+        if z["source"] == "conflict":
+            ask("cati_bolge_cakisma", f"Çatıda {z['area']:,.0f} m²'lik bölgenin içinde birden çok sistem yazıyor "
+                                      f"({', '.join(z['conflict'])}): hangisi geçerli? Elemanlar sayfasından seçin.")
+    bos = [z for z in ra["zones"] if z["source"] == "layer"]
+    if bos and any(z["source"] == "note" for z in ra["zones"]):
+        ask("cati_bolge_yazisiz", f"Çatıda {len(bos)} bölgenin ({sum(z['area'] for z in bos):,.0f} m²) içinde sistem yazısı yok; "
+                                  "katmanın kalemiyle ölçüldü — başka sistemse Elemanlar sayfasından seçin.", "optional")
     if ra["area"] > 0 and not ra["system"] and not any(k in kinds for k in ROOF_KINDS):
         hint = " Kesitte " + " / ".join(ra["candidates"]) + " notu var." if ra["candidates"] else ""
         ask("cati_sistemi", f"Çatı alanı {ra['area']:,.0f} m² ({ra['detail']}) ama çatı sistemi seçilmedi.{hint} Betonarme teras ise: eğim betonu, "

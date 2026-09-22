@@ -56,6 +56,7 @@ _ADDED_COLUMNS = [
     ("drawing", "block", "VARCHAR DEFAULT ''"),
     ("drawing", "blocks_seen", "JSON"),
     ("drawing", "rooms", "JSON"),
+    ("drawing", "spaces", "JSON"),
     ("drawing", "poz", "JSON"),
     ("drawing", "unit_verdict", "VARCHAR"),
     ("drawing", "disciplines", "JSON"),

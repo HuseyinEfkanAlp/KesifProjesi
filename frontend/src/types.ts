@@ -552,13 +552,43 @@ export interface FacadeArea {
   per_drawing: { drawing: string; drawing_id: number; perimeter: number; storey_height: number; storey_count: number; area: number }[]
 }
 
+/** Bir mahal (ya da bağımsız bölüm) ve kendi keşif kalemleri */
+export interface SpaceRow {
+  key: string
+  name: string
+  kind: 'mahal' | 'grup'
+  /** "DAİRE 1 / HOL" */
+  path: string
+  area: number
+  label_area: number
+  drawing: string
+  drawing_id: number
+  parent: string | null
+  children: string[]
+  items: BoqItem[]
+  /** yalnız grup için: kendi + çocuklarının toplamı */
+  total_items?: BoqItem[]
+  total_area?: number
+}
+
+export interface SpaceBreakdown {
+  spaces: SpaceRow[]
+  unassigned: BoqItem[]
+  unassigned_reason: string
+  warnings: string[]
+}
+
 export interface RoofInfo {
   area: number
   source: 'measured' | 'manual' | 'estimated' | 'none'
   detail: string
   system: string
-  system_source: 'manual' | 'evidence' | ''
+  /** 'zones': her bölge sistemini kendi içindeki nottan aldı */
+  system_source: 'manual' | 'evidence' | 'zones' | ''
   candidates: string[]
+  /** Çatı planındaki kapalı alanlar: bölge başına sistem ve kanıt */
+  zones: { drawing: string; system: string; area: number; note: string; conflict: string[]
+           source: 'note' | 'layer' | 'conflict' }[]
 }
 
 export interface FinishArea {
@@ -566,9 +596,16 @@ export interface FinishArea {
   source: 'manual' | 'rooms' | 'none'
   detail: string
   keywords: string[]
-  rooms: { drawing: string; name: string; area_m2: number; included: boolean }[]
+  rooms: { drawing: string; name: string; area_m2: number; included: boolean
+           finish: string; finish_spec: string; finish_text: string; screed_cm: number }[]
   excluded: string[]
   excluded_area: number
+  /** Kaplama tipi mahal notundan okunanlar (tip başına alan) */
+  by_finish: { code: string; spec: string; area: number; rooms: string[]; texts: string[] }[]
+  /** Şap kalınlığı: mahal notu > çizim notu > parametre > varsayılan */
+  by_screed: { cm: number; area: number; rooms: string[]; source: 'rooms' | 'drawing' | 'param' | 'default'; detail: string }[]
+  /** Kaplama tipi yazılmamış alan (m²) */
+  untyped_area: number
 }
 
 export interface DerivedItem { key: string; label: string; quantity: number; unit: string; rule: string; note: string }
@@ -804,7 +841,9 @@ export interface QualityReport {
     /** Tek tıkla uygulanabilen düzeltme (varsa): kontrol listesinde düğme olarak çıkar */
     fix?: { action: 'storey_height_auto'; label: string }
   }[]
-  assumptions: { key: string; label: string; value: string | number | null; source: 'default' | 'user' | 'drawing' }[]
+  assumptions: { key: string; label: string; value: string | number | null; source: 'default' | 'user' | 'drawing'
+                 /** source 'drawing' ise nereden okundu (mahal notundan / çizim notundan) */
+                 detail?: string }[]
   /** Sonucu ikinci bir yoldan sınayan bağımsız kontroller (backend: selfcheck.py) */
   selfcheck?: SelfCheck
   /** Kapsam sahipliği: aynı nesneyi ikinci kez çizen pafta onu tekrar saymaz (backend: quantity/scope.py) */

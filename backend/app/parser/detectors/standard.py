@@ -191,6 +191,9 @@ def detect_standard(drawing: Drawing, catalog: Catalog, params: DetectParams,
 
 # Katman adından katalog kalemi önerisi (eşlemeli çizimler için; kullanıcı onaylar)
 SUGGEST_RULES: list[tuple[str, str]] = [
+    # çelik çatı genel "PANEL" / "ÇATI" kurallarından önce gelir: trapez / sandviç yalnız çatı bağlamında
+    (r"[CÇ]EL[İI]K\s*[CÇ]ATI|[CÇ]ATI\s*[CÇ]EL[İI]K|\bMAKAS\b"
+     r"|([CÇ]ATI|ROOF).*(TRAPEZ|SANDV[İI][CÇ])|(TRAPEZ|SANDV[İI][CÇ]).*([CÇ]ATI|ROOF)", "CELIK_CATI"),
     (r"GAZBETON|YTONG|AAC", "DUVAR_YTONG"), (r"BRICK|TU[GĞ]LA", "DUVAR_TUGLA"), (r"B[Iİ]MS", "DUVAR_BIMS"),
     (r"AL[CÇ][Iİ]PAN|DRYWALL|GYPSUM", "DUVAR_ALCIPAN"), (r"MANTOLAMA|INSUL|IZOLASYON|İZOLASYON|YALITIM", "MANTOLAMA"),
     (r"GLASS|\bCAM\b|GLAZ", "CAM"), (r"WINDOW|PENCERE|\bWIN\b", "PENCERE"), (r"DOOR|KAPI", "KAPI"),
@@ -211,11 +214,12 @@ _SUGGEST = [(re.compile(p, re.IGNORECASE), c) for p, c in SUGGEST_RULES]
 # Katman adından bulunan kalem, çizim yazıları bir katmanlı sistemi anlatıyorsa o sisteme yükseltilir:
 # ÇATI katmanı + "KENET" yazısı -> KENET_CATI; MANTOLAMA katmanı -> MANTOLAMA_SISTEM (bileşenleri ayrı kalem olur).
 SYSTEM_UPGRADES: dict[str, list[str]] = {
-    "CATI_KIREMIT": ["KENET_CATI", "TERAS_CATI", "KIREMIT_CATI"],
+    "CATI_KIREMIT": ["KENET_CATI", "TERAS_CATI", "CELIK_CATI", "KIREMIT_CATI"],
     "MANTOLAMA": ["MANTOLAMA_SISTEM"],
 }
 # Sistem kodu -> yazıda kanıt gerekli mi (MANTOLAMA katmanı kanıtsız da sisteme yükselir)
-UPGRADE_NEEDS_EVIDENCE = {"KENET_CATI": True, "TERAS_CATI": True, "KIREMIT_CATI": True, "MANTOLAMA_SISTEM": False}
+UPGRADE_NEEDS_EVIDENCE = {"KENET_CATI": True, "TERAS_CATI": True, "KIREMIT_CATI": True, "CELIK_CATI": True,
+                          "MANTOLAMA_SISTEM": False}
 
 
 def suggest_item(layer: str, catalog: Catalog, materials: dict | None = None, overrides: dict | None = None) -> str | None:
@@ -232,6 +236,72 @@ def suggest_item(layer: str, catalog: Catalog, materials: dict | None = None, ov
                     return sys_code
             return code
     return None
+
+
+# Çatı bölgeleri: çatı olarak ölçülmüş her kapalı alan kendi sistemini TAŞIR.
+# Proje genelinde tek "çatı sistemi" yerine, çatı planında bölgenin içine yazılan not ("KENET ÇATI", "KİREMİT")
+# o bölgenin sistemini belirler: "Bölge 1: 300 m² kenet · Bölge 2: 120 m² kiremit", her biri kendi reçetesiyle.
+ROOF_ZONE_BASE = {"CATI_KIREMIT", "KENET_CATI", "TERAS_CATI", "KIREMIT_CATI", "CELIK_CATI", "CATI_MEMBRAN"}
+
+
+def assign_roof_zones(drawing: Drawing, elements: list[DetectedElement], catalog: Catalog) -> list[str]:
+    """Çatı kalemlerini bölge bazlı sisteme çevirir; değiştirilen elemanları yerinde günceller, uyarı döner.
+
+    Bir bölgenin içinde tek sistem yazıyorsa o sisteme geçer (kanıt: yazının kendisi). İki farklı sistem
+    yazıyorsa seçim yapılmaz — belirsizlik kullanıcıya sorulur (meta.zone_conflict). Notu olmayan bölge
+    katmanın kendi kalemiyle kalır (meta.zone_unknown): çatı sistemi soru listesine düşer."""
+    from shapely.geometry import Point as SPoint, Polygon as SPolygon
+    from ..materials import system_notes
+    roof = [e for e in elements
+            if ((e.meta or {}).get("ksf_code") or e.etype or "").upper() in ROOF_ZONE_BASE and e.area > 0 and len(e.points) >= 3]
+    if len(roof) < 1:
+        return []
+    notes = system_notes(drawing)
+    if not notes:
+        return []
+    warnings: list[str] = []
+    changed: list[str] = []
+    for el in roof:
+        try:
+            poly = SPolygon(el.points)
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+        except Exception:
+            continue
+        inside = [n for n in notes if poly.contains(SPoint(n["pt"]))]
+        codes = {n["code"] for n in inside}
+        if len(codes) > 1:
+            el.meta = {**(el.meta or {}), "zone_conflict": sorted(codes)}
+            el.warnings.append("Bölgede birden çok çatı sistemi yazıyor (" + ", ".join(sorted(codes)) + "): seçim gerekli")
+            continue
+        if not codes:
+            el.meta = {**(el.meta or {}), "zone_unknown": True}
+            continue
+        code = codes.pop()
+        item = catalog.get(code)
+        if not item:
+            continue
+        note = next(n["text"] for n in inside if n["code"] == code)
+        same = code == ((el.meta or {}).get("ksf_code") or el.etype or "").upper()
+        # sistem zaten doğruysa bile notu kanıt olarak yaz: bölge "yazısız" sanılmasın
+        el.meta = {**(el.meta or {}), "ksf_code": code, "measure": "area", "discipline": item.discipline,
+                   "zone_note": note, "zone_area": round(el.area, 2)}
+        el.warnings.append(f"Çatı bölgesi: sistem plandaki nottan okundu (“{note}”)")
+        if same:
+            continue
+        el.etype = code.lower()
+        el.name = item.name
+        changed.append(f"{el.area:,.0f} m² → {item.name}")
+    read = [e for e in roof if (e.meta or {}).get("zone_note")]
+    if read:
+        warnings.append(f"Çatı bölge bazlı okundu ({len(read)} bölge, {sum(e.area for e in read):,.0f} m²): "
+                        + "; ".join(f"{e.area:,.0f} m² {(e.meta or {}).get('zone_note')}" for e in read[:6])
+                        + ("…" if len(read) > 6 else "") + ". Sistem, bölgenin içine yazılmış nottan alındı.")
+    unknown = [e for e in roof if (e.meta or {}).get("zone_unknown")]
+    if read and unknown:
+        warnings.append(f"Çatıda {len(unknown)} bölgenin ({sum(e.area for e in unknown):,.0f} m²) içinde sistem yazısı yok; "
+                        "katmanın kalemiyle kaldı — sistemi Elemanlar sayfasından seçin.")
+    return warnings
 
 
 def detect_mapped(drawing: Drawing, profile, catalog: Catalog, params: DetectParams,

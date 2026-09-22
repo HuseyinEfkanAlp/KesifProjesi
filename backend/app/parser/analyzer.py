@@ -20,7 +20,7 @@ from .detectors.mechanical import detect_mechanical
 from .detectors.openings import detect_openings, detect_poz_openings, poz_catalog
 from .detectors.shear_walls import detect_shear_walls
 from .detectors.slabs import detect_slabs
-from .detectors.standard import detect_mapped, detect_standard, standard_layers
+from .detectors.standard import assign_roof_zones, detect_mapped, detect_standard, standard_layers
 from .detectors.walls import detect_walls
 from .merge import merge_area_elements
 from .geometry import polygon_area
@@ -30,12 +30,13 @@ from .layer_profile import (ALL_TYPES, DEFAULT_DISCIPLINE, DISCIPLINES, MAPPED_D
 from .levels import parse_levels
 from .rebar_tables import kot_from_label, parse_rebar_label_groups, parse_rebar_tables, target_from_label
 from .loader import UNIT_SCALE, Drawing, load_dxf
-from .materials import scan_materials
 from .blocks import own_block_of_drawing, scan_drawing as scan_blocks
 from .rebar_mix import scan_drawing as scan_rebar_mix
 from .rebar_mix import scan_drawing_layers as scan_rebar_layers
-from .schedules import parse_rooms, parse_schedule
-from ..standard.catalog import Catalog
+from .materials import finish_of, scan_materials
+from .schedules import RoomRow, parse_room_area, parse_schedule
+from .spaces import detect_spaces, has_space_labels
+from ..standard.catalog import Catalog, parse_layer
 
 
 @dataclass
@@ -73,7 +74,8 @@ class AnalysisResult:
     rebar_layers: dict = field(default_factory=dict)  # alt / üst donatı kanıt sayısı (çift kat mı; parser/rebar_mix.py)
     blocks_seen: dict = field(default_factory=dict)  # yazılarda geçen blok adları: {"A1": 1, "C2": 1} (parser/blocks.py)
     own_block: str = ""                              # paftanın kendi bloğu (en iri "… BLOK" yazısı = pafta başlığı)
-    rooms: list[dict] = field(default_factory=list)  # mahal alanı yazıları (parser/schedules.py: parse_rooms)
+    rooms: list[dict] = field(default_factory=list)  # mahal alanı yazıları + bitiş notu (room_rows)
+    spaces: list[dict] = field(default_factory=list)  # mahaller: duvarlardan kapalı alanlar (parser/spaces.py)
     poz: dict = field(default_factory=dict)          # doğrama pozları: sizes / kinds / prefixes (detectors/openings.py: poz_catalog)
     unit_verdict: str | None = None       # yazı yükseklikleri / etiketlerin desteklediği birim (yeterli kanıt yoksa None)
     disciplines: list[str] = field(default_factory=list)      # bu paftada çalıştırılan sezgisel disiplinler (ana + ek)
@@ -91,6 +93,7 @@ class AnalysisResult:
             "elements": [e.to_dict() for e in self.elements],
             "layers": [l.to_dict() for l in self.layers],
             "warnings": self.warnings, "suggested_unit": self.suggested_unit, "materials": self.materials,
+            "spaces": self.spaces,
             "rebar_mix": self.rebar_mix, "rebar_layers": self.rebar_layers,
             "blocks_seen": self.blocks_seen, "own_block": self.own_block,
             "poz": self.poz, "unit_verdict": self.unit_verdict,
@@ -427,8 +430,91 @@ def analyze_rebar(drawing: Drawing, label: str = "", rebar_target: str | None = 
     return result
 
 
+# Mahal notunun o mahalle ait sayılması için azami uzaklık: mahal yarı genişliği (0,6·√alan), en az 2 m.
+def _room_radius(area_m2: float) -> float:
+    return max(2.0, 0.6 * (max(area_m2, 0.0) ** 0.5))
+
+
+# Mahal sınırını çizen katmanlar: KÇS duvar / kolon / perde kalemleri ve adı duvar-kolon deseni tutan katmanlar.
+SPACE_CODES = ("DUVAR", "KOLON", "PERDE")
+
+
+def space_layers(drawing: Drawing, profile, catalog: Catalog | None) -> list[str]:
+    """Mahal sınırı çizen katmanlar; pafta KÇS de olsa sezgisel de olsa aynı kural."""
+    out: set[str] = set()
+    for name in drawing.layers:
+        p = parse_layer(name, catalog) if catalog else None
+        if p and any(p.code.upper().startswith(c) for c in SPACE_CODES):
+            out.add(name)
+            continue
+        if profile is not None and profile.classify(name, "architectural") in ("wall", "column", "shear_wall"):
+            out.add(name)
+    return sorted(out)
+
+
+def scan_spaces(drawing: Drawing, profile, catalog: Catalog | None) -> tuple[list[dict], list[str]]:
+    """Mahalleri çıkarır (sınır katmanı yoksa sessizce boş döner)."""
+    if not has_space_labels(drawing):
+        return [], []                      # mahal yazısı yok: kalıp / donatı / cephe paftası, çokgen aranmaz
+    layers = space_layers(drawing, profile, catalog)
+    if not layers:
+        return [], []
+    sps, warns = detect_spaces(drawing, layers)
+    return [x.to_dict() for x in sps], warns
+
+
 def room_rows(drawing: Drawing) -> list[dict]:
-    return [r.to_dict() for r in parse_rooms([e.text for e in drawing.entities if e.kind == "text" and e.text])]
+    """Mahal alanı yazıları + mahallin içine yazılmış döşeme bitişi notu.
+
+    "LOBİ 45.20 m2" alanı verir; hemen altındaki "ŞAP 5 CM + SERAMİK 60x60" o mahallin kaplama tipini ve şap
+    kalınlığını verir. Her not EN YAKIN mahallin sayılır; komşu mahalle taşmaz. Notu olmayan mahalin şapı
+    çizimin genel notundan gelir (services._screed_fallback)."""
+    rooms: list[tuple[RoomRow, tuple[float, float] | None]] = []
+    notes: list[tuple[dict, tuple[float, float] | None]] = []
+    for e in drawing.entities:
+        if e.kind != "text" or not e.text:
+            continue
+        pt = tuple(e.points[0][:2]) if e.points else None
+        r = parse_room_area(e.text)
+        if r:
+            rooms.append((r, pt))
+            continue
+        f = finish_of(e.text)
+        if f:
+            notes.append((f, pt))
+    rows: list[dict] = []
+    seen: set[tuple[str, float]] = set()
+    pts: list[tuple[float, float] | None] = []
+    for r, pt in rooms:
+        key = (r.name, round(r.area_m2, 2))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(r.to_dict())
+        pts.append(pt)
+    for f, npt in notes:
+        i = _nearest_room(npt, rows, pts)
+        if i is None:
+            continue                      # hiçbir mahalle yakın değil: pafta geneli not
+        if f["code"] and "finish" not in rows[i]:
+            rows[i]["finish"] = {"code": f["code"], "spec": f["spec"], "text": f["text"]}
+        if f["screed_cm"] > 0 and not rows[i].get("screed_cm"):
+            rows[i]["screed_cm"], rows[i]["screed_note"] = f["screed_cm"], f["text"]
+    return rows
+
+
+def _nearest_room(npt, rows: list[dict], pts: list) -> int | None:
+    """Nota en yakın mahal (o mahallin yarıçapı içindeyse). Konumsuz yazı eşleşmez: genel nottur."""
+    if npt is None:
+        return None
+    best, best_d = None, None
+    for i, pt in enumerate(pts):
+        if pt is None:
+            continue
+        d = ((pt[0] - npt[0]) ** 2 + (pt[1] - npt[1]) ** 2) ** 0.5
+        if d <= _room_radius(rows[i].get("area_m2") or 0.0) and (best_d is None or d < best_d):
+            best, best_d = i, d
+    return best
 
 
 def schedule_elements(drawing: Drawing, catalog: Catalog | None, label: str = "") -> tuple[list[DetectedElement], list[str]]:
@@ -489,6 +575,7 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
         return _unit_only_result(drawing, MAPPED_DISCIPLINE, suggested)
     materials = scan_materials(drawing)
     elements, warns, info = detect_mapped(drawing, profile, catalog, params, materials)
+    warns += assign_roof_zones(drawing, elements, catalog)   # çatı: her kapalı alan kendi sistemini nottan alır
     infos = []
     for name in drawing.layers:
         i = info.get(name, {})
@@ -507,6 +594,8 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
     result.rebar_layers = scan_rebar_layers(drawing)
     result.blocks_seen, result.own_block = scan_blocks(drawing), own_block_of_drawing(drawing)
     result.rooms = room_rows(drawing)
+    result.spaces, sp_warns = scan_spaces(drawing, profile, catalog)
+    result.warnings.extend(sp_warns)
     if suggested and suggested != drawing.unit:
         result.suggested_unit = suggested
         result.warnings.append(f"Çizim birimi '{drawing.unit}' yazılı ama yazı yükseklikleri '{suggested}' ile uyuşuyor. "
@@ -529,6 +618,8 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
     catalog = catalog or Catalog()
     if discipline == STANDARD_DISCIPLINE and not any(ksf_structural_type(p.code) for p in standard_layers(drawing, catalog).values()):
         result = analyze_standard(drawing, catalog, params)
+        result.spaces, sp_warns = scan_spaces(drawing, profile, catalog)
+        result.warnings.extend(sp_warns)
         result.materials = scan_materials(drawing)
         result.rebar_mix = scan_rebar_mix(drawing)
         result.rebar_layers = scan_rebar_layers(drawing)
@@ -667,6 +758,9 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
             result.warnings.append(f"Mahal alanı yazıları okundu: {len(result.rooms)} mahal, "
                                    f"{sum(r['area_m2'] for r in result.rooms):,.0f} m² (şap / kaplama mahal bazında türetilir)")
 
+    # mahal SINIRLARI: duvar / kolon / perde katmanlarından kapalı alanlar (keşif mahal bazında dökülsün)
+    result.spaces, sp_warns = scan_spaces(drawing, profile, catalog)
+    result.warnings.extend(sp_warns)
     result.discipline_hints = {} if is_std else discipline_hints(drawing, profile, discs)
     for d, n in result.discipline_hints.items():
         note = " (mimari paftadaki kolon / kiriş izleri statik planda sayılır; ayrıca açmayın)" if d == "structural" else ""

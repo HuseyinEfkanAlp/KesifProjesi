@@ -1,0 +1,103 @@
+"""Mahaller: mimari plandaki duvarlardan mahal sınırı, daire / mahal hiyerarşisi, mahal bazında keşif."""
+from __future__ import annotations
+
+import ezdxf
+import pytest
+
+
+def _daire_dxf(path):
+    """Daire 1 (12×8 m) içinde SALON + HOL, yanında ORTAK KORİDOR; kameralar ve prizler yerleştirilmiş.
+
+    HOL ile SALON arasındaki duvarda 1 m kapı boşluğu var: mahal ancak boşluk köprülenirse kapanır."""
+    doc = ezdxf.new("R2010"); doc.header["$INSUNITS"] = 6          # metre
+    for n in ("DUVAR", "YAZI", "KSF-ZAY-KAMERA-DOME", "KSF-ELK-PRIZ-TOPRAKLI"):
+        doc.layers.add(n)
+    doc.blocks.new(name="KAM").add_circle((0, 0), 0.15)
+    doc.blocks.new(name="PRZ").add_circle((0, 0), 0.10)
+    msp = doc.modelspace()
+    msp.add_lwpolyline([(0, 0), (12, 0), (12, 8), (0, 8)], close=True, dxfattribs={"layer": "DUVAR"})
+    msp.add_line((8, 0), (8, 3.5), dxfattribs={"layer": "DUVAR"})   # SALON | HOL ayıran duvar
+    msp.add_line((8, 4.5), (8, 8), dxfattribs={"layer": "DUVAR"})   # (arada 1 m kapı boşluğu)
+    msp.add_lwpolyline([(13, 0), (20, 0), (20, 8), (13, 8)], close=True, dxfattribs={"layer": "DUVAR"})
+    for t, (x, y) in [("DAİRE 1", (3, 7)), ("SALON\\P64.00 m2", (3, 4)),
+                      ("HOL\\P32.00 m2", (10, 4)), ("ORTAK KORİDOR\\P56.00 m2", (16, 4))]:
+        msp.add_text(t, dxfattribs={"layer": "YAZI", "height": 0.3}).set_placement((x, y))
+    for x, y in [(9, 2), (11, 6)]:                                  # HOL: 2 kamera
+        msp.add_blockref("KAM", (x, y), dxfattribs={"layer": "KSF-ZAY-KAMERA-DOME"})
+    for x, y in [(2, 2), (5, 6), (6, 2)]:                           # SALON: 3 kamera
+        msp.add_blockref("KAM", (x, y), dxfattribs={"layer": "KSF-ZAY-KAMERA-DOME"})
+    msp.add_blockref("KAM", (16, 2), dxfattribs={"layer": "KSF-ZAY-KAMERA-DOME"})   # koridor: 1
+    for x, y in [(1, 1), (2, 7), (6, 7), (7, 1)]:                   # SALON: 4 priz
+        msp.add_blockref("PRZ", (x, y), dxfattribs={"layer": "KSF-ELK-PRIZ-TOPRAKLI"})
+    msp.add_blockref("PRZ", (9, 7), dxfattribs={"layer": "KSF-ELK-PRIZ-TOPRAKLI"})  # HOL: 1 priz
+    doc.saveas(path)
+    return path
+
+
+def test_detect_spaces_hierarchy(tmp_path):
+    """Duvarlardan mahal: kapı boşluğu köprülenir, daire içindeki odalar onun çocuğu olur."""
+    from app.parser.loader import load_dxf
+    from app.parser.spaces import detect_spaces
+    d = load_dxf(str(_daire_dxf(tmp_path / "daire.dxf")))
+    spaces, warns = detect_spaces(d, ["DUVAR"])
+    by = {s.name: s for s in spaces}
+    assert set(by) == {"DAİRE 1", "SALON", "HOL", "ORTAK KORİDOR"}
+    assert by["DAİRE 1"].kind == "grup" and by["SALON"].kind == "mahal"
+    assert by["SALON"].parent == by["DAİRE 1"].index and by["HOL"].parent == by["DAİRE 1"].index
+    assert by["ORTAK KORİDOR"].parent is None                  # daire dışında, ayrı mahal
+    # çizimden ölçülen alan ile yazıdaki alan birbirini doğruluyor
+    assert by["SALON"].area == pytest.approx(64.0, abs=0.5) and by["SALON"].label_area == 64.0
+    assert by["HOL"].area == pytest.approx(32.0, abs=0.5)      # kapı boşluğu köprülenmeseydi kapanmazdı
+    assert by["DAİRE 1"].area == pytest.approx(96.0, abs=0.5)
+    assert any("Mahal okundu" in w for w in warns)
+
+
+def test_space_breakdown_api(client, tmp_path):
+    """Mahal bazında keşif: kamera / priz noktası hangi mahaldeyse o mahale sayılır, daire toplanır."""
+    p = _daire_dxf(tmp_path / "daire.dxf")
+    pid = client.post("/api/projects", json={"name": "Mahal"}).json()["id"]
+    with open(p, "rb") as f:
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("ZEMİN KAT PLANI.dxf", f, "application/dxf")})
+    assert r.status_code == 201, r.text
+    out = client.get(f"/api/projects/{pid}/spaces").json()
+    by = {s["name"]: s for s in out["spaces"]}
+    assert set(by) >= {"DAİRE 1", "SALON", "HOL", "ORTAK KORİDOR"}
+    assert by["HOL"]["path"] == "DAİRE 1 / HOL" and by["HOL"]["kind"] == "mahal"
+
+    def qty(space, kind):
+        return sum(i["quantity"] for i in space["items"] if i["kind"] == kind)
+
+    assert qty(by["HOL"], "kamera") == 2 and qty(by["SALON"], "kamera") == 3
+    assert qty(by["ORTAK KORİDOR"], "kamera") == 1
+    assert qty(by["SALON"], "priz") == 4 and qty(by["HOL"], "priz") == 1
+    # "evde 5 kamera": daire toplamı çocuklarının toplamıdır
+    daire = {i["kind"]: i["quantity"] for i in by["DAİRE 1"]["total_items"]}
+    assert daire["kamera"] == 5 and daire["priz"] == 5
+    # koridor daireye dahil değil: proje toplamı 6 kamera
+    assert sum(qty(s, "kamera") for s in out["spaces"] if s["kind"] == "mahal") == 6
+
+
+def test_label_clustering_real_world(tmp_path):
+    """Gerçek projede mahal etiketi PARÇALI yazılır: ad, kod ve alan ayrı TEXT nesneleridir.
+
+    (Yat Kulübü uygulama projesinden alınan gerçek düzen: "RESTORAN" / "L_Z_01" / ":" / "309.49 m²")"""
+    import ezdxf
+    from app.parser.loader import load_dxf
+    from app.parser.spaces import _labels
+    doc = ezdxf.new("R2010"); doc.header["$INSUNITS"] = 6
+    doc.layers.add("YAZI")
+    msp = doc.modelspace()
+    for i, (ad, kod, alan, y) in enumerate([("RESTORAN", "L_Z_01", "309.49 m²", 0.0),
+                                            ("MERDİVEN", "L_Z_M01", "32.37 m²", 40.0),
+                                            ("MERDİVEN", "L_Z_M02", "32.37 m²", 80.0)]):
+        msp.add_text(ad, dxfattribs={"layer": "YAZI", "height": 0.24}).set_placement((0, y + 0.64))
+        msp.add_text(kod, dxfattribs={"layer": "YAZI", "height": 0.24}).set_placement((-0.89, y))
+        msp.add_text(":", dxfattribs={"layer": "YAZI", "height": 0.24}).set_placement((-0.4, y))
+        msp.add_text(alan, dxfattribs={"layer": "YAZI", "height": 0.24}).set_placement((0, y))
+    p = tmp_path / "etiket.dxf"; doc.saveas(p)
+    labs = {l.code: l for l in _labels(load_dxf(str(p))) if l.area > 0}
+    assert set(labs) == {"L_Z_01", "L_Z_M01", "L_Z_M02"}
+    assert labs["L_Z_01"].name == "RESTORAN" and labs["L_Z_01"].area == 309.49
+    # aynı adlı ve aynı alanlı iki merdiven AYRI mahaldir: kodları farklı
+    assert labs["L_Z_M01"].name == labs["L_Z_M02"].name == "MERDİVEN"
+    assert labs["L_Z_M01"].area == labs["L_Z_M02"].area == 32.37

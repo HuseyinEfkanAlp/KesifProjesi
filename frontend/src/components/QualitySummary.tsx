@@ -47,7 +47,7 @@ export default function QualitySummary({ report, projectId, onFixed }: {
       </li>)}</ul>
       {report.assumptions.length > 0 && <div style={{ overflowX: 'auto', marginTop: 16 }}><table>
         <thead><tr><th>Hesap parametresi</th><th>Değer</th><th>Kaynak</th></tr></thead>
-        <tbody>{report.assumptions.map((a) => <tr key={a.key}><td>{a.label}</td><td>{String(a.value)}</td><td>{a.source === 'user' ? 'Kullanıcı girişi' : a.source === 'drawing' ? 'Kotlardan türetildi' : 'Program varsayılanı'}</td></tr>)}</tbody>
+        <tbody>{report.assumptions.map((a) => <tr key={a.key}><td>{a.label}</td><td>{String(a.value)}</td><td>{a.source === 'user' ? 'Kullanıcı girişi' : a.source === 'drawing' ? `Çizimden okundu${a.detail ? ` (${a.detail})` : ''}` : 'Program varsayılanı'}</td></tr>)}</tbody>
       </table><p>Kullanıcı girişi, bağımsız olarak doğrulanmış ölçü anlamına gelmez.</p></div>}
     </details>
   </section>

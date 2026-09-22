@@ -107,3 +107,60 @@ def test_api_systems_flow(client, roof_dxf):
     r = client.put("/api/catalog/items", json={"code": "SANDVIC_CATI", "discipline": "CAT", "name": "Sandviç çatı", "measure": "area",
                                                "components": "CATI_SANDVIC_PANEL×1:50; ASIK×1.2"})
     assert r.status_code == 200 and r.json()["is_system"] and r.json()["components"][1]["factor"] == 1.2
+
+
+def _zone_roof_dxf(path):
+    """Üç bölgeli çatı planı: kenet (300 m²), çelik çatı (150 m²), yazısız (100 m²)."""
+    import ezdxf
+    doc = ezdxf.new("R2010"); doc.header["$INSUNITS"] = 6        # metre
+    for n in ("ÇATI", "YAZI"):
+        doc.layers.add(n)
+    msp = doc.modelspace()
+    def rect(x, y, w, h):
+        return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+    msp.add_lwpolyline(rect(0, 0, 20, 15), close=True, dxfattribs={"layer": "ÇATI"})      # 300
+    msp.add_lwpolyline(rect(22, 0, 10, 15), close=True, dxfattribs={"layer": "ÇATI"})     # 150
+    msp.add_lwpolyline(rect(34, 0, 10, 10), close=True, dxfattribs={"layer": "ÇATI"})     # 100
+    msp.add_text("KENET ÇATI", dxfattribs={"layer": "YAZI", "height": 0.5}).set_placement((8, 7))
+    msp.add_text("ÇELİK ÇATI", dxfattribs={"layer": "YAZI", "height": 0.5}).set_placement((25, 7))
+    for i in range(22):
+        msp.add_text(f"N{i}", dxfattribs={"layer": "YAZI", "height": 0.25}).set_placement((1 + i * 1.2, 16))
+    doc.saveas(path)
+    return path
+
+
+def test_celik_cati_tanima():
+    """Çelik çatı artık zincire bağlı: katman adından öneri, kesit notundan sistem yükseltme."""
+    cat = Catalog()
+    assert suggest_item("ÇELİK ÇATI", cat) == "CELIK_CATI"
+    assert suggest_item("ÇATI MAKAS", cat) == "CELIK_CATI"
+    assert suggest_item("ÇATI TRAPEZ SAC", cat) == "CELIK_CATI"
+    assert suggest_item("SANDVİÇ PANEL", cat) == "KOMPOZIT_PANEL"     # cephe paneli çatı değildir
+    # düz "ÇATI" katmanı + kesitte "ÇELİK ÇATI" yazısı -> çelik çatı sistemine yükselir
+    assert suggest_item("ÇATI", cat, scan_texts(["ÇELİK ÇATI MAKASI"])) == "CELIK_CATI"
+    assert "CATI_SANDVIC_PANEL" in scan_texts(["SANDVİÇ PANEL 50 MM"])
+
+
+def test_roof_zones_from_plan(client, tmp_path):
+    """Çatı bölge bazlı: her kapalı alan sistemini kendi içindeki nottan alır; yazısız bölge sorulur."""
+    p = _zone_roof_dxf(tmp_path / "cati_bolge.dxf")
+    pid = client.post("/api/projects", json={"name": "Bölge"}).json()["id"]
+    with open(p, "rb") as f:
+        r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("ÇATI PLANI.dxf", f, "application/dxf")})
+    assert r.status_code == 201, r.text
+    assert any("bölge bazlı okundu" in w for w in r.json()["warnings"])
+    sy = client.get(f"/api/projects/{pid}/systems").json()
+    zones = {(z["system"], z["area"]): z for z in sy["roof"]["zones"]}
+    assert set(zones) == {("KENET_CATI", 300.0), ("CELIK_CATI", 150.0), ("KENET_CATI", 100.0)}
+    assert zones[("KENET_CATI", 300.0)]["source"] == "note" and "KENET" in zones[("KENET_CATI", 300.0)]["note"]
+    assert zones[("CELIK_CATI", 150.0)]["source"] == "note"
+    assert zones[("KENET_CATI", 100.0)]["source"] == "layer"      # içinde yazı yok: katmanın kalemiyle kaldı
+    assert sy["roof"]["system_source"] == "zones" and sy["roof"]["area"] == 550.0
+    assert any(c["code"] == "cati_bolge_yazisiz" for c in sy["checklist"])
+    by = {i["key"]: i for i in client.get(f"/api/projects/{pid}/quantities").json()["boq"]["items"]}
+    assert by["celik_cati:*"]["quantity"] == 150.0                # çelik çatı artık ölçülüyor
+    assert by["kenet_cati:*"]["quantity"] == 400.0                # 300 + yazısız 100
+    # her bölge kendi sistem kalemidir; bileşenleri sistem panelinde kendi reçetesiyle listelenir
+    assert {s["code"] for s in sy["systems"]} == {"KENET_CATI", "CELIK_CATI"}
+    celik = next(s for s in sy["systems"] if s["code"] == "CELIK_CATI")
+    assert celik["quantity"] == 150.0 and {c["code"] for c in celik["components"]} >= {"CELIK_KONSTRUKSIYON", "ASIK", "CATI_SANDVIC_PANEL"}

@@ -6,6 +6,7 @@ import { DISCIPLINES, DRAWING_STATUS, ETYPE_LABELS, HEURISTIC_DISCIPLINES, STRUC
 import Icon from '../components/Icon'
 import PlanChecklist from '../components/PlanChecklist'
 import PlanIntake from '../components/PlanIntake'
+import SpacesPanel from '../components/SpacesPanel'
 import SystemsPanel from '../components/SystemsPanel'
 import { planTypeGroups, usePlanTypes } from '../hooks/usePlanTypes'
 import ProjectNav from './ProjectNav'
@@ -394,6 +395,7 @@ export default function ProjectDetail() {
 
       <details className="section">
         <summary>Katmanlı sistemler ve türetilmiş kalemler<span className="muted">çatı / cephe bileşenleri, tamlık kontrolü</span></summary>
+        <div className="panel"><SpacesPanel projectId={id} refreshKey={refresh} /></div>
         <div className="panel"><SystemsPanel projectId={id} refreshKey={refresh} /></div>
       </details>
     </>

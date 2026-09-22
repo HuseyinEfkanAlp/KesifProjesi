@@ -81,8 +81,30 @@ def build_quality(drawings, elements, items, summary, params, plan_check, cost=N
                              ("tava", "tray_waste_pct", "Tava firesi (%)")]:
         if kind in kinds:
             relevant[key] = label
-    assumptions = [{"key": k, "label": label, "value": params.get(k, DEFAULT_PARAMS[k]),
-                    "source": "user" if k in params else "default"} for k, label in relevant.items()]
+    # Çizimden okunan değer varsayılan sayılmaz: türetilen kalem kaynağını detail.param_source ile taşır.
+    # {kalem türü: (parametre, grup -> değer)} — şap grubu cm, kazı grubu cm cinsindendir.
+    PLAN_READ_KINDS = {"sap": ("screed_cm", 1.0), "kazi": ("excavation_depth_m", 0.01),
+                       "grobeton": ("lean_concrete_cm", 1.0)}
+    PLAN_SOURCES = {"rooms": "mahal notundan", "drawing": "çizim notundan", "note": "kesitte yazılı",
+                    "kots": "kesit kotlarından", "foundation_kot": "temel kotundan"}
+    plan_read = {}
+    for i in items:
+        src = (i.detail or {}).get("param_source")
+        if i.kind in PLAN_READ_KINDS and src in PLAN_SOURCES:
+            key, factor = PLAN_READ_KINDS[i.kind]
+            try:
+                plan_read[key] = (round(float(i.group) * factor, 2), src)
+            except (TypeError, ValueError):
+                pass
+    assumptions = []
+    for k, label in relevant.items():
+        if k in plan_read:
+            value, src = plan_read[k]
+            assumptions.append({"key": k, "label": label, "value": value, "source": "drawing",
+                                "detail": PLAN_SOURCES[src]})
+        else:
+            assumptions.append({"key": k, "label": label, "value": params.get(k, DEFAULT_PARAMS[k]),
+                                "source": "user" if k in params else "default"})
     defaults = sum(x['source'] == 'default' for x in assumptions)
     if defaults:
         add("default_parameters", f"{defaults} hesap parametresi program varsayılanı; çizimden doğrulanmış bilgi değildir.")

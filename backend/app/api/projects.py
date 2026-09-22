@@ -11,7 +11,7 @@ from ..parser.blocks import normalize as normalize_block
 from ..planset import LEVELS, PLAN_GROUPS, PLAN_TYPE_BY_CODE, PLAN_TYPES, effective_levels, plan_check
 from ..quantity.boq import DEFAULT_PARAMS, KIND_META
 from ..quantity.engine import DEFAULT_REBAR_RATIOS
-from ..services import refresh_wall_areas, analyze_and_store, project_params, project_systems
+from ..services import refresh_wall_areas, analyze_and_store, project_params, project_systems, space_breakdown
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -256,6 +256,13 @@ def update_plan_set(project_id: int, body: dict[str, str], session: Session = De
     session.add(p)
     session.commit()
     return read_plan_check(project_id, session)
+
+
+@router.get("/{project_id}/spaces")
+def read_spaces(project_id: int, session: Session = Depends(get_session)):
+    """Mahal bazında keşif: mimari plandan çıkarılan mahaller (daire / mahal hiyerarşisiyle) ve her mahalin kalemleri."""
+    p = get_project(project_id, session)
+    return space_breakdown(p, session)
 
 
 @router.get("/{project_id}/systems")

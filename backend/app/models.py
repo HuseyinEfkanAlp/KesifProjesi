@@ -64,6 +64,8 @@ class Drawing(SQLModel, table=True):
     blocks_seen: dict[str, int] = Field(default_factory=dict, sa_column=Column(JSON))
     # Mahal alanı yazıları: [{"name": "LOBİ", "area_m2": 45.2}] (parser/schedules.py: parse_rooms)
     rooms: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
+    # Mahaller: duvarlardan çıkarılmış kapalı alanlar + daire / mahal hiyerarşisi (parser/spaces.py)
+    spaces: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
     # Doğrama pozları: {"sizes": {"EMP1": [1.9, 1.4]}, "kinds": {"EMP3": "door"}} (detectors/openings.py: poz_catalog)
     poz: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     analyzed_at: datetime | None = None
