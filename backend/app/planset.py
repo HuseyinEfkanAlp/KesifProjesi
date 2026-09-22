@@ -45,10 +45,20 @@ class PlanType:
     # değil" demek değildir — disiplini tutan pafta yine sayar, yalnız yetkilisi varken ona bırakır.
     owns: tuple[str, ...] = ()
 
+    @property
+    def produces(self) -> tuple[str, ...]:
+        """Bu pafta olmadan hesaplanamayan İMALATLAR (keşif kalemi türü: "beton", "seramik_zemin"…).
+
+        `owns` "bu nesneyi kim sayar" sorusunun cevabı, `produces` "bu pafta gelmezse ne eksik
+        kalır"ın. Kullanıcıya pafta diliyle değil imalat diliyle konuşabilmek için gerekir: "Kat
+        kalıp planları yüklenmedi" değil, "beton, kalıp ve demir metrajı çıkmadı çünkü…".
+        Tablo (`PRODUCES`) tek yerde durur; 32 tanımın arasına dağıtılırsa bir bakışta okunamaz."""
+        return PRODUCES.get(self.code, ())
+
     def to_dict(self) -> dict:
         return {"code": self.code, "group": self.group, "group_label": PLAN_GROUPS[self.group], "label": self.label,
                 "discipline": self.discipline, "level": self.level, "hint": self.hint, "analyze": self.analyze,
-                "satisfies": list(self.satisfies), "owns": list(self.owns)}
+                "satisfies": list(self.satisfies), "owns": list(self.owns), "produces": list(self.produces)}
 
 
 # Sıra önemli: ilk eşleşen kazanır. Özel olanlar (donatı, tava, yangın...) genel "kat planı"ndan önce gelir.
@@ -300,6 +310,122 @@ class PlanStatus:
     def to_dict(self) -> dict:
         return {**self.plan.to_dict(), "level": self.level, "status": self.status, "drawings": self.drawings,
                 "via": self.via, "missing_blocks": self.missing_blocks}
+
+
+# Hangi pafta hangi imalatı üretir. Tek yerde durur ki "bu pafta gelmezse ne eksik kalır" sorusu
+# tahminle değil tabloyla cevaplansın. Değerler keşif kalemi türleridir (`BoqItem.kind`).
+PRODUCES: dict[str, tuple[str, ...]] = {
+    "sta_kat_kalip": ("beton", "kalip", "demir", "kalip_iskelesi", "plywood", "beton_pompaj"),
+    "sta_temel_kalip": ("beton", "kalip", "demir", "grobeton", "kazi", "temel_su_yalitimi"),
+    "sta_temel_donati": ("demir",),
+    "sta_doseme_donati": ("demir", "hasir_celik"),
+    "sta_kolon": ("demir",),
+    "sta_kiris": ("demir",),
+    "sta_perde": ("demir",),
+    "sta_merdiven": ("beton", "kalip", "demir"),
+    "mim_kat_plani": ("duvar", "siva", "boya", "kapi", "pencere", "cam"),
+    "mim_doseme_kaplama": ("sap", "seramik_zemin", "doseme_kaplama", "derz_dolgu", "supurgelik", "laminat"),
+    "mim_tavan": ("asma_tavan", "tavan_siva_boya", "tavan_profili", "aski_teli"),
+    "mim_cephe": ("cephe_brut", "mantolama", "cephe_boya", "kompozit_panel", "giydirme_cephe"),
+    "mim_cati": ("kenet_cati", "cati_membran", "cati_kiremit", "cati_sandvic_panel", "celik_cati", "cati_oluk"),
+    "mim_dograma": ("kapi", "pencere", "dograma", "cam"),
+    "mim_prekast": ("prekast_panel", "prekast_montaj"),
+    "elk_aydinlatma": ("armatur", "acil_aydinlatma", "anahtar", "buat"),
+    "elk_kuvvet": ("priz", "kablo", "boru", "pano"),
+    "elk_tava": ("tava", "tava_aski", "tava_ek"),
+    "elk_zayif": ("kamera", "data_prizi", "yangin_dedektor", "hoparlor", "kartli_gecis", "data_kablo"),
+    "elk_topraklama": ("topraklama",),
+    "elk_genel": ("armatur", "priz", "anahtar", "kablo", "boru", "pano"),
+    "mek_sihhi": ("klozet", "lavabo", "pisuar", "batarya", "yer_suzgeci", "boru_pprc_temiz", "boru_pvc"),
+    "mek_isitma": ("radyator", "fancoil", "vrf_ic_unite", "boru_bakir", "boru_celik", "boru_izolasyon"),
+    "mek_hav": ("hava_kanal", "menfez", "damper", "fan", "kanal_izolasyon"),
+    "mek_yangin": ("sprinkler", "yangin_boru", "yangin_dolabi", "yangin_vana"),
+    "alt_altyapi": ("boru_koruge", "kum_yatak", "geri_dolgu", "bordur", "asfalt", "parke_tas"),
+    "pey_peyzaj": ("cim", "agac", "cali", "bitki_topragi", "sulama_boru", "peyzaj_doseme"),
+    "asn_asansor": ("asansor", "asansor_montaj"),
+}
+
+# İmalat türünün kullanıcıya gösterilecek adı `quantity/boq.KIND_META` ve katalogdan gelir; burada
+# yalnız ikisinde de bulunmayanlar için yedek ad tutulur.
+KIND_FALLBACK = {"kazi": "Kazı", "grobeton": "Grobeton", "cephe_brut": "Cephe alanı"}
+
+
+def kind_label(kind: str, catalog=None) -> str:
+    """İmalat türünün okunabilir adı."""
+    from .quantity.boq import KIND_META
+    if kind in KIND_META:
+        return KIND_META[kind][0]
+    if catalog is not None:
+        it = catalog.get(kind.upper())
+        if it is not None:
+            return it.name
+    return KIND_FALLBACK.get(kind, kind.replace("_", " ").capitalize())
+
+
+def coverage(check: dict, items: list, drawings: list, catalog=None) -> dict:
+    """Keşfin kapsam boşluğu: **hangi imalat neden hesaplanamadı.**
+
+    `plan_check` hangi planın eksik olduğunu zaten biliyor ama çıktısı pafta cümlesidir
+    ("Statik: Kat kalıp planları yüklenmedi"). Kullanıcı teknik değil; ona pafta adı değil
+    **eksik kalan iş** söylenmeli. Üç kanal birleşir:
+
+      1. eksik / kısmi plan × o planın ürettiği imalatlar × keşifte sıfır olanlar
+      2. `Drawing.discipline_hints` — paftada o disiplinin katmanları var ama planı yüklenmemiş
+      3. paftanın nesnelerinin büyük bölümünü tutup hiçbir kalem üretmeyen katman uyarıları
+
+    Hiçbir şey uydurulmaz: yalnız "bu yok ve sebebi şu" denir."""
+    var = {getattr(it, "kind", None) or (it.get("kind") if isinstance(it, dict) else None)
+           for it in items
+           if float(getattr(it, "quantity", None) or (it.get("quantity") if isinstance(it, dict) else 0) or 0) > 0}
+    satirlar: list[dict] = []
+    for grup in check.get("groups") or []:
+        for t in grup.get("types") or []:
+            if t.get("status") not in ("missing", "partial", "optional_missing"):
+                continue
+            eksik = [k for k in PRODUCES.get(t["code"], ()) if k not in var]
+            if not eksik:
+                continue
+            adlar = [kind_label(k, catalog) for k in eksik]
+            neden = (f"“{t['label']}” yüklenmedi" if t["status"] != "partial"
+                     else f"“{t['label']}” şu bloklarda yok: {', '.join(t.get('missing_blocks') or [])}")
+            satirlar.append({"kind": "plan", "plan_type": t["code"], "plan_label": t["label"],
+                             "group": grup["code"], "group_label": grup["label"],
+                             "level": t.get("level"), "status": t["status"], "missing_kinds": eksik,
+                             "message": f"{', '.join(adlar)} metrajı hesaplanamadı: {neden}."})
+    for d in drawings:
+        get = (lambda k: d.get(k)) if isinstance(d, dict) else (lambda k: getattr(d, k, None))
+        ad = get("label") or get("filename") or ""
+        for disc, n in (get("discipline_hints") or {}).items():
+            satirlar.append({"kind": "hint", "drawing_id": get("id"), "drawing": ad, "discipline": disc,
+                             "message": f"“{ad}” paftasında {DISCIPLINE_LABEL.get(disc, disc)} katmanları var "
+                                        f"({n:,} nesne) ama o disiplinin planı ayrı yüklenmedi — bu katmanlar "
+                                        "metraja girmedi.".replace(",", ".")})
+        for w in (get("warnings") or []):
+            if "nesnelerin" in w and "hiçbir kalem" in w:
+                satirlar.append({"kind": "layer", "drawing_id": get("id"), "drawing": ad,
+                                 "message": f"“{ad}”: {w}"})
+    # Sıra kullanıcının yapacağı işe göre: önce zorunlu eksikler, sonra paftadaki okunmamış kanıt,
+    # en sonda isteğe bağlı planlar (peyzaj, asansör — çoğu keşifte zaten kapsam dışıdır).
+    ONCELIK = {("plan", "required"): 0, ("plan", "partial"): 1, ("hint", None): 2,
+               ("layer", None): 3, ("plan", "optional"): 4}
+    satirlar.sort(key=lambda r: ONCELIK.get((r["kind"], r.get("level") if r["kind"] == "plan" else None), 5))
+    zorunlu = [r for r in satirlar if r["kind"] == "plan" and r.get("level") == "required"]
+    kanit = [r for r in satirlar if r["kind"] in ("hint", "layer")]
+    cumle = []
+    if zorunlu:
+        cumle.append(f"{len(zorunlu)} imalat grubu hesaplanamadı çünkü dayanacağı plan yüklenmedi")
+    if kanit:
+        cumle.append(f"{len(kanit)} paftada okunmamış katman kanıtı var")
+    return {"rows": satirlar, "count": len(satirlar),
+            "required": len(zorunlu), "evidence": len(kanit),
+            "sentence": (" · ".join(cumle) + ".") if cumle else "",
+            "note": ("Bu liste keşfin KAPSAM boşluğudur: eksik olan hesap değil, hesabın dayanacağı çizimdir. "
+                     "Keşife girmeyecek imalatları Plan seti ekranından “atlanır” yaparsanız burada da çıkmaz."
+                     if satirlar else "")}
+
+
+DISCIPLINE_LABEL = {"structural": "statik", "architectural": "mimari", "electrical": "elektrik",
+                    "mechanical": "mekanik", "rebar": "donatı"}
 
 
 def plan_check(drawings: list, plan_set: dict | None, blocks: list[str] | None = None,

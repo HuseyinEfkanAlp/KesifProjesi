@@ -2528,7 +2528,7 @@ def boq_payload(items: list[BoqItem]) -> dict:
 def project_quality(project, session, items, summary, cost=None):
     """Same evidence for API and exported reports, without mutating project data."""
     from .quality import build_quality
-    from .planset import plan_check, PLAN_TYPE_BY_CODE
+    from .planset import PLAN_TYPE_BY_CODE, coverage, plan_check
     drawings = list(session.exec(select(Drawing).where(Drawing.project_id == project.id)))
     elements = list(session.exec(select(Element).join(Drawing).where(Drawing.project_id == project.id)))
     blocks = project_blocks(project, drawings)
@@ -2538,6 +2538,10 @@ def project_quality(project, session, items, summary, cost=None):
     # burada keşfin tamamı için tek cümle üretilir ("Metrajın %78'i çizimden ölçüldü …").
     from .confidence import distribution
     quality["confidence"] = distribution(items)
+    # Kapsam boşluğu: hangi imalat neden hesaplanamadı (pafta dilinde değil imalat dilinde).
+    # `quality["status"]` ve `issues` sözleşmesi değişmez; bu ayrı bir blok olarak sonuç ekranının
+    # tepesine kendi diliyle çıkar — eksik olan hesap değil, hesabın dayanacağı çizimdir.
+    quality["coverage"] = coverage(check, items, drawings, load_catalog())
     heights = storey_heights(project, drawings)
     for d in drawings:
         pt = PLAN_TYPE_BY_CODE.get(d.plan_type)

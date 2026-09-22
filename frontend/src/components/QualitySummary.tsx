@@ -12,6 +12,7 @@ export default function QualitySummary({ report, projectId, onFixed }: {
   report: QualityReport | null; projectId: number; onFixed?: () => void
 }) {
   const [busy, setBusy] = useState('')
+  const [kapsamAcik, setKapsamAcik] = useState(false)
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
   if (!report) return null
@@ -35,6 +36,24 @@ export default function QualitySummary({ report, projectId, onFixed }: {
     {note && <div className="hint" style={{ marginTop: 8 }}>{note}</div>}
     {error && <div className="error" style={{ marginTop: 8 }}>{error}</div>}
     {report.selfcheck && <SelfCheckBlock sc={report.selfcheck} />}
+    {report.coverage && report.coverage.count > 0 && <div className="facade-info" style={{ marginTop: 10 }}>
+      {/* Pafta dilinde değil imalat dilinde: kullanıcı "Kat kalıp planları yüklenmedi" cümlesinden
+          hangi işin eksik kaldığını çıkaramıyor. */}
+      <b>Hesaplanamayan imalatlar</b> <span className="muted">{report.coverage.sentence}</span>
+      <button type="button" className="link" onClick={() => setKapsamAcik(!kapsamAcik)}>
+        {kapsamAcik ? 'gizle' : `${report.coverage.count} satır`}
+      </button>
+      {kapsamAcik && <>
+        <ul style={{ marginTop: 6 }}>{report.coverage.rows.map((r, i) => <li key={i} style={{ marginBottom: 4 }}>
+          {r.level === 'optional' && <span className="badge none" style={{ marginRight: 6 }}>isteğe bağlı</span>}
+          {r.kind !== 'plan' && <span className="badge none" style={{ marginRight: 6 }}>kanıt</span>}
+          {r.drawing_id
+            ? <><Link to={`/projects/${projectId}/drawings/${r.drawing_id}`}>{r.drawing}</Link>{r.message.replace(`“${r.drawing}”`, '')}</>
+            : r.message}
+        </li>)}</ul>
+        <p className="muted">{report.coverage.note}</p>
+      </>}
+    </div>}
     {report.confidence && report.confidence.total > 0 && <div className="conf-bar">
       {/* Her kalemin rozeti keşif listesinde; burada tek cümleyle "bu metraj nereden geldi" */}
       <p style={{ margin: '8px 0 4px' }}>{report.confidence.sentence}</p>

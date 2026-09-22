@@ -903,6 +903,26 @@ export interface QualityReport {
   confidence?: { counts: Record<string, number>; total: number; shares: Record<string, number>; sentence: string }
   /** Çizimden türetilen kat sayısı: kot dizisi ve planı yüklenmemiş katlar (backend: app/derive.py) */
   storey_count?: { total: number | null; levels: number[]; unowned: number[] }
+  /** Kapsam boşluğu: hangi imalat neden hesaplanamadı (backend: planset.coverage) */
+  coverage?: Coverage
+}
+
+/** "Eksik olan hesap değil, hesabın dayanacağı çizim": imalat dilinde kapsam raporu. */
+export interface Coverage {
+  rows: {
+    kind: 'plan' | 'hint' | 'layer'
+    message: string
+    /** kind 'plan' ise */
+    plan_type?: string; plan_label?: string; group_label?: string
+    level?: 'required' | 'optional' | 'skip'; status?: string; missing_kinds?: string[]
+    /** kind 'hint' | 'layer' ise */
+    drawing_id?: number | null; drawing?: string; discipline?: string
+  }[]
+  count: number
+  required: number
+  evidence: number
+  sentence: string
+  note: string
 }
 
 /** Hangi miktar hangi paftadan sayıldı: düşen kopya, eklenen fark, sahibi olmayan kalem. */
