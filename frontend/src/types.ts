@@ -566,6 +566,18 @@ export interface SpaceRow {
   parent: string | null
   children: string[]
   items: BoqItem[]
+  /** mahalin kendi ölçülerinden türetilenler: şap, kaplama, tavan, sıva-boya */
+  derived: { key: string; kind: string; label: string; unit: string; quantity: number
+             note: string; source: string; derived: true }[]
+  /** mahal kodu (L_Z_01) */
+  code: string
+  /** çokgen çevresi (m) — 0 ise sınır doğrulanmadı */
+  perimeter: number
+  /** 'drawing': sınır çizimden ölçüldü ve yazıdaki alanla tutuyor · 'label': yalnız mahal yazısından */
+  area_source: 'drawing' | 'label' | 'polygon'
+  diff_pct: number
+  finish: { code?: string; spec?: string; text?: string }
+  screed_cm: number
   /** yalnız grup için: kendi + çocuklarının toplamı */
   total_items?: BoqItem[]
   total_area?: number

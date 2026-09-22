@@ -50,15 +50,29 @@ export default function SpacesPanel({ projectId, refreshKey }: Props) {
 
   const spaceBlock = (s: SpaceRow, isGroup = false) => (
     <div key={s.key} className="facade-info" style={{ marginTop: 6 }}>
-      <b>{isGroup ? '🏠 ' : ''}{s.path || s.name}</b>{' '}
-      <span className="muted">{fmt(s.area)} m²{s.label_area > 0 && Math.abs(s.label_area - s.area) > 0.5
-        ? ` (yazıda ${fmt(s.label_area)} m²)` : ''} · {s.drawing}</span>{' '}
+      <b>{isGroup ? '🏠 ' : ''}{s.code ? `${s.code} · ` : ''}{s.path || s.name}</b>{' '}
+      <span className="muted">{fmt(s.area)} m²{s.perimeter > 0 ? ` · çevre ${fmt(s.perimeter)} m` : ''}
+        {s.label_area > 0 && Math.abs(s.label_area - s.area) > 0.5
+          ? ` (yazıda ${fmt(s.label_area)} m²)` : ''} · {s.drawing}</span>{' '}
+        <span className={`chip${s.area_source === 'drawing' ? '' : ' st-missing'}`}>
+          {s.area_source === 'drawing' ? 'sınır çizimden ölçüldü'
+            : s.area_source === 'label' ? 'yalnız mahal yazısından' : 'sınır var, yazıda alan yok'}
+        </span>{' '}
       <button className="link" onClick={() => setOpen({ ...open, [s.key]: !open[s.key] })}>
         {open[s.key] ? 'gizle' : 'kalemler'}
       </button>
       {open[s.key] && (
         <div style={{ marginTop: 4 }}>
-          {itemRows(s.items, 'Bu mahalde')}
+          {itemRows(s.items, 'Bu mahalde ölçülen')}
+          {(s.derived ?? []).length > 0 && (
+            <table className="summary-table" style={{ marginTop: 6 }}>
+              <thead><tr><th>Mahalden türetilen</th><th>Miktar</th><th>Birim</th><th>Nereden</th></tr></thead>
+              <tbody>{s.derived.map((i) => (
+                <tr key={i.key}><td>{i.label}</td><td style={{ textAlign: 'right' }}>{fmt(i.quantity, 2)}</td>
+                  <td>{i.unit}</td><td className="muted">{i.note}</td></tr>
+              ))}</tbody>
+            </table>
+          )}
           {isGroup && s.total_items && s.total_items.length > 0 && (
             <div style={{ marginTop: 6 }}>{itemRows(s.total_items, 'Bağımsız bölüm toplamı (içindeki mahaller dahil)')}</div>
           )}
@@ -71,7 +85,8 @@ export default function SpacesPanel({ projectId, refreshKey }: Props) {
     <div>
       <h3>Mahaller <span className="muted">({data.spaces.filter((s) => s.kind === 'mahal').length} mahal
         {groups.length > 0 ? `, ${groups.length} bağımsız bölüm` : ''})</span></h3>
-      <div className="muted hint">Mahal sınırı mimari plandaki duvarlardan çıkarıldı; her kalem, elemanın düştüğü
+      <div className="muted hint">Mahal sınırı mimarın alan çizgisinden, yoksa duvarlardan çıkarılır ve
+        mahal yazısındaki alanla doğrulanır. Sınırı doğrulanan mahalde sıva / boya çevreden ÖLÇÜLÜR.
         mahale sayıldı. Duvar / hat gibi mahal sınırında duran kalemler komşu mahaller arasında bölüşülür.</div>
       {data.warnings.map((w, i) => <div key={i} className="muted hint">⚠ {w}</div>)}
       {groups.map((g) => (

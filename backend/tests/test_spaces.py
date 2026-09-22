@@ -144,3 +144,30 @@ def test_mahal_name_filter():
     assert not _is_name("DK") and not _is_name("TK")            # çizim kısaltması
     assert not _is_name("30X(31 / 16.33)") and not _is_name("27X34")   # ölçü notu
     assert not _is_name("+4.15") and not _is_name("S1") and not _is_name("1/100")
+
+
+def test_space_derived_items(client, tmp_path):
+    """Mahal bazında türetme: şap / kaplama / tavan mahal alanından, sıva-boya ÖLÇÜLEN çevreden.
+
+    HOL 4×8 m: gerçek çevre 24 m. Proje genelindeki "kare mahal" varsayımı (4·√alan) 22,6 m derdi;
+    mahal sınırı bilindiğinde varsayıma gerek yok."""
+    p = _daire_dxf(tmp_path / "daire.dxf")
+    pid = client.post("/api/projects", json={"name": "Türetme", "storey_height": 3.0}).json()["id"]
+    with open(p, "rb") as f:
+        assert client.post(f"/api/projects/{pid}/drawings",
+                           files={"file": ("ZEMİN KAT PLANI.dxf", f, "application/dxf")}).status_code == 201
+    by = {s["name"]: s for s in client.get(f"/api/projects/{pid}/spaces").json()["spaces"]}
+    hol = by["HOL"]
+    assert hol["area_source"] == "drawing" and hol["perimeter"] == pytest.approx(24.0, abs=0.1)
+    d = {i["kind"]: i for i in hol["derived"]}
+    assert d["sap"]["quantity"] == pytest.approx(32.0 * 0.05)          # 5 cm varsayılan, notu yok
+    assert "VARSAYILAN" in d["sap"]["note"]
+    assert d["doseme_kaplama"]["quantity"] == pytest.approx(32.0)
+    assert d["tavan_siva_boya"]["quantity"] == pytest.approx(32.0)
+    # duvar yüzeyi: çevre × (kat yüksekliği − döşeme) — çevre ölçüldü, varsayılmadı
+    assert d["siva"]["quantity"] == pytest.approx(24.0 * 2.85, rel=1e-3)
+    assert d["boya"]["quantity"] == d["siva"]["quantity"]
+    assert "ÖLÇÜLDÜ" in d["siva"]["note"]
+    # bağımsız bölüm satırı çocuklarının türetilmiş kalemlerini de toplar
+    daire = {i["kind"]: i["quantity"] for i in by["DAİRE 1"]["total_items"]}
+    assert daire["tavan_siva_boya"] == pytest.approx(64.0 + 32.0)

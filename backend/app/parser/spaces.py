@@ -64,11 +64,13 @@ class Space:
     # tutmadı), "polygon" çokgen var ama yazıda alan yok. Karşılaştırma yapılabilen yerde fark yüzde olarak durur.
     area_source: str = "polygon"
     diff_pct: float = 0.0
+    perimeter: float = 0.0          # çokgen çevresi (m) — sıva / boya / duvar seramiği bundan çıkar
 
     def to_dict(self) -> dict:
         return {"index": self.index, "name": self.name, "kind": self.kind, "area": round(self.area, 2),
                 "label_area": round(self.label_area, 2), "parent": self.parent, "evidence": self.evidence,
                 "code": self.code, "area_source": self.area_source, "diff_pct": round(self.diff_pct, 1),
+                "perimeter": round(self.perimeter, 2),
                 "children": list(self.children), "points": [[round(x, 3), round(y, 3)] for x, y in self.points]}
 
 
@@ -283,7 +285,8 @@ def detect_spaces(drawing: Drawing, layers: list[str], snap_tol: float = DOOR_GA
     if not faces:
         return [], []
     faces.sort(key=lambda p: -p.area)
-    spaces = [Space(index=i, name="", kind="mahal", points=[(x, y) for x, y in p.exterior.coords[:-1]], area=p.area)
+    spaces = [Space(index=i, name="", kind="mahal", points=[(x, y) for x, y in p.exterior.coords[:-1]],
+                    area=p.area, perimeter=p.exterior.length)
               for i, p in enumerate(faces)]
     # 1) hiyerarşi: bir alanı içeren en küçük alan onun üstüdür
     for i, p in enumerate(faces):
@@ -336,7 +339,7 @@ def detect_spaces(drawing: Drawing, layers: list[str], snap_tol: float = DOOR_GA
             if sp.diff_pct <= AREA_TOLERANCE_PCT:
                 sp.area_source = "drawing"
             else:
-                sp.area, sp.area_source, sp.points = sp.label_area, "label", []
+                sp.area, sp.area_source, sp.points, sp.perimeter = sp.label_area, "label", [], 0.0
         elif sp.label_area > 0:
             sp.area, sp.area_source = sp.label_area, "label"
     # hiçbir çokgene düşmemiş etiketler de mahaldir (çokgensiz): liste projedeki mahal listesiyle aynı olmalı

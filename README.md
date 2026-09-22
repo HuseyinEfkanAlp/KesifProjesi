@@ -608,6 +608,17 @@ yazıyı içerebilir) **alanı tutan** seçilir.
 > Aynı dosyada DXF başlığı birimi `mm` diyordu, yazı yükseklikleri `cm` dedi ve doğrusu cm çıktı —
 > birim uyarısına uyulmasaydı bütün metraj 10 kat yanlış olurdu.
 
+**Mahalin kendi ölçülerinden türetilenler** (`services.space_derived`): şap (kalınlık mahal notu > çizim notu >
+parametre > varsayılan), döşeme kaplaması (tip mahal notundan), tavan sıva+boya, sıva ve boya. Sınırı doğrulanan
+mahalde duvar yüzeyi **çevre × duvar yüksekliği** ile çıkar; çevre çokgenden **ölçülür**, proje genelindeki
+"kare mahal" varsayımına (4·√alan) gerek kalmaz. Sınırı doğrulanmayan mahalde çevre bilinmez: duvar yüzeyi
+üretilmez (uydurulmaz), alan bazlı kalemler mahal yazısındaki alandan gelir.
+
+> Varsayım ne kadar yanıltıyordu — Yat Kulübü zemin katında ölçülen çevre / 4·√alan:
+> RESTORAN 121,2 m / 80,2 m (**+%51**) · HOL 40,8 / 28,0 (**+%45**) · MERDİVEN 25,6 / 17,4 (**+%47**) ·
+> TOPLANTI ODASI 52,4 / 43,5 (+%20). Sıva, boya ve duvar seramiği bu çevreden çıktığı için varsayım
+> %50'ye varan hata üretiyordu.
+
 **Eleman → mahal dağıtımı** (`services.space_breakdown`, `GET /api/projects/{id}/spaces`) eleman türüne göre:
 
 | Eleman | Kural |

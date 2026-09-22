@@ -912,6 +912,78 @@ def _scaled(e, share: float) -> dict:
             "thickness": e.thickness, "points": e.points, "id": e.id, "b": e.b, "h": e.h, "meta": e.meta or {}}
 
 
+def _room_note_of(drawing: Drawing, sp: dict) -> dict:
+    """Mahalin döşeme bitişi notu: mahal yazısından gelen satırla ad ve alandan eşleştirilir
+    (ikisi de aynı etiketten okunduğu için ad + alan güvenli anahtardır)."""
+    hedef = sp.get("label_area") or sp.get("area") or 0.0
+    for r in (drawing.rooms or []):
+        if str(r.get("name") or "").upper() != str(sp.get("name") or "").upper():
+            continue
+        a = float(r.get("area_m2") or 0.0)
+        if hedef <= 0 or abs(a - hedef) <= max(0.05, 0.01 * max(a, hedef)):
+            return r
+    return {}
+
+
+# Islak hacim duvarı ve etek yüksekliği (services.derived_items ile aynı kabuller)
+WET_SKIRT = 0.3
+
+
+def space_derived(project: Project, sp: dict, catalog: Catalog, params: dict, drawings: list[Drawing]) -> list[dict]:
+    """Mahalin kendi ölçülerinden türetilen kalemler: şap, döşeme kaplaması, tavan, sıva + boya.
+
+    Alan ve **çevre mahal sınırından ölçülür**: proje genelindeki "kare mahal varsayımı 4·√alan" burada
+    gerekmez. Sınırı doğrulanmamış mahalde (alan yalnız yazıdan) çevre bilinmez; duvar yüzeyi üretilmez
+    ve bu açıkça yazılır."""
+    out: list[dict] = []
+    area = float(sp.get("area") or 0.0)
+    if area <= 0 or sp.get("kind") == "grup":
+        return out
+    cevre = float(sp.get("perimeter") or 0.0)
+    olculu = sp.get("area_source") == "drawing" and cevre > 0
+    h = float(params.get("wall_height") or 0.0) or max(float(params.get("storey_height") or 3.0) - float(project.slab_thickness or 0.0), 0.0)
+    wet = bool(WET_ROOM.search(str(sp.get("name") or "")))
+
+    def add(code: str, spec: str, qty: float, note: str, kaynak: str):
+        it = catalog.get(code)
+        if not it or qty <= 0:
+            return
+        group = slug(spec) if spec else "*"
+        from .quantity.boq import work_group_of
+        out.append({"key": f"{it.code.lower()}:{group}", "kind": it.code.lower(), "group": group,
+                    "label": it.name + (f" {spec}" if spec else ""), "unit": it.unit,
+                    "quantity": round(qty, 3), "note": note, "source": kaynak,
+                    "discipline": f"ksf:{it.discipline}", "work_group": work_group_of(f"ksf:{it.discipline}"),
+                    "derived": True})
+
+    kaynak = "mahal sınırından ölçüldü" if sp.get("area_source") == "drawing" else "mahal yazısındaki alandan"
+    note = sp.get("finish") or {}
+    if wet:
+        add("SERAMIK_ZEMIN", note.get("spec", ""), area, f"ıslak hacim zemini {area:,.1f} m² ({kaynak})", kaynak)
+    elif note.get("code"):
+        add(note["code"], note.get("spec", ""), area,
+            f"{area:,.1f} m² ({kaynak}); tip mahal notundan: “{note.get('text', '')}”", kaynak)
+    else:
+        add("DOSEME_KAPLAMA", "", area, f"{area:,.1f} m² ({kaynak}); tip mahal notunda yazmıyor", kaynak)
+    cm = float(sp.get("screed_cm") or 0.0)
+    sap = lean = _cm_from_notes(drawings, "SAP")[0] if not cm else cm
+    src = "mahal notundan" if cm else ("çizim notundan" if sap else "VARSAYILAN — çizimde yazmıyor")
+    if not sap:
+        sap = float(params.get("screed_cm") or 5.0)
+    add("SAP", f"{sap:g}", area * sap / 100.0, f"{area:,.1f} m² × {sap:g} cm; kalınlık: {src}", kaynak)
+    add("TAVAN_SIVA_BOYA", "", area, f"mahal tavanı {area:,.1f} m² ({kaynak})", kaynak)
+    if olculu and h > 0:
+        duvar = cevre * h
+        if wet:
+            add("SERAMIK_DUVAR", "", duvar, f"çevre {cevre:,.1f} m × {h:g} m (çevre mahal sınırından ÖLÇÜLDÜ)", kaynak)
+            add("SURME_IZOLASYON", "", area + cevre * WET_SKIRT,
+                f"zemin {area:,.1f} m² + {WET_SKIRT:g} m etek × çevre {cevre:,.1f} m", kaynak)
+        else:
+            add("SIVA", "", duvar, f"çevre {cevre:,.1f} m × {h:g} m (çevre mahal sınırından ÖLÇÜLDÜ)", kaynak)
+            add("BOYA", "", duvar, f"çevre {cevre:,.1f} m × {h:g} m (çevre mahal sınırından ÖLÇÜLDÜ)", kaynak)
+    return out
+
+
 def space_breakdown(project: Project, session: Session, drawings: list[Drawing] | None = None) -> dict:
     """Mahal bazında keşif: her mahalin kendi kalemleri, keşifteki aynı ölçüm kurallarıyla.
 
@@ -940,6 +1012,8 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
                 path.insert(0, cur["name"] or "?")
                 guard += 1
             spaces[key] = {"key": key, "name": sp["name"], "kind": sp["kind"], "area": sp["area"],
+                           "code": sp.get("code") or "", "area_source": sp.get("area_source") or "polygon",
+                           "perimeter": sp.get("perimeter") or 0.0, "diff_pct": sp.get("diff_pct") or 0.0,
                            "label_area": sp.get("label_area") or 0.0, "drawing": d.label or d.filename,
                            "drawing_id": d.id, "path": " / ".join(x for x in path if x),
                            "parent": f"{d.id}:{sp['parent']}" if sp.get("parent") is not None else None,
@@ -988,7 +1062,10 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
     rows = []
     for key, sp in spaces.items():
         d = next(x for x in drawings if x.id == sp["drawing_id"])
-        sp = {**sp, "items": items_of([{"drawing": d, "e": e} for e in buckets[key]])}
+        note = _room_note_of(d, sp)
+        sp = {**sp, "finish": note.get("finish") or {}, "screed_cm": note.get("screed_cm") or 0.0,
+              "items": items_of([{"drawing": d, "e": e} for e in buckets[key]])}
+        sp["derived"] = space_derived(project, sp, catalog, params, drawings)
         rows.append(sp)
     # grup (daire) toplamları: kendi kalemleri + çocuklarının kalemleri
     by_key = {r["key"]: r for r in rows}
@@ -998,7 +1075,7 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
         kids = [by_key[k] for k in r["children"] if k in by_key]
         tot: dict[str, dict] = {}
         for src in [r] + kids:
-            for it in src["items"]:
+            for it in src["items"] + [x for x in src.get("derived", [])]:
                 cur = tot.setdefault(it["key"], {**it, "quantity": 0.0})
                 cur["quantity"] = round(cur["quantity"] + it["quantity"], 3)
         r["total_items"] = sorted(tot.values(), key=lambda i: (i["work_group"], i["kind"], i["group"]))
