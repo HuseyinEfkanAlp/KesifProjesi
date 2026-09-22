@@ -25,7 +25,8 @@ from ..parser.sheets import BIG_FILE_BYTES, Sheet, SheetScan, crop_sheets, scan_
 from ..parser.titleblock import TitleBlock
 from ..planset import PLAN_TYPE_BY_CODE, resolve_plan
 from ..quantity.grouping import annotate
-from ..services import refresh_wall_areas, analyze_and_store, boq_payload, detect_params, drawing_boq, load_catalog, recompute_derived
+from ..services import (analyze_and_store, apply_storey_counts, boq_payload, detect_params, drawing_boq,
+                        load_catalog, recompute_derived, refresh_wall_areas)
 from .projects import get_project
 
 router = APIRouter(prefix="/api", tags=["drawings"])
@@ -170,8 +171,11 @@ def apply_titleblock(project: Project, tb: TitleBlock, session: Session) -> list
         if val and not str(params.get(key) or "").strip():
             params[key] = val
             notes.append(f"{label} {val}")
-    if notes:
+    # Antetin kendisi de saklanır: kat adedi ve inşaat alanı parametre değil, çapraz doğrulama kanıtıdır
+    # (çizimdeki kotlardan çıkan kat sayısı antetle çelişirse `derive.storey_counts` uyarı yazar).
+    if notes or (not tb.empty and not project.titleblock):
         project.params = params
+        project.titleblock = tb.to_dict()
         session.add(project)
         session.commit()
     return notes
@@ -248,8 +252,11 @@ def _create_drawing(project: Project, dest: Path, filename: str, label: str, sto
     except Exception as ex:  # bozuk / DXF olmayan dosya
         dest.unlink(missing_ok=True)
         raise HTTPException(400, f"DXF okunamadı: {ex}")
+    # Kat sayısı çizimden türetilir (`services.apply_storey_counts`); formın varsayılanı 1 bir beyan
+    # değildir. Yalnız açıkça 1'den büyük bir sayı verildiyse kullanıcının kararı sayılır ve ezilmez.
     d = Drawing(project_id=project.id, filename=filename, stored_path=str(dest),
                 label=label, storey_count=max(1, storey_count), unit_override=unit_override or None,
+                storey_manual=storey_count if storey_count > 1 else None,
                 storey_height=storey_height if storey_height and storey_height > 0 else None,
                 discipline=discipline, plan_type=plan_type,
                 block=normalize_block(block) if block is not None else _detect_block(project, session, filename, label))
@@ -399,6 +406,7 @@ def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = F
         session.add(d)
         session.commit()
     _refresh_openings(project, session)
+    apply_storey_counts(project, session)   # kat sayisi sorulmaz: cizimden turetilip kaydedilir
     session.refresh(d)
     return drawing_out(d, session)
 
@@ -478,6 +486,7 @@ def ingest_sheets(project: Project, src: Path, scan: SheetScan, picks: list, ses
         session.add(created[0])
         session.commit()
     _refresh_openings(project, session)
+    apply_storey_counts(project, session)   # kat sayısı sorulmaz: çizimden türetilip kaydedilir
     for d in created:
         session.refresh(d)
     return created
@@ -555,6 +564,11 @@ def update_drawing(drawing_id: int, body: DrawingPatch, session: Session = Depen
         d.plan_type = _check_plan_type(data.pop("plan_type"))
     if "block" in data:
         d.block = normalize_block(data.pop("block") or "")
+    if "storey_count" in data:
+        # Uzman gorunumunden elle girilen kat sayisi kullanicinin kararidir: turetme bunu bir daha ezmez.
+        n = data.pop("storey_count")
+        d.storey_manual = max(1, int(n)) if n else None
+        d.storey_count = d.storey_manual or d.storey_count
     height_changed = "storey_height" in data and data["storey_height"] != d.storey_height
     for k, v in data.items():
         setattr(d, k, v)

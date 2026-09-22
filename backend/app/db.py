@@ -64,6 +64,9 @@ _ADDED_COLUMNS = [
     ("drawing", "levels", "JSON"),
     ("drawing", "kot", "FLOAT"),
     ("priceitem", "set_fields", "JSON"),
+    ("drawing", "storey_manual", "INTEGER"),
+    ("project", "slab_manual", "FLOAT"),
+    ("project", "titleblock", "JSON"),
 ]
 
 

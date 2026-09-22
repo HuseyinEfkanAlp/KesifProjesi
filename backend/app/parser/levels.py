@@ -209,3 +209,63 @@ def excavation_levels(texts: list[str]) -> dict:
         if out["bottom"] is None and _BOTTOM_WORDS.search(t):
             out["bottom"], out["bottom_note"] = min(vals), t[:60]
     return out
+
+
+# ---------- Pafta başlığındaki kat aralığı: "1.-5. NORMAL KAT PLANI", "2-7. KAT PLANI", "TİP KAT (5 KAT)"
+# Bir tip kat planı birden çok katı temsil eder; kaç katı temsil ettiği çoğu projede başlığında yazar.
+# Kat sayısı kullanıcıya SORULMAZ (ürün prensibi), önce burada aranır.
+#
+# `planset.normalize_title` burada KULLANILAMAZ: noktalama işaretlerini siliyor ve "1.-5." → "1 5"
+# oluyor, yani aralığı aralık yapan ayraç kayboluyor. Bu yüzden yalnız Türkçe büyük harfe çevirilir.
+_SPAN = re.compile(r"(?<!\d)(\d{1,2})\s*\.?\s*[-–—/]\s*(\d{1,2})\s*\.?\s*(?:NORMAL\s*|T[İI]P\s*)?KAT(?![A-ZİĞÜŞÖÇ])")
+_COUNT = re.compile(r"\(\s*(\d{1,2})\s*(?:ADET\s*)?KAT\s*\)|(?<!\d)(\d{1,2})\s*KATLI")
+TYPICAL_FLOOR = re.compile(r"NORMAL\s*KAT|T[İI]P\s*KAT|TEKRAR\s*KAT")
+
+
+def _title_upper(label: str) -> str:
+    """Türkçe büyük harf; noktalama korunur (aralık ayracı gerekli)."""
+    return (label or "").replace("i", "İ").replace("ı", "I").upper()
+
+
+def storey_span(label: str) -> tuple[int, int] | None:
+    """Pafta başlığındaki kat aralığı: "1.-5. NORMAL KAT PLANI" → (1, 5). Yoksa None.
+
+    Yalnız aralık döner; tek kat ("3. KAT PLANI") bu fonksiyonun işi değildir — onu floor_rank verir."""
+    m = _SPAN.search(_title_upper(label))
+    if not m:
+        return None
+    lo, hi = int(m.group(1)), int(m.group(2))
+    return (lo, hi) if 0 <= lo < hi <= 60 else None
+
+
+def storey_count_in_label(label: str) -> int | None:
+    """Başlıkta açıkça yazan kat adedi: "TİP KAT (5 KAT)" → 5, "5 KATLI" → 5. Yoksa None."""
+    m = _COUNT.search(_title_upper(label))
+    if not m:
+        return None
+    v = int(m.group(1) or m.group(2))
+    return v if 1 <= v <= 60 else None
+
+
+def is_typical_floor(label: str) -> bool:
+    """Bu pafta bir TİP / NORMAL kat planı mı (birden çok katı temsil eder)?"""
+    return bool(TYPICAL_FLOOR.search(_title_upper(label)))
+
+
+def level_for_rank(floors: list[float], rank: float) -> float | None:
+    """Kat sirasini (floor_rank) kot dizisindeki seviyeye oturtur. Bilinmiyorsa None.
+
+    Sira mutlak okunur: zemin (0) = dizide 0,00'a en yakin kot, 1. kat onun bir ustu, 1. bodrum bir alti.
+    (Siralanmis listedeki konum kullanilamaz: yuklenmemis katlar dizide bosluk birakmaz, "zemin" ve
+    "1. kat" planlari birbirinin kotunu alir.)"""
+    if not floors:
+        return None
+    zero = min(range(len(floors)), key=lambda i: abs(floors[i]))
+    if rank == -100:                       # temel: en alt seviye
+        return floors[0]
+    if rank == 99:                         # cati: en ust kat seviyesi
+        return floors[-1]
+    if rank != int(rank):                  # asma kat: sira disi
+        return None
+    i = zero + int(rank)
+    return floors[i] if 0 <= i < len(floors) else None

@@ -13,6 +13,11 @@ class Project(SQLModel, table=True):
     description: str = ""
     storey_height: float = 3.0
     slab_thickness: float = 0.15
+    # Kullanıcının açıkça girdiği döşeme kalınlığı; None = planda ölçülenden türetilsin (derive.slab_thicknesses)
+    slab_manual: float | None = None
+    # Ruhsat antedinden okunanlar (parser/titleblock.py): beton sınıfı, donatı, kat adedi, inşaat alanı.
+    # Çapraz doğrulama kaynağıdır: çizimden çıkan kat sayısı antetle çelişirse kullanıcıya söylenir.
+    titleblock: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     vat_rate: float = 0.0
     rebar_ratios: dict[str, float] = Field(default_factory=dict, sa_column=Column(JSON))
     layer_profile: dict[str, list[str]] = Field(default_factory=dict, sa_column=Column(JSON))
@@ -46,7 +51,9 @@ class Drawing(SQLModel, table=True):
     levels: list[float] = Field(default_factory=list, sa_column=Column(JSON))
     kot: float | None = None
     plan_type: str = ""             # plan seti tipi (sta_kat_kalip, elk_tava, mim_tavan ...; bkz. planset.py)
-    storey_count: int = 1           # bu planın temsil ettiği kat sayısı
+    storey_count: int = 1           # bu planın temsil ettiği kat sayısı (derive.storey_counts yazar)
+    # Kullanıcının bu pafta için açıkça girdiği kat sayısı; None = çizimden türetilsin. Asla ezilmez.
+    storey_manual: int | None = None
     storey_height: float | None = None   # bu katın yüksekliği (m); None -> projenin H değeri
     unit: str = "m"
     unit_override: str | None = None

@@ -211,7 +211,7 @@ def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
     kanıt (elle girilen ya da form varsayılanı tek sayı) yerine güçlü kanıt (çizimin kendi kotları)
     kullanılır. Paftaya **elle girilmiş** yükseklik her zaman üstündür; kullanıcının pafta bazındaki
     kararı değişmez."""
-    from .parser.levels import floor_levels, floor_rank
+    from .parser.levels import floor_levels, floor_rank, level_for_rank
     all_levels = [float(v) for d in drawings for v in (d.levels or [])]
     for d in drawings:
         if d.kot is not None:
@@ -265,30 +265,40 @@ def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
             per[d.id] = {"height": effective, "source": source, "kot": d.kot}
     # kotu olmayan planlar: kat sırasına göre seviye dizisine oturtulur (aynı sıradaki planlar aynı seviyeyi alır)
     ranked.sort(key=lambda t: t[0])
-    # Kat sırası mutlak: zemin (0) = seviye dizisinde 0,00'a en yakın kot; 1. kat onun bir üstü, 1. bodrum bir altı.
-    # (Eskiden sıralı listedeki konum kullanılıyordu: "zemin" ve "1. kat" planları −3,30 ve 0,00 kotlarını alıyordu.)
-    zero_idx = min(range(len(floors)), key=lambda i: abs(floors[i])) if floors else None
-
-    def rank_level_of(r: float) -> float | None:
-        if zero_idx is None:
-            return None
-        if r == -100:                       # temel: en alt seviye
-            return floors[0]
-        if r == 99:                         # çatı: en üst kat seviyesi (üstü yok, effective'e düşer)
-            return floors[-1]
-        if r != int(r):                     # asma kat: sıra dışı, medyanla
-            return None
-        i = zero_idx + int(r)
-        return floors[i] if 0 <= i < len(floors) else None
-
     for r, d in ranked:
-        lvl = rank_level_of(r)
+        lvl = level_for_rank(floors, r)
         nxt = above(lvl) if lvl is not None else None
         if lvl is not None and nxt is not None:
             per[d.id] = {"height": round(nxt - lvl, 2), "source": f"kat sırası → kot {lvl:+.2f} → {nxt:+.2f}", "kot": lvl}
         else:
             per[d.id] = {"height": effective, "source": source, "kot": lvl}
     return {"levels": floors, "heights": diffs, "effective": effective, "source": source, "per_drawing": per}
+
+
+def apply_storey_counts(project: Project, session: Session) -> dict:
+    """Projenin bütün paftalarının kat sayısını çizimden türetir ve kaydeder.
+
+    Kat sayısı kullanıcıya **sorulmaz** (ürün prensibi); `derive.storey_counts` kanaat zincirini
+    yürütür. Sonuç `Drawing.storey_count`'a yazılır: metrajı üreten 10 yer ve `quantity/boq.py`
+    bugünkü gibi tek alanı okumaya devam eder, değer artık varsayım değil kanıttır.
+
+    Her yüklemeden sonra **proje geneli** çalışır, tek pafta için değil: kot dizisi kanıtı bütün
+    paftalara bakar — yeni bir kat planı yüklenince tip kat planının temsil ettiği kat sayısı azalır."""
+    from .derive import storey_counts
+    drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    if not drawings:
+        return {"per_drawing": {}, "warnings": []}
+    sc = storey_counts(project, drawings)
+    degisen = False
+    for d in drawings:
+        v = max(1, int(sc["per_drawing"].get(d.id, {}).get("value") or 1))
+        if d.storey_count != v:
+            d.storey_count = v
+            session.add(d)
+            degisen = True
+    if degisen:
+        session.commit()
+    return sc
 
 
 def storey_height_of(project: Project, d: Drawing, sh: dict | None = None) -> float:
@@ -2329,6 +2339,25 @@ def project_quality(project, session, items, summary, cost=None):
                                       "drawing": d.label or d.filename,
                                       "message": f"Kat yüksekliği {h['height']:g} m ({h['source']}); ilgili kesit ve katla eşleşmesini kontrol edin."})
     quality["issues"].extend(_storey_height_override(project, drawings, elements))
+    # Kat sayısı: sorulmadan çizimden türetildi. Her paftanın sayısı ve KAYNAK CÜMLESİ rapora girer;
+    # çıkarılamayan pafta "varsayım" olarak işaretlenir. Bu, bugüne kadar rapordan tamamen kaçan ve
+    # metrajı mertebe olarak kaydıran varsayımın görünür olduğu tek yerdir.
+    from .derive import storey_counts
+    sc = storey_counts(project, drawings)
+    for d in drawings:
+        v = sc["per_drawing"].get(d.id)
+        if not v or PLAN_TYPE_BY_CODE.get(d.plan_type) and not PLAN_TYPE_BY_CODE[d.plan_type].analyze:
+            continue
+        quality["assumptions"].append({"key": f"storey_count:{d.id}",
+                                       "label": f"{d.label or d.filename} — temsil ettiği kat sayısı",
+                                       "value": v["value"], "source": v["kind"], "detail": v["source"]})
+    for w in sc["warnings"]:
+        quality["issues"].append({"code": w["code"], "severity": w["severity"], "drawing_id": None,
+                                  "drawing": None, "message": w["message"]})
+    quality["storey_count"] = {"total": sc["total"], "levels": sc["levels"], "unowned": sc["unowned"]}
+    if any(w["severity"] == "blocking" for w in sc["warnings"]):
+        quality["status"] = "incomplete"
+        quality["label"] = "Eksik / kontrol gerekli"
     # Kapsam sahipliği: hangi miktar hangi paftadan sayıldı, ikinci paftada ne düştü, ne eklendi
     els_by_id: dict[int, list] = {}
     for e in elements:
