@@ -36,9 +36,10 @@ GROUP_WORDS = re.compile(r"DA[İI]RE|D[AÜU]KKAN|MA[GĞ]AZA|OF[İI]S|B[ÜU]RO|BL
                          r"|[İI][SŞ]\s*YER[İI]|UN[İI]TE|[ÜU]N[İI]TE", re.IGNORECASE)
 # Mahal adı sayılmayan yazılar: kotlar, poz / eleman adları, ölçüler, pafta işaretleri.
 _NOT_NAME = re.compile(r"^[+\-±]?\d[\d.,/xX*\s-]*$|^[SKPDTM]\d+([./]\d+)?$|KES[İI]T|DETAY|PLAN\b|[ÖO]L[ÇC]EK|KOT"
-                       r"|^\d+[.,]\d+$|^[A-Z]$"
-                       # ölçü / poz notu mahal adı değildir: "30X(31 / 16.33)", "27X34", "1/100"
-                       r"|\d\s*[xX×]\s*[\d(]|\(\s*\d|\d\s*/\s*\d", re.IGNORECASE)
+                       r"|^\d+[.,]\d+$|^[A-Z]$", re.IGNORECASE)
+# Ölçü / poz notu ("30X(31 / 16.33)", "27X34", "1/100") mahal adı değildir — yazının
+# herhangi bir yerinde geçebilir, bu yüzden ayrı desen ve search ile bakılır.
+_MEASURE_NOTE = re.compile(r"\d\s*[xX×]\s*[\d(]|\(\s*\d|\d\s*[/:]\s*\d")
 MIN_SPACE_AREA = 1.0        # m² — bundan küçük yüz mahal sayılmaz
 AREA_TOLERANCE_PCT = 12.0   # ölçülen çokgen ile yazıdaki alan arasında kabul edilen azami fark (%)
 MIN_NAMELESS_AREA = 4.0     # m² — adı olmayan bu kadar büyük alan "adı yazılmamış mahal" diye bildirilir
@@ -71,9 +72,15 @@ class Space:
                 "children": list(self.children), "points": [[round(x, 3), round(y, 3)] for x, y in self.points]}
 
 
+SHORT_OK = {"WC", "HOL", "ODA", "BAR", "SPA", "KAT"}     # kısa ama gerçek mahal adları
+
+
 def _is_name(text: str) -> bool:
+    """Mahal adı olabilir mi? İki harfli kısaltmalar (DK, TK, AK) mahal adı değil, çizim işaretidir."""
     t = (text or "").replace("\\P", " ").strip()
-    return bool(t) and len(t) <= MAX_NAME and not _NOT_NAME.match(t)
+    if not t or len(t) > MAX_NAME or _NOT_NAME.match(t) or _MEASURE_NOTE.search(t):
+        return False
+    return len(t) >= 3 or t.upper() in SHORT_OK
 
 
 def _clean(text: str) -> str:
@@ -316,10 +323,8 @@ def detect_spaces(drawing: Drawing, layers: list[str], snap_tol: float = DOOR_GA
         sp.code = lab.code or sp.code
         if label_area > 0:
             sp.label_area = label_area
-    # 3) grup: çocuğu olan adlı alan da gruptur (daire içindeki odalar)
-    for sp in spaces:
-        if sp.name and sp.children and any(spaces[c].name for c in sp.children):
-            sp.kind = "grup"
+    # 3) grup YALNIZ adından belli olur (DAİRE, DÜKKAN, OFİS…): bir mahalin içinde başka mahal olması
+    # (teras içinde havuz) onu bağımsız bölüm yapmaz.
     # Çokgeni yazıdaki alanla DOĞRULA: mimari plan mahalin alanını zaten yazıyor, bu bizim ölçtüğümüzün
     # denetimidir. Tutmuyorsa çokgen atılır (duvar ağı kapanmamış, komşu mahalle taşmış demektir) ve
     # mahal yazıdaki alanıyla listede kalır — mahal listesi eksilmez.

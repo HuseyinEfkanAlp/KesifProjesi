@@ -600,8 +600,11 @@ Alan çizgisi yoksa duvar ağından kapalı yüzlere düşülür. Her iki durumd
 mahal listesi eksilmez, uydurma sınır üretilmez. Yazıyı içeren birden çok yüz varsa (mobilya / tefriş çizgisi de
 yazıyı içerebilir) **alanı tutan** seçilir.
 
-> Gerçek ölçüm (Yat Kulübü uygulama projesi, 177 MB, 6 pafta): zemin katta 19 mahal okundu,
-> **18'inin sınırı doğrulandı**; alan çizgileri plandan (+1,0, +239,5) m kaydırılarak hizalandı.
+> Gerçek ölçüm (Yat Kulübü uygulama projesi, 177 MB, tek DXF'te 6 pafta). Üç kat planında toplam
+> **40 mahal okundu, 32'sinin sınırı doğrulandı**; her paftanın alan hesabı kopyası ayrı kayma ile
+> hizalandı (bodrum +240,5 m · zemin +239,5 m · çatı katı +241,5 m). Kesit / görünüş / çatı planlarında
+> mahal üretilmedi (doğru davranış). Zemin katta eleman → mahal sayımı: RESTORAN'da 67 koltuk,
+> MUTFAK'ta 57 ekipman bloğu, üç ÇALIŞMA ODASI'nın her birinde aynı mobilya seti.
 > Aynı dosyada DXF başlığı birimi `mm` diyordu, yazı yükseklikleri `cm` dedi ve doğrusu cm çıktı —
 > birim uyarısına uyulmasaydı bütün metraj 10 kat yanlış olurdu.
 

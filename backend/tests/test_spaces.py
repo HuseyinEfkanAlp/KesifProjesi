@@ -135,3 +135,12 @@ def test_area_boundary_layer_offset(tmp_path):
     # sınır çizimden ölçüldü ve yazıdaki alanı doğruluyor
     assert all(s.area_source == "drawing" for s in by.values())
     assert any("alan çizgilerinden alındı" in w and "240" in w for w in warns)
+
+
+def test_mahal_name_filter():
+    """Çizim işareti mahal adı sanılmasın: iki harfli kısaltma (DK), ölçü notu, kot."""
+    from app.parser.spaces import _is_name
+    assert _is_name("MUTFAK") and _is_name("ÇALIŞMA ODASI") and _is_name("WC") and _is_name("HOL")
+    assert not _is_name("DK") and not _is_name("TK")            # çizim kısaltması
+    assert not _is_name("30X(31 / 16.33)") and not _is_name("27X34")   # ölçü notu
+    assert not _is_name("+4.15") and not _is_name("S1") and not _is_name("1/100")
