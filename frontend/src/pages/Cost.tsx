@@ -34,6 +34,9 @@ export default function Cost() {
       <div className="cards">
         <div className="card"><div className="label">Malzeme</div><div className="value">{money(cost.material_subtotal)}</div></div>
         <div className="card"><div className="label">İşçilik</div><div className="value">{money(cost.labor_subtotal)}</div></div>
+        {cost.equipment_subtotal > 0 && <div className="card"><div className="label">Ekipman</div><div className="value">{money(cost.equipment_subtotal)}</div></div>}
+        {cost.subcontract_subtotal > 0 && <div className="card"><div className="label">Taşeron</div><div className="value">{money(cost.subcontract_subtotal)}</div></div>}
+        {cost.indirect_subtotal > 0 && <div className="card"><div className="label">Dolaylı (nakliye, genel gider, kâr)</div><div className="value">{money(cost.indirect_subtotal)}</div></div>}
         <div className="card"><div className="label">Hesaplanan tutar (taslak) {cost.vat_rate ? `(KDV %${Math.round(cost.vat_rate * 100)} dahil)` : '(KDV hariç)'}</div><div className="value">{money(cost.grand_total)}</div></div>
         <div className="card">
           <div className="label">Süre senaryosu (tahmini)</div>
@@ -158,6 +161,13 @@ export default function Cost() {
               ))}
               <tr className="total"><td colSpan={8}>Malzeme ara toplam</td><td className="num">{money(cost.material_subtotal)}</td><td></td><td></td><td></td><td></td></tr>
               <tr className="total"><td colSpan={9}>İşçilik ara toplam</td><td className="num">{money(cost.labor_subtotal)}</td><td></td><td></td><td></td></tr>
+              <tr className="total"><td colSpan={10}>Doğrudan bedel</td><td className="num">{money(cost.direct_subtotal)}</td><td></td><td></td></tr>
+              {/* Dolaylı bedel kaleme değil işin tamamına aittir; sırayla uygulanır çünkü genel gider
+                  nakliyeyi, kâr da genel gideri kapsar. */}
+              {cost.indirect_lines.map((l) => (
+                <tr key={l.key}><td colSpan={10} className="muted">{l.label} (%{l.pct})</td>
+                  <td className="num muted">{money(l.total)}</td><td></td><td></td></tr>
+              ))}
               <tr className="total"><td colSpan={10}>Ara toplam</td><td className="num">{money(cost.subtotal)}</td><td></td><td></td></tr>
               {cost.vat_rate > 0 && <tr><td colSpan={10}>KDV (%{Math.round(cost.vat_rate * 100)})</td><td className="num">{money(cost.vat)}</td><td></td><td></td></tr>}
               <tr className="total"><td colSpan={10}>GENEL TOPLAM</td><td className="num">{money(cost.grand_total)}</td><td></td><td></td></tr>

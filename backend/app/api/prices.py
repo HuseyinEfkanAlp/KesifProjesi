@@ -23,6 +23,8 @@ class PriceIn(BaseModel):
     key: str
     unit_price: float | None = None       # malzeme ₺/birim
     labor_price: float | None = None      # işçilik ₺/birim
+    equipment_price: float | None = None  # ekipman / makine ₺/birim
+    subcontract_price: float | None = None  # taşeron ₺/birim (her şey dahil)
     brand: str | None = None
     hours_per_unit: float | None = None   # adam-saat / birim
     crew_size: float | None = None
@@ -83,13 +85,13 @@ def upsert_prices(project_id: int, body: list[PriceIn], session: Session = Depen
             item = PriceItem(project_id=p.id, key=pi.key, name=pi.name or pi.key, unit=unit)
             existing[pi.key] = item
         set_fields = set(item.set_fields or [])
-        for f in ("unit_price", "labor_price", "hours_per_unit", "crew_size"):
+        for f in ("unit_price", "labor_price", "equipment_price", "subcontract_price", "hours_per_unit", "crew_size"):
             v = getattr(pi, f)
             if v is not None:
                 setattr(item, f, max(0.0, float(v)))
                 set_fields.add(f)          # 0 da açık bir değerdir (yalnız malzeme, işçilik yok gibi)
         for f in pi.clear or []:
-            if f in ("unit_price", "labor_price", "hours_per_unit", "crew_size"):
+            if f in ("unit_price", "labor_price", "equipment_price", "subcontract_price", "hours_per_unit", "crew_size"):
                 setattr(item, f, 0.0)
                 set_fields.discard(f)
         item.set_fields = sorted(set_fields)

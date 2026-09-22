@@ -2508,7 +2508,9 @@ def to_material_data(m: MaterialPrice) -> MaterialData:
 def to_price_data(p: PriceItem) -> PriceData:
     return PriceData(p.key, p.name, p.unit, p.unit_price or 0.0, p.labor_price or 0.0, p.brand or "",
                      p.hours_per_unit or 0.0, p.crew_size or 0.0, tuple(p.set_fields or []),
-                     poz_price=p.poz_price or 0.0)
+                     poz_price=p.poz_price or 0.0,
+                     equipment_price=getattr(p, "equipment_price", 0.0) or 0.0,
+                     subcontract_price=getattr(p, "subcontract_price", 0.0) or 0.0)
 
 
 def project_cost(project: Project, session: Session) -> tuple[list[QuantityLine], dict, dict, list[BoqItem], dict]:
@@ -2557,7 +2559,7 @@ def boq_payload(items: list[BoqItem]) -> dict:
     return boq_summary(items)
 
 
-def project_quality(project, session, items, summary, cost=None):
+def project_quality(project, session, items, summary, cost=None, cost_required: bool = True):
     """Same evidence for API and exported reports, without mutating project data."""
     from .quality import build_quality
     from .planset import PLAN_TYPE_BY_CODE, coverage, plan_check
@@ -2565,7 +2567,8 @@ def project_quality(project, session, items, summary, cost=None):
     elements = list(session.exec(select(Element).join(Drawing).where(Drawing.project_id == project.id)))
     blocks = project_blocks(project, drawings)
     check = plan_check(drawings, project.plan_set, blocks["blocks"], blocks["missing"])
-    quality = build_quality(drawings, elements, items, summary, project.params or {}, check, cost)
+    quality = build_quality(drawings, elements, items, summary, project.params or {}, check, cost,
+                            cost_required=cost_required)
     # Güven dağılımı: her kalemin rozeti `BoqItem.confidence` ile zaten API ve Excel'e gidiyor;
     # burada keşfin tamamı için tek cümle üretilir ("Metrajın %78'i çizimden ölçüldü …").
     from .confidence import distribution

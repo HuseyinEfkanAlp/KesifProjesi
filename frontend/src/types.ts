@@ -864,6 +864,13 @@ export interface CostResult {
   lines: CostLine[]
   material_subtotal: number
   labor_subtotal: number
+  equipment_subtotal: number
+  subcontract_subtotal: number
+  /** Kalemlere yazılan bedel (malzeme + işçilik + ekipman + taşeron) */
+  direct_subtotal: number
+  /** İşin tamamına ait bedel: nakliye, şantiye genel gideri, yüklenici kârı */
+  indirect_subtotal: number
+  indirect_lines: { key: string; label: string; pct: number; base: number; total: number }[]
   subtotal: number
   vat_rate: number
   vat: number

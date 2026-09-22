@@ -55,6 +55,11 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "cable_waste_pct": 5.0,       # kablo fire %
     "tray_waste_pct": 5.0,
     "work_hours_per_day": 8.0,    # süre hesabı: günlük çalışma saati
+    # --- dolaylı maliyet (doğrudan bedelin yüzdesi olarak). Metrajı DEĞİŞTİRMEZLER: yalnız
+    # maliyet sayfasında çarpan olarak uygulanır, fiyat değişinde metraj yeniden hesaplanmaz.
+    "transport_pct": 0.0,         # nakliye / şantiye içi taşıma
+    "overhead_pct": 0.0,          # şantiye genel giderleri (şantiye şefi, konteyner, elektrik, güvenlik)
+    "profit_pct": 0.0,            # yüklenici kârı
     # malzeme (ürün) seçimi — malzeme fiyatı ürüne girilir (bkz. cost/materials.py)
     "concrete_class": "C30/37",       # projenin genel beton sınıfı
     "concrete_class_foundation": "",  # eleman tipine özel sınıf (boş -> genel sınıf)

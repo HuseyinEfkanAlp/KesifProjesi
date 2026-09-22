@@ -21,7 +21,8 @@ def read_quantities(project_id: int, session: Session = Depends(get_session)):
     items = project_boq(p, session, summary)
     return {
         "summary": summary,
-        "quality": project_quality(p, session, items, summary),
+        # Metraj sayfasında fiyat sorulmaz: keşif, hiç fiyat girilmeden de tamamlanmış olabilir.
+        "quality": project_quality(p, session, items, summary, cost_required=False),
         "lines": [{**ln.to_dict(), **{k: v for k, v in info.get(ln.element_id, {}).items() if k != "warnings"},
                    "warnings": info.get(ln.element_id, {}).get("warnings", [])} for ln in lines],
         "boq": boq_payload(items),

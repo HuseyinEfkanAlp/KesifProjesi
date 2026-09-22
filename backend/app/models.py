@@ -136,6 +136,9 @@ class PriceItem(SQLModel, table=True):
     brand: str = ""                 # tercih edilen marka / ürün
     hours_per_unit: float = 0.0     # işçilik süresi: adam-saat / birim
     crew_size: float = 0.0          # bu kalemde aynı anda çalışan kişi sayısı (0 = genel satırdan / 1)
+    equipment_price: float = 0.0    # ekipman / makine birim bedeli (vinç, pompa, ekskavatör)
+    # Taşeron birim fiyatı (her şey dahil): doluysa malzeme + işçilik + ekipmanın yerine geçer
+    subcontract_price: float = 0.0
     # ÇŞB / firma birim fiyatı (her şey dahil): doluysa malzeme + işçiliğin yerine geçer
     poz_price: float = 0.0
     set_fields: list[str] = Field(default_factory=list, sa_column=Column(JSON))   # kullanıcının açıkça girdiği alanlar (0 dahil)

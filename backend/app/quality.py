@@ -4,7 +4,15 @@ from .planset import PLAN_TYPE_BY_CODE
 from .quantity.boq import DEFAULT_PARAMS
 
 
-def build_quality(drawings, elements, items, summary, params, plan_check, cost=None):
+def build_quality(drawings, elements, items, summary, params, plan_check, cost=None,
+                  cost_required: bool = True):
+    """cost_required=False: eksik fiyat metraj raporunu "eksik" göstermez.
+
+    Metraj ile fiyat **ayrı işlerdir**: bir keşif, hiç fiyat girilmeden de tamamlanmış olabilir —
+    müteahhit metrajı alıp kendi fiyatını koyar. Eksik fiyatı metraj sayfasında "eksik" diye
+    göstermek, doğru çıkmış bir metrajı kusurlu gösterir. Maliyet sayfasında ise blocking kalır:
+    orada sorulan soru zaten "bu tutar tam mı".
+    """
     issues = []
 
     def add(code, message, severity="review", drawing=None):
@@ -109,10 +117,11 @@ def build_quality(drawings, elements, items, summary, params, plan_check, cost=N
     if defaults:
         add("default_parameters", f"{defaults} hesap parametresi program varsayılanı; çizimden doğrulanmış bilgi değildir.")
     if cost is not None:
+        fiyat_sev = "blocking" if cost_required else "review"
         for key, message in [("missing_materials", "ürünün malzeme fiyatı eksik"), ("missing_labor", "kalemin işçilik fiyatı sıfır veya eksik")]:
             n = len(cost.get(key, []))
             if n:
-                add(key, f"{n} {message}; tutar tamamlanmış proje maliyeti değildir.", "blocking")
+                add(key, f"{n} {message}; tutar tamamlanmış proje maliyeti değildir.", fiyat_sev)
         duration = cost.get("duration", {})
         if duration.get("missing_rates") or duration.get("missing_crew"):
             add("incomplete_duration", "Süre için eksik işçilik normu veya ekip bilgisi var; takvim süresi doğrulanmadı.")

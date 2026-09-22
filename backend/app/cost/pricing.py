@@ -45,6 +45,12 @@ class PriceItem:
     # ÇŞB / firma birim fiyatı: **her şey dahil** (malzeme + işçilik + makine + yüklenici kârı). Doluysa
     # malzeme ve işçiliğin yerine geçer — ikisini toplamak bedeli iki kez saymak olur.
     poz_price: float = 0.0
+    # ⚠ Yeni alanlar SONA eklenir: `PriceItem` bir yerde konumsal kuruluyor (services.to_price_data),
+    # araya alan koymak bütün değerleri bir sıra kaydırıyor.
+    equipment_price: float = 0.0   # ekipman / makine (vinç, pompa, ekskavatör) — birim başına
+    # Taşeron birim fiyatı: o kalemin **her şeyi dahil** bedeli. Doluysa malzeme, işçilik ve ekipman
+    # yerine geçer — poz bedeliyle aynı mantık, üstüne eklemek bedeli iki kez saymak olur.
+    subcontract_price: float = 0.0
 
 
 def default_price_items(items: list[BoqItem]) -> list[PriceItem]:
@@ -162,16 +168,27 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
         hours = it.quantity * float(hpu)
         days = hours / (max(float(crew), 0.01) * hours_per_day) if hours > 0 else 0.0
         poz_bf, poz_src = pick("poz_price")
-        if poz_bf and float(poz_bf) > 0:
+        eqp, eqp_src = pick("equipment_price")
+        sub, sub_src = pick("subcontract_price")
+        eqp_total = 0.0
+        sub_total = 0.0
+        if sub and float(sub) > 0:
+            # Taşeron bedeli her şeyi kapsar: kendi malzemesini, işçiliğini ve makinesini getirir.
+            mat_total = lab_total = 0.0
+            sub_total = round(it.quantity * float(sub), 2)
+            mat, lab, eqp = 0.0, 0.0, 0.0
+            mat_src = lab_src = "taşeron birim fiyatı"
+        elif poz_bf and float(poz_bf) > 0:
             # Poz bedeli her şeyi kapsar: malzeme + işçilik ayrı ayrı yazılmaz, tek satır poz bedelidir.
             mat_total = 0.0
             lab_total = round(it.quantity * float(poz_bf), 2)
-            mat, lab = 0.0, float(poz_bf)
+            mat, lab, eqp = 0.0, float(poz_bf), 0.0
             mat_src = f"poz bedeli ({it.poz})" if it.poz else "poz bedeli"
             lab_src = mat_src
         else:
             mat_total = round(it.quantity * float(mat), 2)
             lab_total = round(it.quantity * float(lab), 2)
+            eqp_total = round(it.quantity * float(eqp or 0.0), 2)
         lines.append({
             "key": it.key, "kind": it.kind, "kind_label": it.kind_label,
             "group": it.group, "group_label": it.label, "discipline": it.discipline,
@@ -183,7 +200,10 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
             "material_key": mkey, "material_name": mname,
             "unit_price": float(mat), "labor_price": float(lab),
             "poz_price": float(poz_bf or 0.0), "poz_priced": bool(poz_bf and float(poz_bf) > 0),
-            "material_total": mat_total, "labor_total": lab_total, "total": round(mat_total + lab_total, 2),
+            "equipment_price": float(eqp or 0.0), "subcontract_price": float(sub or 0.0),
+            "material_total": mat_total, "labor_total": lab_total,
+            "equipment_total": eqp_total, "subcontract_total": sub_total,
+            "total": round(mat_total + lab_total + eqp_total + sub_total, 2),
             "price_source": mat_src,
             "labor_source": lab_src if lab else "işçilik girilmedi",
             "hours_per_unit": float(hpu), "crew_size": float(crew), "hours_source": hpu_src,
@@ -192,7 +212,24 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
         })
     material_subtotal = round(sum(l["material_total"] for l in lines), 2)
     labor_subtotal = round(sum(l["labor_total"] for l in lines), 2)
-    subtotal = round(material_subtotal + labor_subtotal, 2)
+    equipment_subtotal = round(sum(l["equipment_total"] for l in lines), 2)
+    subcontract_subtotal = round(sum(l["subcontract_total"] for l in lines), 2)
+    # DOLAYLI maliyet: kaleme değil işin tamamına ait. Nakliye, şantiye genel gideri ve yüklenici
+    # kârı doğrudan bedelin yüzdesidir; sırayla uygulanır çünkü genel gider nakliyeyi de kapsar,
+    # kâr da genel gideri. Hepsi 0 (varsayılan) ise toplam eskisi gibi çıkar.
+    direct = round(material_subtotal + labor_subtotal + equipment_subtotal + subcontract_subtotal, 2)
+    oranlar = [("transport", "Nakliye", float(params.get("transport_pct") or 0.0)),
+               ("overhead", "Şantiye genel gideri", float(params.get("overhead_pct") or 0.0)),
+               ("profit", "Yüklenici kârı", float(params.get("profit_pct") or 0.0))]
+    indirect_lines = []
+    taban = direct
+    for kod, ad, oran in oranlar:
+        tutar = round(taban * oran / 100.0, 2)
+        if oran:
+            indirect_lines.append({"key": kod, "label": ad, "pct": oran, "base": taban, "total": tutar})
+        taban = round(taban + tutar, 2)
+    indirect = round(taban - direct, 2)
+    subtotal = round(direct + indirect, 2)
     vat = round(subtotal * vat_rate, 2)
     by_kind: dict[str, float] = {}
     by_disc: dict[str, dict] = {}
@@ -230,6 +267,10 @@ def compute_cost(items: list[BoqItem], prices: list[PriceItem], vat_rate: float 
     return {
         "lines": lines,
         "material_subtotal": material_subtotal, "labor_subtotal": labor_subtotal,
+        "equipment_subtotal": equipment_subtotal, "subcontract_subtotal": subcontract_subtotal,
+        # Doğrudan bedel (kalemlere yazılan) ile dolaylı bedel (işin tamamına ait) ayrı durur:
+        # "malzeme + işçilik = toplam" cümlesi nakliyeyi ve genel gideri gizliyordu.
+        "direct_subtotal": direct, "indirect_subtotal": indirect, "indirect_lines": indirect_lines,
         "subtotal": subtotal, "vat_rate": vat_rate, "vat": vat,
         "grand_total": round(subtotal + vat, 2),
         "by_kind": by_kind,
