@@ -126,3 +126,14 @@ def test_site_reminder_is_shortened_when_long():
     w = plan_check([_d(1, "mim_kat_plani", "C1")], None, ["C1"], site_missing=many)["warnings"]
     line = next(x for x in w if "Vaziyet" in x)
     assert "12 blok daha" in line and "+4" in line
+
+
+def test_zincir_liste_ve_aralik_blok_adlari():
+    """A blokları: statik tek dosya "VM-A1-A2-A3 BLOK STATİK PROJE" — yalnız "A2-A3" okunuyor, A1 düşüyordu."""
+    from app.parser.blocks import detect_block, parts_of
+    assert detect_block("VM-A1-A2-A3 BLOK STATİK PROJE 18.02.2023") == "A1-A2-A3"      # firma öneki atılır
+    assert parts_of("A1-A2-A3") >= {"A1", "A2", "A3"}
+    assert detect_block("A1, A2, A3 BLOK BODRUM KAT KALIP PLANI") == "A1-A2-A3"
+    assert parts_of("A1-A3") >= {"A1", "A2", "A3"}                                   # aralık
+    assert parts_of("A4-A5") == {"A4-A5", "A4", "A5"}
+    assert detect_block("C-1 BLOĞU") == "C1" and detect_block("TEMEL BLOKAJ") == ""

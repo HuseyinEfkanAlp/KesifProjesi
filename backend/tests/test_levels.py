@@ -26,7 +26,7 @@ def test_parse_levels_single_system_and_label():
 
 @pytest.mark.parametrize("label,rank", [
     ("TEMEL KALIP PLANI", -100), ("2. BODRUM KAT PLANI", -2), ("BODRUM KAT KALIP PLANI", -1), ("ZEMİN KAT PLANI", 0),
-    ("ASMA KAT PLANI", 0.5), ("BİRİNCİ KAT PLANI", 1), ("3. NORMAL KAT KALIP PLANI", 3), ("ÇATI KATI PLANI", 99), ("KESİTLER", None),
+    ("ASMA KAT PLANI", 0.5), ("BİRİNCİ KAT PLANI", 1), ("3. NORMAL KAT KALIP PLANI", 3), ("ÇATI KATI PLANI", 98), ("KESİTLER", None),
 ])
 def test_floor_rank(label, rank):
     assert floor_rank(label) == rank
@@ -247,3 +247,40 @@ def test_kat_sirasi_mutlak_sistemde_sifir_kotuna_oturur():
     assert level_for_rank(katlar, -1, datum) == 0.82       # bodrum
     assert level_for_rank(katlar, 1, datum) == 7.95        # birinci
     assert level_for_rank([-3.0, 0.0, 3.0], 0) == 0.0      # tek sistemli projede eski davranış
+
+
+def test_baskin_kot_ara_kotun_golgesinde_kalmaz():
+    """A blokları üçüncü kalıp planı: "+11.65 KOTU", +11.65 paftada 303 kez; +10.25 bir kez. Kat kotu +11.65."""
+    from app.parser.levels import parse_levels
+    s = parse_levels(["+11.65 KOTU"] + ["+11.65"] * 30 + ["+10.65"] * 6 + ["+10.25"], "KALIP PLANI")
+    assert s.kot == 11.65
+
+
+def test_temel_paftasinin_kotlari_kat_dizisine_girmez():
+    from types import SimpleNamespace as NS
+    from app.parser.levels import building_levels, floor_levels
+    paftalar = [NS(plan_type="sta_temel_kalip", levels=[-1.28, -0.68, 0.12, 0.52, 0.82, 1.72], kot=0.82),
+                NS(plan_type="sta_kat_kalip", levels=[4.0, 4.15], kot=4.0), NS(plan_type="sta_kat_kalip", levels=[7.95], kot=7.95)]
+    assert floor_levels(building_levels(paftalar)) == [0.82, 4.0, 7.95]
+
+
+def test_ara_kotlar_ve_bagil_kotlar_kat_dizisini_bozmaz():
+    """A blokları: kalıp planındaki ara kotlar (+10.25) sahte kat, A1 mimarisinin bağıl "+3.80"i ayrı bir kat
+    sanılıyordu. Mutlak dizi: +0.82 / +4.00 / +7.95 / +11.65 / +15.65."""
+    from types import SimpleNamespace as NS
+    from app.parser.levels import building_levels, floor_levels
+    P = lambda tip, lv, kot=None, off=None: NS(plan_type=tip, levels=lv, kot=kot, level_offset=off)   # noqa: E731
+    paftalar = [P("sta_temel_kalip", [-1.28, -0.68, 0.12, 0.52, 0.82], 0.82), P("mim_detay", [-1.28, 0.52, 0.82]),
+                P("sta_kat_kalip", [4.0, 4.15], 4.0), P("sta_kat_kalip", [7.95], 7.95),
+                P("sta_kat_kalip", [10.25, 10.65, 11.65], 11.65), P("sta_kat_kalip", [15.65], 15.65),
+                P("mim_kat_plani", [0.82], None, 4.15),                   # A2 bodrum: "-3.33 (+0.82)" çifti
+                P("mim_kat_plani", [3.8]), P("mim_kat_plani", [7.5]), P("mim_kat_plani", [-3.33])]   # A1 / A3 bağıl
+    assert floor_levels(building_levels(paftalar, 4.15)) == [0.82, 4.0, 7.95, 11.65, 15.65]
+
+
+def test_cati_kati_catinin_altindaki_kattir():
+    from app.parser.levels import floor_rank, level_for_rank
+    katlar = [0.82, 4.0, 7.95, 11.65, 15.65]
+    assert floor_rank("A1 BLOK / ÇATI KATI PLANI ÖLÇEK:1/100") == 98
+    assert floor_rank("A1 BLOK / ÇATI PLANI ÖLÇEK:1/100") == 99
+    assert level_for_rank(katlar, 98, 4.15) == 11.65 and level_for_rank(katlar, 99, 4.15) == 15.65

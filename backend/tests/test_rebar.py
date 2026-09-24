@@ -204,3 +204,11 @@ def test_column_sheet_wall_rebar_split_and_missing_wall_warning(tmp_path):
     assert any("Perde donatısı bulunamadı" in w for w in s["warnings"])
     rows.append({"drawing": "K", "drawing_id": 1, "kot": None, "target": "shear_wall", "dia_mm": 14, "weight_kg": 50.0, "length_m": 40.0, "source": "poz"})
     assert not any("Perde donatısı" in w for w in summarize(lines, rows, {1: {"drawing": "kat"}, 2: {"drawing": "kat"}})["warnings"])
+
+
+def test_kalip_basligi_metraj_tablosuyla_donatiya_donmez():
+    """A blokları +15.65 kalıp planı: köşesinde donatı metraj tablosu var (VM-METRAJ 294, VM Poz 164), çizili
+    donatı az (163). Donatı paftası sanılınca çatı döşemesinin betonu ve kalıbı hiç ölçülmüyordu."""
+    from app.planset import resolve_plan
+    katman = {"VM Kiriş": 625, "VM-METRAJ": 294, "VM Poz": 164, "VM Üst Donatı": 163}
+    assert resolve_plan(["+15.65 KOTU KALIP PLANI ÖLÇEK :1/100"], katman) == ("sta_kat_kalip", "structural")

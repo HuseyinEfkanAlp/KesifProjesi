@@ -17,7 +17,9 @@ import re
 ORTAK_LABEL = "Ortak / tüm bina"
 
 # "A4-A5 BLOK", "C1 BLOK", "B BLOK", "BLOK C2", "C-1 BLOĞU"; BLOKAJ'a takılmaz (\b BLOK'tan sonra harf istemez)
-_NAME = r"[A-ZÇĞİÖŞÜ]{1,3}[- ]?\d{0,3}(?:\s*[-/]\s*[A-ZÇĞİÖŞÜ]?\d{1,3})?"
+# Zincir ve liste de tek addır: "A1-A2-A3", "A1, A2, A3" (statik projesi genelde bütün blokları tek dosyada verir;
+# A blokları statiği "VM-A1-A2-A3 BLOK STATİK PROJE" idi ve yalnız "A2-A3" okunuyordu, A1 düşüyordu).
+_NAME = r"[A-ZÇĞİÖŞÜ]{1,3}[- ]?\d{0,3}(?:\s*[-/,]\s*[A-ZÇĞİÖŞÜ]?\d{1,3})*"
 _BEFORE = re.compile(rf"(?<![A-ZÇĞİÖŞÜ0-9])({_NAME})\s*BLO[KĞ]", re.IGNORECASE)
 # BLOK ile ad arasında ayırıcı şart: "BLOKAJ" blok adı üretmesin
 _AFTER = re.compile(rf"BLO[KĞ]U?\s*(?:[:\-]\s*|\s+)({_NAME})(?![A-ZÇĞİÖŞÜ])", re.IGNORECASE)
@@ -31,9 +33,13 @@ def normalize(name: str) -> str:
 
     Harf ile sayı arasındaki tire atılır ("C-3" = "C3"); iki blok adını birleştiren tire korunur
     ("A4-A5" tek bir çizimde iki blok demektir, ayrı bir addır)."""
-    n = re.sub(r"\s*[-/]\s*", "-", str(name or "").strip().upper())
+    n = re.sub(r"\s*[-/,]\s*", "-", str(name or "").strip().upper())
     n = re.sub(r"[\s_]+", "", n).strip("-")
     parts = n.split("-")
+    # Firma / disiplin öneki: "VM-A1-A2-A3" → "A1-A2-A3". Salt harf ilk parçayı harf+rakam blok adları izliyorsa
+    # o parça blok adı değildir ("C-3" gibi harf + salt rakam ise birleştirilir, aşağıda).
+    if len(parts) >= 3 and parts[0].isalpha() and all(re.fullmatch(r"[A-ZÇĞİÖŞÜ]+\d+", p) for p in parts[1:]):
+        parts = parts[1:]
     out = [parts[0]] if parts else []
     for prev, cur in zip(parts, parts[1:]):
         # önceki parça salt harfse (C + 3) tire yapıştırılır; ikisi de rakam içeriyorsa (A4 - A5) korunur
@@ -78,7 +84,16 @@ def parts_of(name: str) -> set[str]:
     Tek çizimde iki blok birlikte veriliyorsa ("A4-A5 BLOK KALIP PLANI") vaziyet planındaki ayrı "A4 BLOK"
     ve "A5 BLOK" yazıları eksik blok sayılmamalıdır."""
     n = normalize(name)
-    return {n} | {p for p in n.split("-") if p} if n else set()
+    if not n:
+        return set()
+    parts = [p for p in n.split("-") if p]
+    out = {n} | set(parts)
+    # Aralık: "A1-A3" = A1, A2, A3 (aynı harf, artan numara; en çok 20 blok)
+    if len(parts) == 2:
+        a, b = (re.fullmatch(r"([A-ZÇĞİÖŞÜ]+)(\d+)", p) for p in parts)
+        if a and b and a.group(1) == b.group(1) and 0 < int(b.group(2)) - int(a.group(2)) <= 20:
+            out |= {f"{a.group(1)}{i}" for i in range(int(a.group(2)), int(b.group(2)) + 1)}
+    return out
 
 
 def covered_by(names) -> set[str]:

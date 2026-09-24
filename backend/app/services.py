@@ -216,9 +216,9 @@ def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
     kanıt (elle girilen ya da form varsayılanı tek sayı) yerine güçlü kanıt (çizimin kendi kotları)
     kullanılır. Paftaya **elle girilmiş** yükseklik her zaman üstündür; kullanıcının pafta bazındaki
     kararı değişmez."""
-    from .parser.levels import building_datum, building_levels, floor_levels, floor_rank, level_for_rank
-    floors = floor_levels(building_levels(drawings))
+    from .parser.levels import building_datum, building_floors, floor_rank, level_for_rank
     datum = building_datum(drawings)
+    floors = building_floors(drawings, datum)
     diffs = [round(b - a, 2) for a, b in zip(floors, floors[1:])]
     med = round(sorted(diffs)[len(diffs) // 2], 2) if diffs else None
     def above(level: float) -> float | None:
@@ -456,7 +456,7 @@ def _included_elements(d: Drawing, session: Session) -> list[Element]:
 
 
 def _floor_label(rank: float) -> str:
-    """Kat sırasının okunur adı: -100 temel, -2 2. bodrum, 0 zemin, 0,5 asma kat, 99 çatı, 3 -> 3. kat."""
+    """Kat sırasının okunur adı: -100 temel, -2 2. bodrum, 0 zemin, 0,5 asma kat, 98 çatı katı, 99 çatı, 3 -> 3. kat."""
     if rank <= -100:
         return "temel"
     if rank < 0:
@@ -465,6 +465,8 @@ def _floor_label(rank: float) -> str:
         return "zemin kat"
     if rank == 0.5:
         return "asma kat"
+    if rank == 98:
+        return "çatı katı"
     if rank >= 99:
         return "çatı"
     return f"{rank:g}. kat"

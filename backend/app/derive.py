@@ -62,9 +62,9 @@ def storey_counts(project: Project, drawings: list[Drawing]) -> dict:
 
     Antetteki kat adedi (`Project.titleblock`) çapraz doğrulama olarak kullanılır: çelişirse uyarı
     yazılır ama sayı değiştirilmez (antet bütün bloğu, pafta tek bloğu anlatıyor olabilir)."""
-    from .parser.levels import building_datum, building_levels
-    katlar = floor_levels(building_levels(drawings))
+    from .parser.levels import building_datum, building_floors
     datum = building_datum(drawings)
+    katlar = building_floors(drawings, datum)
 
     per: dict[int, dict] = {}
     uyarilar: list[dict] = []

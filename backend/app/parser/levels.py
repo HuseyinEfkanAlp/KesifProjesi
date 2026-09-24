@@ -25,6 +25,7 @@ _DATUM = re.compile(r"S[Iİ]FIR\s*KOT", re.IGNORECASE)
 # planındaki temel alt kotu bodrumun kat kotu sanıldı (-3.10; gerçeği -3.33) ve üstelik parantezli
 # yazılardan bulunan mutlak sisteme çevrilmeden kaldı. Kazı derinliği için ayrıca okunur (materials).
 _FOUNDATION = re.compile(r"TEMEL|GROBETON|RADYE", re.IGNORECASE)
+_BOTTOM_KOT = re.compile(r"ALT\s*KOT|\bT\.?\s*A\.?\s*K\b", re.IGNORECASE)
 # Arazi / yol kotu taşıyan paftalar: binanın katlarını anlatmaz (bkz. building_levels)
 SITE_PLAN_TYPES = {"mim_vaziyet", "pey_peyzaj", "alt_altyapi"}
 MIN_STOREY = 2.0
@@ -49,19 +50,42 @@ class LevelScan:
         return [round(b - a, 2) for a, b in zip(self.floors, self.floors[1:])]
 
 
-def building_levels(drawings) -> list[float]:
+# Temel paftası onlarca temel üst / alt kotu taşır (A blokları: -1.28, -0.68, +0.12, +0.52… "T.A.K", "T.Ü.K"
+# kısaltmalarıyla). Bunlar kat seviyesi değildir: temel paftasından yalnız paftanın kendi kotu alınır.
+FOUNDATION_PLAN_TYPES = {"sta_temel_kalip", "sta_temel_donati"}
+# Detay paftası (temel / merdiven detayı) yerel kotlar taşır; yalnız kendi kotu sayılır.
+KOT_ONLY_TYPES = FOUNDATION_PLAN_TYPES | {"mim_detay"}
+# Kat planları: kendi kotu biliniyorsa yalnız o sayılır. Kalıp planında kiriş üstü / merdiven sahanlığı gibi ara
+# kotlar (A blokları +11.65 planında +10.25, +10.65) kat dizisinde sahte kat doğuruyordu.
+PER_FLOOR_TYPES = {"sta_kat_kalip", "sta_doseme_donati", "mim_kat_plani", "mim_tavan", "mim_doseme_kaplama"}
+
+
+def building_levels(drawings, datum: float | None = None) -> list[float]:
     """Projedeki paftaların kot seviyeleri (kat kotları dahil) — vaziyet / peyzaj / altyapı paftaları hariç.
 
     Vaziyet planı yol, arazi ve bina ±0,00'ının araziye oturduğu kotu taşır; binanın kat dizisine
     karışırsa sahte katlar doğar (C1: vaziyetten gelen +0,82 ve genel bodrum planının +2,50'si kat
     yüksekliklerini 2,50 / 5,45 m yaptı; gerçeği 3,33 / 3,80 / 3,70 / 2,90)."""
-    out: list[float] = []
+    per: list[tuple[object, list[float]]] = []
     for d in drawings:
-        if (getattr(d, "plan_type", "") or "") in SITE_PLAN_TYPES:
+        tip = getattr(d, "plan_type", "") or ""
+        if tip in SITE_PLAN_TYPES:
             continue
-        out.extend(float(v) for v in (d.levels or []))
+        vals: list[float] = []
         if d.kot is not None:
-            out.append(float(d.kot))
+            vals.append(float(d.kot))
+        if tip not in KOT_ONLY_TYPES and not (tip in PER_FLOOR_TYPES and d.kot is not None):
+            vals.extend(float(v) for v in (d.levels or []))
+        per.append((d, vals))
+    # Bağıl → mutlak: kendi paftasında parantezli çift olmayan yazı yapı sıfırına göre olabilir (A1 mimarisi
+    # "+3.80" = mutlak +7.95). Değer projenin başka hiçbir paftasında yokken "değer + ±0,00'ın mutlak kotu"
+    # varsa bağıldır, çevrilir. Hiçbir kanıt yoksa dokunulmaz (tek sistemli projede eski davranış).
+    out: list[float] = []
+    for i, (d, vals) in enumerate(per):
+        if datum and getattr(d, "level_offset", None) is None:
+            others = {round(v, 2) for j, (_, vs) in enumerate(per) if j != i for v in vs}
+            vals = [round(v + datum, 2) if round(v, 2) not in others and round(v + datum, 2) in others else v for v in vals]
+        out.extend(vals)
     return out
 
 
@@ -74,6 +98,27 @@ def building_datum(drawings) -> float:
     vals = sorted(float(d.level_offset) for d in drawings
                   if getattr(d, "level_offset", None) is not None and (getattr(d, "plan_type", "") or "") not in SITE_PLAN_TYPES)
     return vals[len(vals) // 2] if vals else 0.0
+
+
+def building_floors(drawings, datum: float | None = None) -> list[float]:
+    """Binanın kat seviyeleri.
+
+    Omurga, kat planlarının (kalıp / mimari) **kendi kotlarıdır**: her biri "bu plan şu kottadır" diye açık bir
+    beyandır. Öteki kotlar (kesit, kotu bilinmeyen planlar) yalnız omurganın boşluklarını doldurur — en çok
+    tekrarlanan önce, omurgaya ve birbirine MIN_STOREY'den yakın olmamak şartıyla. Alttan açgözlü seçim
+    (floor_levels) tek bir zayıf ara kotun (+10.25, ±0.00) hemen üstündeki asıl katı elemesine yol açıyordu.
+    Omurga iki seviyeden azsa eski yönteme düşülür."""
+    anchors = sorted({round(float(d.kot), 2) for d in drawings
+                      if d.kot is not None and (getattr(d, "plan_type", "") or "") in PER_FLOOR_TYPES})
+    if len(anchors) < 2:
+        return floor_levels(building_levels(drawings, datum))
+    from collections import Counter as _C
+    destek = _C(round(v, 2) for v in building_levels(drawings, datum))
+    floors = list(anchors)
+    for v, _ in sorted(destek.items(), key=lambda kv: (-kv[1], kv[0])):
+        if all(abs(v - f) >= MIN_STOREY for f in floors):
+            floors.append(v)
+    return sorted(floors)
 
 
 def floor_levels(levels: list[float], min_gap: float = MIN_STOREY) -> list[float]:
@@ -95,7 +140,8 @@ def parse_levels(texts: list[str], label: str = "") -> LevelScan:
             continue
         m = _PAIR.match(t)
         has_kot = bool(_KOT_WORD.search(t)) and not _EXCLUDE.search(t)
-        votes = has_kot and not _DATUM.search(t)
+        # temel paftasının kotu ÜST kotudur (kazı derinliği ondan hesaplanır); alt kot yazıları oy vermez
+        votes = has_kot and not _DATUM.search(t) and (temel_disi or not _BOTTOM_KOT.search(t))
         if m:
             try:
                 x, y = _val(m.group("x")), _val(m.group("y"))
@@ -150,8 +196,11 @@ def parse_levels(texts: list[str], label: str = "") -> LevelScan:
     scan.counts = {f"{k:+.2f}": n for k, n in sorted(abs_vals.items())}
     # paftanın kat kotu: kat seviyesi olan (kaplama / peyzaj kotu olmayan) en çok oy alan değer
     floor_set = set(scan.floors)
+    # Paftada en sık geçen kot da kabul edilir: kat seviyeleri alttan açgözlü seçildiği için "+10.25" gibi bir
+    # ara kot, 1,4 m üstündeki asıl kat kotunu (+11.65 — paftada 303 kez yazılı, "+11.65 KOTU" başlıklı) eliyordu.
+    baskin = abs_vals.most_common(1)[0][0] if abs_vals else None
     for v, _ in kot_votes.most_common():
-        if v in floor_set:
+        if v in floor_set or v == baskin:
             scan.kot = v
             break
     return scan
@@ -193,6 +242,8 @@ def floor_rank(label: str) -> float | None:
         return -int(m.group(1))
     if "BODRUM" in n:
         return -1
+    if re.search(r"CATI\s*(KATI|ARASI)|TERAS\s*KATI", n):
+        return 98            # çatı katı: çatının ALTINDAKİ kat (en üst seviye çatının kendisidir)
     if "CATI" in n or "TERAS" in n:
         return 99
     if "ASMA" in n:
@@ -299,6 +350,8 @@ def level_for_rank(floors: list[float], rank: float, datum: float = 0.0) -> floa
         return floors[0]
     if rank == 99:                         # cati: en ust kat seviyesi
         return floors[-1]
+    if rank == 98:                         # cati kati: cati seviyesinin bir alti (A bloklari: +11.65, cati +15.65)
+        return floors[-2] if len(floors) >= 3 else floors[-1]
     if rank != int(rank):                  # asma kat: sira disi
         return None
     i = zero + int(rank)

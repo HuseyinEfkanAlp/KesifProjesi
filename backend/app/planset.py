@@ -262,8 +262,14 @@ def resolve_plan(titles: list[str], layers: dict[str, int] | None = None, explic
     # Üst/alt donatı gibi ana plan katmanları hâlâ donatı planına kanıt olabilir.
     # REBAR_DET2 / donatı detay gibi yardımcı detay katmanlarını bu oya katma.
     if found is not None and found.discipline == "structural" and layers:
+        # Başlık açıkça KALIP diyorsa yalnız ÇİZİLMİŞ donatı kanıttır: metraj tablosu ve poz yazıları bir kalıp
+        # paftasının köşesinde de durur (A blokları +15.65 kalıp planı: 294 metraj + 164 poz, yalnız 163 çizili
+        # donatı — donatı paftası sanıldı, çatı döşemesinin betonu ölçülmedi).
+        acik_kalip = any(re.search(r"KALIP", normalize_title(t)) and not re.search(r"DONATI", normalize_title(t))
+                         for t in titles if t)
+        kanit = r"DONATI|REBAR" if acik_kalip else r"DONATI|\bPOZ\b|METRAJ|REBAR"
         rebar_n = sum(n for name, n in layers.items()
-                      if re.search(r"DONATI|\bPOZ\b|METRAJ|REBAR", normalize_title(name))
+                      if re.search(kanit, normalize_title(name))
                       and not re.search(r"DETAY|DETAIL|(?:^|[ _-])DET(?:[0-9 _-]|$)", normalize_title(name)))
         frame_n = sum(n for name, n in layers.items()
                       if re.search(r"KOLON|KIRIS|COLUMN|BEAM", normalize_title(name)))

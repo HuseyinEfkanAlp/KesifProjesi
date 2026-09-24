@@ -76,3 +76,44 @@ def test_api_schedule_to_boq(client, block_dxf, monkeypatch):
     by = {i["key"]: i for i in client.get(f"/api/projects/{pid}/quantities").json()["boq"]["items"]}
     assert by["dograma:emp1"]["quantity"] == 82 and by["dograma:emp9"]["quantity"] == 14 and by["dograma:emp1"]["unit"] == "adet"
     assert by["dograma:emp1"]["discipline"] == "ksf:MIM"
+
+
+def test_buyuk_plan_blogu_acilir_doku_acilmaz(tmp_path, monkeypatch):
+    """Bağlanmış dış referansta bütün plan tek bloktur (A1 blok: 89.599 nesne) — sınırı aşsa da açılmalı.
+    Tek katmanda binlerce yazısız çizgi ise dokudur, açılmaz."""
+    monkeypatch.setattr(sheets, "STREAM_BLOCK_MIN_BYTES", 0)
+    monkeypatch.setattr(sheets, "BLOCK_EXPAND_MAX_ENTITIES", 500)
+    doc = ezdxf.new("R2010")
+    plan = doc.blocks.new("A1 BLOK - 22.12.2023")
+    for i in range(600):
+        plan.add_line((i, 0), (i, 50), dxfattribs={"layer": ("DUVAR", "KAPI", "AKS")[i % 3]})
+    plan.add_text("ZEMİN KAT", dxfattribs={"layer": "YAZI"})
+    doku = doc.blocks.new("DOKU")
+    for i in range(600):
+        doku.add_line((i, 0), (i, 1), dxfattribs={"layer": "DOKU"})
+    msp = doc.modelspace()
+    msp.add_blockref("A1 BLOK - 22.12.2023", (0, 0))
+    msp.add_blockref("DOKU", (0, 100))
+    src, out = tmp_path / "xref.dxf", tmp_path / "pafta.dxf"
+    doc.saveas(src)
+    crop_sheets(src, [((-10.0, -10.0, 700.0, 200.0), out)])
+    katman = {e.dxf.layer for e in ezdxf.readfile(str(out)).modelspace() if e.dxftype() == "LINE"}
+    assert {"DUVAR", "KAPI", "AKS"} <= katman          # plan bloğu açıldı
+    assert "DOKU" not in katman                         # doku açılmadı
+
+
+def test_orijine_yerlesen_plan_blogu_paftalara_kirpilarak_acilir(tmp_path, monkeypatch):
+    """A1 blok mimarisi: bütün plan tek blok, orijine yerleşmiş; içeriği iki paftanın üstüne düşüyor. Yerleştirme
+    noktası paftalarda olmadığı için hiç açılmıyordu (A1'in kat planlarında sıfır duvar)."""
+    monkeypatch.setattr(sheets, "STREAM_BLOCK_MIN_BYTES", 0)
+    doc = ezdxf.new("R2010")
+    blk = doc.blocks.new("A1 BLOK XREF")
+    blk.add_line((1000, 0), (1100, 0), dxfattribs={"layer": "DUVAR_BODRUM"})     # sol paftaya düşer
+    blk.add_line((2000, 0), (2100, 0), dxfattribs={"layer": "DUVAR_ZEMIN"})      # sağ paftaya düşer
+    doc.modelspace().add_blockref("A1 BLOK XREF", (0, 0))                          # 0,0 hiçbir paftada değil
+    src, sol, sag = tmp_path / "x.dxf", tmp_path / "sol.dxf", tmp_path / "sag.dxf"
+    doc.saveas(src)
+    crop_sheets(src, [((900.0, -100.0, 1200.0, 100.0), sol), ((1900.0, -100.0, 2200.0, 100.0), sag)])
+    k = lambda p: {e.dxf.layer for e in ezdxf.readfile(str(p)).modelspace() if e.dxftype() == "LINE"}   # noqa: E731
+    assert k(sol) == {"DUVAR_BODRUM"}          # yalnız kendi parçası
+    assert k(sag) == {"DUVAR_ZEMIN"}
