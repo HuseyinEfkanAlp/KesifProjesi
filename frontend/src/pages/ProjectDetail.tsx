@@ -195,6 +195,11 @@ export default function ProjectDetail() {
               </label>
             ))}
           </div>
+          <label className="check-row" title="AVM / iş merkezi: dükkân içi sıva, boya, tavan ve döşeme kiracının işidir; keşifte yalnız ortak alanlar (lobi, koridor, merdiven) ve dükkânın dış cephesi kalır">
+            <input type="checkbox" checked={Boolean(Number(dparams.tenant_shell ?? 0))}
+              onChange={(e) => setDparams({ ...dparams, tenant_shell: e.target.checked ? '1' : '0' })} />
+            Dükkânlar kaba teslim (dükkân içi sıva / boya / tavan kiracı işi)
+          </label>
           <details style={{ marginTop: 8 }}>
             <summary className="muted" style={{ cursor: 'pointer' }}>Cephe, çatı, şap / kaplama, demir oranları, sarf ve fire…</summary>
             <h3>Cephe</h3>

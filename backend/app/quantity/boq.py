@@ -53,6 +53,9 @@ DEFAULT_PARAMS: dict[str, Any] = {
     # bkz. services.exterior_wall_ids). Sayı girilirse bütün duvarlara o uygulanır (0 = sıva / boya yok).
     "plaster_sides": None,
     "paint_sides": None,
+    # Dükkânlar kaba teslim (AVM / iş merkezi): dükkân içi sıva, boya, tavan kiracı işidir. 1 = açık, 0 = kapalı,
+    # None = bilinmiyor (çizimde dükkân varsa kontrol listesinde sorulur). Bkz. services.shell_wall_faces.
+    "tenant_shell": None,
     "cable_drop": 0.0,            # her kablo hattına eklenen iniş/çıkış payı (m)
     "cable_waste_pct": 5.0,       # kablo fire %
     "tray_waste_pct": 5.0,
@@ -470,7 +473,7 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
             ext = d.get("exterior_walls")
             for kind, pkey, name, rule in (("siva", "plaster_sides", "Sıva", "plaster_openings"),
                                            ("boya", "paint_sides", "Boya", "paint_openings")):
-                q, ek, yuz = finish_quantity(walls, allocations, params, pkey, ext, mult)
+                q, ek, yuz = finish_quantity(walls, allocations, params, pkey, ext, mult, d.get("wall_faces"), d.get("wall_faces_note", ""))
                 if q > 0:
                     finish = acc.add(kind, "*", name + ek, q, note=RULES[rule].text + "; " + yuz,
                                      ev=worse(*[_tier(d, w["element"]) for w in walls], TURETILDI))
@@ -527,10 +530,15 @@ def wall_faces(params: dict[str, Any], key: str, exterior: bool) -> float:
 
 
 def finish_quantity(walls: list[dict], allocations: list[dict], params: dict[str, Any], key: str,
-                    exterior: set | None, mult: float) -> tuple[float, str, str]:
+                    exterior: set | None, mult: float, faces: dict | None = None,
+                    faces_note: str = "") -> tuple[float, str, str]:
     """Duvarların sıva / boya alanı (yüz sayısı duvar başına) → (miktar, etiket eki, not).
 
-    exterior: dış duvar kimlikleri; None = dış hat çıkarılamadı (hepsi iç duvar sayılır ve not düşülür)."""
+    exterior: dış duvar kimlikleri; None = dış hat çıkarılamadı (hepsi iç duvar sayılır ve not düşülür).
+    faces: duvar kimliği -> yüz sayısı; verilirse (dükkânlar kaba teslim) yalnız o sayılar kullanılır."""
+    if faces is not None:
+        total = sum(max(w["gross"] - a["all"], 0.0) * faces.get(_g(w["element"], "id"), 0) for w, a in zip(walls, allocations))
+        return total * mult, "", faces_note
     ext = exterior or set()
     total, n_ext = 0.0, 0
     for w, a in zip(walls, allocations):
@@ -703,12 +711,14 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
             has_ksf_boya = any((parse_layer(_g(e, "layer") or "", catalog) or ParsedLayer("", "", None, None, "")).code == "BOYA" for e in d["elements"])
             ext = d.get("exterior_walls")
             sivali = [(w, a) for w, a in zip(pending_walls, allocations) if w["plaster"]]      # alçıpan sıvanmaz
-            q, ek, yuz = finish_quantity([w for w, _ in sivali], [a for _, a in sivali], params, "plaster_sides", ext, mult)
+            q, ek, yuz = finish_quantity([w for w, _ in sivali], [a for _, a in sivali], params, "plaster_sides", ext, mult,
+                                         d.get("wall_faces"), d.get("wall_faces_note", ""))
             if q > 0 and not has_ksf_siva:
                 finish = acc.add("siva", "*", "Sıva" + ek, q, note=RULES["plaster_openings"].text + f"; {yuz}; KSF duvar alanından (alçıpan hariç)",
                                  ev=worse(*[_tier(d, w["element"]) for w in pending_walls], TURETILDI))
                 _opening_audit(finish, d, allocations, issues, mult)
-            q, ek, yuz = finish_quantity(pending_walls, allocations, params, "paint_sides", ext, mult)
+            q, ek, yuz = finish_quantity(pending_walls, allocations, params, "paint_sides", ext, mult,
+                                         d.get("wall_faces"), d.get("wall_faces_note", ""))
             if q > 0 and not has_ksf_boya:
                 finish = acc.add("boya", "*", "Boya" + ek, q, note=RULES["paint_openings"].text + f"; {yuz}; KSF duvar alanından",
                                  ev=worse(*[_tier(d, w["element"]) for w in pending_walls], TURETILDI))

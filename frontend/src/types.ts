@@ -95,6 +95,8 @@ export interface ProjectParams {
   paint_sides: number | null
   /** boş = çizimden (KORUMA ŞAPI 7 CM), yoksa 5 */
   protection_screed_cm?: number | null
+  /** 1 = dükkânlar kaba teslim (dükkân içi sıva / boya / tavan kiracı işi); boş = bilinmiyor */
+  tenant_shell?: number | null
   /** kazı çalışma payı (m); boş = çizimden (ÇALIŞMA PAYI 80 CM), yoksa 0,60 */
   excavation_work_m?: number | null
   cable_drop: number

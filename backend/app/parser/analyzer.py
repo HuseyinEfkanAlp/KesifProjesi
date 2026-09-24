@@ -85,6 +85,7 @@ class AnalysisResult:
     discipline_hints: dict = field(default_factory=dict)      # çalıştırılmayan ama katmanlarında kanıt olan disiplinler -> nesne sayısı
     hatches: dict = field(default_factory=dict)               # tarama özeti ve lejant (parser/hatches.py)
     level_offset: float | None = None                         # yapı ±0,00'ının mutlak kotu (parantezli kot yazılarından)
+    zones: list = field(default_factory=list)                 # alan çizgili bölgeler (parser/zones.py)
 
     def by_type(self, etype: str) -> list[DetectedElement]:
         return [e for e in self.elements if e.etype == etype]
@@ -847,6 +848,8 @@ def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectP
     result.elements, mw = merge_area_elements(result.elements)
     result.warnings += mw
     read_hatches(drawing, result)
+    from .zones import scan_zones
+    result.zones = scan_zones(drawing)
     return result
 
 

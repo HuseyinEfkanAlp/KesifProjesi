@@ -224,3 +224,13 @@ def test_excavation_default_is_asked(client, storey_dxf, foundation_dxf):
     assert "VARSAYILAN" in kazi["notes"][0]
     q = client.get(f"/api/projects/{pid}/quantities").json().get("quality", {})
     assert {a["key"]: a["source"] for a in q.get("assumptions", [])}.get("excavation_depth_m") == "default"
+
+
+def test_kazi_derinligi_mutlak_kot_sisteminde_yapi_sifirindan():
+    """A blokları: ±0,00 = +4,15 (mutlak), temel üst kotu +0,82. Zemin "0" alınınca derinlik eksi çıkıyordu."""
+    from types import SimpleNamespace as NS
+    from app.services import excavation_depth
+    dw = [NS(materials={}, level_offset=4.15, plan_type="mim_kat_plani")]
+    r = excavation_depth(NS(params={}), dw, {"lean_concrete_cm": 10.0}, found_kot=0.82, found_thickness=0.70)
+    assert r["source"] == "foundation_kot" and r["m"] == pytest.approx(4.15 - (0.82 - 0.70 - 0.10))
+    assert "+4.15" in r["detail"]

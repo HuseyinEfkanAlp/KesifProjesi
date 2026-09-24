@@ -72,6 +72,7 @@ _ADDED_COLUMNS = [
     ("priceitem", "subcontract_price", "FLOAT DEFAULT 0"),
     ("drawing", "hatches", "JSON"),
     ("drawing", "level_offset", "FLOAT"),
+    ("drawing", "zones", "JSON"),
 ]
 
 
