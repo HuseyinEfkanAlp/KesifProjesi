@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 from ..db import get_session
 from ..jobs import ACTIVE, job_out
 from ..models import Job
+from ..tenancy import DEFAULT_COMPANY_SLUG, get_slug
 from .projects import get_project
 
 router = APIRouter(prefix="/api", tags=["jobs"])
@@ -22,6 +23,8 @@ def read_job(job_id: int, session: Session = Depends(get_session)):
         raise HTTPException(404, "İş bulunamadı")
     if j.project_id is not None:
         get_project(j.project_id, session)      # kiracı süzgeci: başkasının işi görünmez
+    elif (j.company_slug or DEFAULT_COMPANY_SLUG) != (get_slug() or DEFAULT_COMPANY_SLUG):
+        raise HTTPException(404, "İş bulunamadı")   # projesiz iş: şirketi kaydın kendisinde
     return job_out(j)
 
 

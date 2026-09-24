@@ -12,8 +12,9 @@ süzgeç er geç bir yerde unutulur ve unutulduğu yer tam olarak veri sızınt�
 ⚠ Bağlam değişkeni **iş parçacığına özeldir**: arka planda iş çalıştıran her yer (`jobs.py`)
 şirketi kendi iş parçacığında yeniden kurmak zorundadır — `use_company()` bunun içindir.
 
-Kimlik doğrulama (kullanıcı, oturum, rol) henüz yok. O gelene kadar şirket `X-Company` başlığından
-okunur; kimlik eklendiğinde yalnız `resolve_slug` değişir.
+Şirketi **giriş yapan kullanıcı** belirler (app/auth.py): `main.kimlik_kapisi` oturumdan kullanıcıyı
+bulur ve onun şirketini buraya koyar. İstemcinin söylediği hiçbir şey (başlık, parametre) şirketi
+değiştiremez.
 """
 from __future__ import annotations
 
@@ -27,10 +28,8 @@ from .models import Company, Project
 
 DEFAULT_COMPANY_SLUG = "varsayilan"
 DEFAULT_COMPANY_NAME = "Varsayılan şirket"
-COMPANY_HEADER = "x-company"
 
-# Roller. Kimlik doğrulama gelene kadar herkes "sahibi" sayılır; ayrım uçlarda değil burada
-# tutulur ki yetki kararı tek yerden okunsun.
+# Roller. Neye izin verildiği uçlarda değil `auth.izin`de tek yerden okunur.
 ROLES = ("sahibi", "uzman", "goruntuleyen")
 
 # İsteğin şirketi (slug). Boş = varsayılan şirket.
@@ -68,9 +67,9 @@ def default_company(session: Session) -> Company:
 
 
 def current_company(session: Session) -> Company:
-    """İsteğin ait olduğu şirket. Kimlik doğrulama eklendiğinde **yalnız burası** değişir.
+    """İsteğin ait olduğu şirket (giriş yapan kullanıcınınki).
 
-    Başlık bilinmeyen bir şirketi gösteriyorsa istek reddedilir: sessizce varsayılana düşmek,
+    Bağlam bilinmeyen bir şirketi gösteriyorsa istek reddedilir: sessizce varsayılana düşmek,
     yanlış kiracının verisini göstermenin en kolay yoludur."""
     slug = get_slug()
     if not slug or slug == DEFAULT_COMPANY_SLUG:

@@ -12,6 +12,8 @@ import Prices from './pages/Prices'
 import Cost from './pages/Cost'
 import Standard from './pages/Standard'
 import PriceBook from './pages/PriceBook'
+import Account from './pages/Account'
+import AuthGate from './components/AuthGate'
 
 const router = createBrowserRouter([
   {
@@ -21,6 +23,7 @@ const router = createBrowserRouter([
       { index: true, element: <Projects /> },
       { path: 'standard', element: <Standard /> },
       { path: 'pricebook', element: <PriceBook /> },
+      { path: 'account', element: <Account /> },
       { path: 'projects/new', element: <NewProject /> },
       { path: 'projects/:id', element: <ProjectDetail /> },
       { path: 'projects/:id/drawings/:did', element: <Elements /> },
@@ -33,6 +36,8 @@ const router = createBrowserRouter([
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <RouterProvider router={router} />
+    <AuthGate>
+      <RouterProvider router={router} />
+    </AuthGate>
   </StrictMode>,
 )

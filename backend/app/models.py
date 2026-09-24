@@ -18,6 +18,32 @@ class Company(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class User(SQLModel, table=True):
+    """Giriş yapan kişi. Her kullanıcı tek bir şirkete bağlıdır; şirketi o belirler (bkz. app/auth.py).
+
+    Kullanıcı silinmez, pasifleştirilir: metraj kontrol kararlarında adı yazılı durur ("kim onayladı"),
+    silinirse o iz kopar."""
+    id: int | None = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="company.id", index=True)
+    email: str = Field(index=True, unique=True)     # küçük harfe çevrilmiş
+    name: str = ""
+    password_hash: str = ""
+    role: str = "uzman"                             # tenancy.ROLES: sahibi | uzman | goruntuleyen
+    active: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_login: datetime | None = None
+
+
+class UserSession(SQLModel, table=True):
+    """Açık oturum. Tarayıcıdaki çerez rastgele bir anahtar taşır; burada yalnız onun özeti durur —
+    veritabanı ele geçse bile oturum çalınamaz. Çıkışta ve şifre değişince satır silinir."""
+    id: int | None = Field(default=None, primary_key=True)
+    token_hash: str = Field(index=True, unique=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime
+
+
 class Project(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     # Kiracı. None = kiracılık öncesi kayıt; varsayılan şirket onları da görür (bkz. tenancy.owned).

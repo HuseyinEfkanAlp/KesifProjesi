@@ -67,7 +67,10 @@ def upsert_review(project_id: int, body: ReviewIn, session: Session = Depends(ge
     if body.computed is not None:
         row.computed = body.computed
     row.reason = body.reason or ""
-    row.author = body.author or ""
+    # Kararı kimin verdiği oturumdan gelir; istemci ayrıca ad yazdıysa o korunur.
+    from ..auth import current
+    k = current()
+    row.author = body.author or (k.name or k.email if k else "")
     row.updated_at = datetime.utcnow()
     session.add(row)
     session.commit()

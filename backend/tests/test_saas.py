@@ -26,50 +26,77 @@ def _oturum():
     return Session(dbmod.engine)
 
 
+def _kullanici(slug, email, rol="uzman"):
+    """Yeni bir şirket ve ona bağlı bir kullanıcı. Şirketi artık giriş yapan kullanıcı belirler."""
+    from app.auth import create_user
+    with _oturum() as s:
+        create_user(s, _sirket(s, slug), email, "sifre1234", role=rol)
+
+
+def _giris(client, email, sifre="sifre1234"):
+    r = client.post("/api/auth/login", json={"email": email, "password": sifre})
+    assert r.status_code == 200, r.text
+
+
 # ------------------------------------------------------------------ çok kiracılık
 
 def test_kiraci_baskasinin_projesini_goremez(client: TestClient):
-    with _oturum() as s:
-        _sirket(s, "aofis", "A Ofis")
-        _sirket(s, "bofis", "B Ofis")
-    a = client.post("/api/projects", json={"name": "A projesi"}, headers={"X-Company": "aofis"}).json()
+    _kullanici("aofis", "a@ofis.test")
+    _kullanici("bofis", "b@ofis.test")
+    _giris(client, "a@ofis.test")
+    a = client.post("/api/projects", json={"name": "A projesi"}).json()
 
+    _giris(client, "b@ofis.test")
     # B ofisi A'nın projesini listede görmez
-    liste = client.get("/api/projects", headers={"X-Company": "bofis"}).json()
-    assert [p["id"] for p in liste] == []
-
+    assert [p["id"] for p in client.get("/api/projects").json()] == []
     # doğrudan erişimde de 404 — 403 değil: projenin varlığı bile sızdırılmaz
-    r = client.get(f"/api/projects/{a['id']}", headers={"X-Company": "bofis"})
-    assert r.status_code == 404
+    assert client.get(f"/api/projects/{a['id']}").status_code == 404
+    assert client.delete(f"/api/projects/{a['id']}").status_code == 404
 
 
 def test_kiraci_kendi_projesini_gorur(client: TestClient):
-    with _oturum() as s:
-        _sirket(s, "aofis")
-    a = client.post("/api/projects", json={"name": "A projesi"}, headers={"X-Company": "aofis"}).json()
-    r = client.get(f"/api/projects/{a['id']}", headers={"X-Company": "aofis"})
+    _kullanici("aofis", "a@ofis.test")
+    _giris(client, "a@ofis.test")
+    a = client.post("/api/projects", json={"name": "A projesi"}).json()
+    r = client.get(f"/api/projects/{a['id']}")
     assert r.status_code == 200 and r.json()["name"] == "A projesi"
-    assert [p["id"] for p in client.get("/api/projects", headers={"X-Company": "aofis"}).json()] == [a["id"]]
+    assert [p["id"] for p in client.get("/api/projects").json()] == [a["id"]]
 
 
-def test_bilinmeyen_sirket_sessizce_varsayilana_dusmez(client: TestClient):
-    """Sessizce varsayılana düşmek, yanlış kiracının verisini göstermenin en kolay yoludur."""
-    r = client.get("/api/projects", headers={"X-Company": "olmayan-ofis"})
+def test_sirket_basliktan_degistirilemez(client: TestClient):
+    """Eski `X-Company` başlığı artık hiçbir şey yapmaz: şirketi oturum belirler, istemci değil."""
+    _kullanici("aofis", "a@ofis.test")
+    _giris(client, "a@ofis.test")
+    a = client.post("/api/projects", json={"name": "A projesi"}).json()
+    _kullanici("bofis", "b@ofis.test")
+    _giris(client, "b@ofis.test")
+    r = client.get(f"/api/projects/{a['id']}", headers={"X-Company": "aofis"})
     assert r.status_code == 404
 
 
 def test_kiracilik_oncesi_projeleri_yalniz_varsayilan_sirket_gorur(client: TestClient):
     """Yükseltmeden sonra eski projeler kaybolmamalı; ama her şirkete de açılmamalı."""
-    eski = client.post("/api/projects", json={"name": "Eski"}).json()     # başlıksız = varsayılan şirket
+    eski = client.post("/api/projects", json={"name": "Eski"}).json()     # ilk kurulum hesabı = varsayılan şirket
     with _oturum() as s:
         from app.models import Project
         p = s.get(Project, eski["id"])
         p.company_id = None                                              # kiracılık öncesi kayıt
         s.add(p)
         s.commit()
-        _sirket(s, "aofis")
+    _kullanici("aofis", "a@ofis.test")
     assert client.get(f"/api/projects/{eski['id']}").status_code == 200
-    assert client.get(f"/api/projects/{eski['id']}", headers={"X-Company": "aofis"}).status_code == 404
+    _giris(client, "a@ofis.test")
+    assert client.get(f"/api/projects/{eski['id']}").status_code == 404
+
+
+def test_projesiz_is_baska_sirkete_gorunmez(client: TestClient):
+    register("deneme-sirket", lambda s, j: {})
+    with _oturum() as s:
+        job = enqueue(s, None, "deneme-sirket", {}, company_slug="varsayilan")
+    _kullanici("aofis", "a@ofis.test")
+    assert client.get(f"/api/jobs/{job.id}").status_code == 200
+    _giris(client, "a@ofis.test")
+    assert client.get(f"/api/jobs/{job.id}").status_code == 404
 
 
 # ------------------------------------------------------------------ iş kuyruğu

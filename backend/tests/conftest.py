@@ -84,6 +84,8 @@ def client(tmp_path, monkeypatch):
     # Testte arka plan iş parçacığı çalışmaz: işler `jobs.run_pending()` ile denetimli çalışır,
     # yoksa iddialar yarış durumuna girer ("calisiyor" mı "bitti" mi belli olmaz).
     jobsmod.AUTO_START = False
+    from app import auth as authmod
+    monkeypatch.setattr(authmod, "SCRYPT_N", 2 ** 4)   # şifre özeti testte hızlı olsun
     from app.api import drawings as drawingsmod
     # Testler yüklemeyi senkron çalıştırır: 52 çağrı yerini iş takibiyle doldurmak testleri
     # okunmaz yapardı. Arka plan yolu `test_autonomous_upload` ve `test_saas` ile ayrıca sınanır.
@@ -99,4 +101,8 @@ def client(tmp_path, monkeypatch):
 
     mainmod.app.dependency_overrides[dbmod.get_session] = _get_session
     with TestClient(mainmod.app) as c:
+        # Her test varsayılan şirketin sahibi olarak giriş yapmış başlar (ilk kurulum hesabı).
+        # Kimliksiz davranış `test_auth.py`de `anon_client` ile sınanır.
+        r = c.post("/api/auth/setup", json={"email": "sahip@test.local", "password": "sifre1234", "name": "Test Sahibi"})
+        assert r.status_code == 200, r.text
         yield c

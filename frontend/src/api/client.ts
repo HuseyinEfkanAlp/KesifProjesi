@@ -1,10 +1,40 @@
 import type { QualityReport, Boq, Catalog, CatalogItem, CostResult, Discipline, DisciplineChoice, Drawing, Element, JobRow, LayerCheck, MaterialIn, MaterialOptions, MaterialPrice, PlanCheck, PlanLevel, PlanType, PozBook, PozImportResult, PriceBook, PriceBookIn, PriceIn, PriceItem, Project, ProjectSystems, Supplier, SupplierIn, QuantitiesResponse, QuantitySummary, UploadResult, SpaceBreakdown } from '../types'
 
+/** Sunucu 401 döndüğünde yayılan olay; AuthGate dinler ve giriş ekranını gösterir. */
+export const SESSION_LOST = 'kesif:oturum-dustu'
+
+export type Role = 'sahibi' | 'uzman' | 'goruntuleyen'
+
+export interface Me {
+  user: { id: number; email: string; name: string; role: Role; role_label: string }
+  company: { slug: string; name: string }
+}
+
+export interface AuthStatus {
+  needs_setup: boolean
+  me: Me | null
+  roles: Record<Role, string>
+}
+
+export interface UserRow {
+  id: number
+  email: string
+  name: string
+  role: Role
+  active: boolean
+  created_at: string | null
+  last_login: string | null
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     ...init,
     headers: init.body instanceof FormData ? init.headers : { 'Content-Type': 'application/json', ...(init.headers || {}) },
   })
+  if (res.status === 401 && !path.startsWith('/api/auth/')) {
+    // Oturum düştü (süresi doldu, hesap kapatıldı, şifre değişti): giriş ekranına dönülür.
+    window.dispatchEvent(new Event(SESSION_LOST))
+  }
   if (!res.ok) {
     let detail = res.statusText
     try {
@@ -67,6 +97,24 @@ export interface ReviewRow extends ReviewIn {
 }
 
 export const Api = {
+  auth: {
+    status: () => request<AuthStatus>('/api/auth/status'),
+    login: (email: string, password: string) => request<Me>('/api/auth/login', { method: 'POST', body: json({ email, password }) }),
+    setup: (body: { email: string; password: string; name: string; company_name: string }) =>
+      request<Me>('/api/auth/setup', { method: 'POST', body: json(body) }),
+    logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
+    changePassword: (current: string, next: string) =>
+      request<void>('/api/auth/password', { method: 'POST', body: json({ current, new: next }) }),
+  },
+  users: {
+    list: () => request<UserRow[]>('/api/users'),
+    add: (body: { email: string; password: string; name: string; role: Role }) =>
+      request<UserRow>('/api/users', { method: 'POST', body: json(body) }),
+    patch: (id: number, body: { name?: string; role?: Role; active?: boolean }) =>
+      request<UserRow>(`/api/users/${id}`, { method: 'PATCH', body: json(body) }),
+    resetPassword: (id: number, password: string) =>
+      request<void>(`/api/users/${id}/password`, { method: 'POST', body: json({ password }) }),
+  },
   projects: {
     list: () => request<Project[]>('/api/projects'),
     get: (id: number) => request<Project>(`/api/projects/${id}`),

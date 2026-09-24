@@ -5,9 +5,10 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .api import auth as auth_api
 from .api import catalog, drawings, jobs, pricebook, prices, projects, quantities, reports, review
 from .db import init_db
 
@@ -28,17 +29,34 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 
 @app.middleware("http")
-async def kiraci_baglami(request, call_next):
-    """İsteğin şirketini bağlam değişkenine koyar; `get_project` süzgeci oradan okur.
+async def kimlik_kapisi(request, call_next):
+    """Tek kapı: her `/api/` isteğinde kimliği çözer, rol kuralını uygular ve kullanıcının şirketini
+    bağlam değişkenine koyar (`get_project` süzgeci oradan okur). Bkz. app/auth.py.
 
-    Uca parametre olarak geçirmek yerine bağlamda taşınır: 35 uçtan birine eklemeyi unutmak,
-    tam olarak veri sızıntısının olacağı yerdir."""
-    from .tenancy import COMPANY_HEADER, set_slug
-    set_slug(request.headers.get(COMPANY_HEADER, ""))
+    Uca parametre olarak geçirmek yerine burada yapılır: 40 uçtan birine eklemeyi unutmak, tam
+    olarak veri sızıntısının olacağı yerdir."""
+    from sqlmodel import Session
+
+    from . import auth, db
+    from .tenancy import set_slug
+
+    path = request.url.path
+    k = None
+    token = request.cookies.get(auth.COOKIE_NAME)
+    if token:
+        with Session(db.engine) as s:
+            k = auth.resolve(s, token)
+    auth.set_current(k)
+    set_slug(k.company_slug if k else "")
+    if path.startswith("/api/") and path not in auth.PUBLIC_PATHS:
+        if k is None:
+            return JSONResponse(status_code=401, content={"detail": "Giriş yapmanız gerekiyor."})
+        if neden := auth.izin(k.role, request.method, path):
+            return JSONResponse(status_code=403, content={"detail": neden})
     return await call_next(request)
 
-for r in (projects.router, drawings.router, quantities.router, prices.router, pricebook.router, reports.router,
-          catalog.router, review.router, jobs.router):
+for r in (auth_api.router, projects.router, drawings.router, quantities.router, prices.router, pricebook.router,
+          reports.router, catalog.router, review.router, jobs.router):
     app.include_router(r)
 
 
