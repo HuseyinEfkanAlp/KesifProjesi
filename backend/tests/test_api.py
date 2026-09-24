@@ -102,7 +102,8 @@ def test_multi_discipline_flow(client, storey_dxf, arch_dxf, elec_dxf):
     pid = client.post("/api/projects", json={"name": "Karma", "storey_height": 3.0, "slab_thickness": 0.15,
                                              "params": {"wall_height": 2.8, "work_hours_per_day": 9}}).json()["id"]
     p = client.get(f"/api/projects/{pid}").json()
-    assert p["params"]["wall_height"] == 2.8 and p["params"]["work_hours_per_day"] == 9 and p["params"]["plaster_sides"] == 2
+    assert p["params"]["wall_height"] == 2.8 and p["params"]["work_hours_per_day"] == 9
+    assert p["params"]["plaster_sides"] is None      # boş = çizimden: iç duvar 2 yüz, dış duvar 1 yüz
 
     with open(storey_dxf, "rb") as f:
         r = client.post(f"/api/projects/{pid}/drawings", files={"file": ("kat.dxf", f, "application/dxf")},

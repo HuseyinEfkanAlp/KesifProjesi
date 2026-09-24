@@ -33,7 +33,9 @@ MATERIAL_RULES: list[tuple[str, str]] = [
     ("CATI_KIREMIT", r"KIREMIT|SHINGLE"),
     ("EGIM_BETONU", r"EGIM\s*(BETON|SAP)|MEYIL\s*(BETON|SAP)"),
     ("GROBETON", r"GROBETON|GROB\s*BETON|TEMEL\s*ALTI\s*BETON|BLOKAJ\s*BETON"),
+    ("KORUMA_SAPI", r"KORUMA\s*SAPI?\b"),          # temel yalıtımı üstü; aynı yazı KORUMA_BETONU'na da düşer
     ("KORUMA_BETONU", r"KORUMA\s*(BETON|SAP)"),
+    ("KAZI_CALISMA_PAYI", r"CALISMA\s*(PAYI|BOSLUGU|ARALIGI)"),   # kazıda temel kenarından bırakılan boşluk
     ("CATI_CAKIL", r"\bCAKIL\b|BALAST"),
     ("CELIK_PROFIL", r"CELIK\s*(KIRIS|PROFIL|KONSTR)"),
     ("CATI_SANDVIC_PANEL", r"SANDVIC\s*PANEL|TRAPEZ\s*(SAC|PANEL|LEVHA)"),
@@ -108,7 +110,43 @@ def scan_materials(drawing: Drawing) -> dict[str, dict]:
     for key, code in (("ground", "KOT_ZEMIN"), ("bottom", "KOT_KAZI_TABAN"), ("depth", "KAZI_DERINLIK")):
         if exc.get(key) is not None:
             found.setdefault(code, {"evidence": [exc[f"{key}_note"]], "spec": f"{exc[key]:g}"})
+    n, note = slope_from(texts)
+    if n is not None:
+        found.setdefault("KAZI_SEV", {"evidence": [note], "spec": f"{n:g}"})
     return found
+
+
+# ---------- Kazı şevi: "ŞEV 1:1", "1/1,5 ŞEV", "ŞEV AÇISI 60°". Oran düşey:yatay okunur (1:1,5 = 1 m inişte
+# 1,5 m açılır); döndürülen değer metre düşey başına yatay açılmadır. normalize_title noktalamayı sildiği
+# için ham yazıdan okunur.
+_SEV = re.compile(r"(?:\bSEV\w*\D{0,15}?(?P<a>\d+(?:[.,]\d+)?)\s*[:/]\s*(?P<b>\d+(?:[.,]\d+)?))"
+                  r"|(?:(?P<a2>\d+(?:[.,]\d+)?)\s*[:/]\s*(?P<b2>\d+(?:[.,]\d+)?)\s*\bSEV)"
+                  r"|(?:\bSEV\w*\D{0,15}?(?P<deg>\d{2}(?:[.,]\d+)?)\s*(?:°|%%D|DERECE))")
+
+
+def slope_from(texts: list[str]) -> tuple[float | None, str]:
+    """Kazı şevi: (düşey metre başına yatay açılma, kanıt yazısı) ya da (None, "")."""
+    import math
+    for raw in texts:
+        if not raw or len(raw) > MAX_TEXT:
+            continue
+        t = raw.upper().replace("Ş", "S").replace("İ", "I").replace("Ç", "C").replace("Ğ", "G")
+        m = _SEV.search(t)
+        if not m:
+            continue
+        f = lambda s: float(s.replace(",", "."))   # noqa: E731
+        try:
+            if m.group("deg"):
+                deg = f(m.group("deg"))
+                n = 1.0 / math.tan(math.radians(deg)) if 10 <= deg < 90 else None
+            else:
+                a, b = (m.group("a"), m.group("b")) if m.group("a") else (m.group("a2"), m.group("b2"))
+                n = f(b) / f(a) if f(a) > 0 else None
+        except ValueError:
+            n = None
+        if n is not None and 0 < n <= 3:
+            return round(n, 3), re.sub(r"\s+", " ", raw.replace(r"\P", " ")).strip()[:60]
+    return None, ""
 
 
 def merge_materials(per_drawing: list[dict]) -> dict[str, dict]:

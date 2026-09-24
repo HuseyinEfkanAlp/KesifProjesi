@@ -40,6 +40,9 @@ class Entity:
     handle: str = ""
     source: str = ""               # DXF entity tipi (LWPOLYLINE, HATCH, INSERT>LINE ...)
     block: str = ""                # INSERT içinden geliyorsa blok adı
+    # Tarama deseni (HATCH): "AR-CONC", "EARTH", "SOLID"… Malzemenin çizimdeki ikinci dili — yazı
+    # yoksa desen ne olduğunu söyler (parser/hatches.py). Boş = tarama değil.
+    pattern: str = ""
 
     @property
     def is_closed_polygon(self) -> bool:
@@ -71,6 +74,16 @@ class Drawing:
         for e in self.entities:
             counts[e.layer] = counts.get(e.layer, 0) + 1
         return counts
+
+
+def hatch_pattern(entity) -> str:
+    """Taramanın desen adı, büyük harf; dolu tarama "SOLID"."""
+    try:
+        if entity.dxf.solid_fill:
+            return "SOLID"
+        return str(entity.dxf.pattern_name or "").strip().upper()
+    except Exception:
+        return ""
 
 
 def _flatten_path(p: ezpath.Path, tol: float) -> list[Point]:
@@ -143,10 +156,11 @@ def _convert(entity: DXFEntity, scale: float, insert_layer: str | None, block: s
             paths = ezpath.from_hatch(entity)
         except Exception:
             return
+        pattern = hatch_pattern(entity)
         for p in paths:
             pts = _dedupe([(x * scale, y * scale) for x, y in _flatten_path(p, tol)])
             if len(pts) >= 3:
-                yield Entity("polygon", layer, pts, closed=True, handle=handle, source=src, block=block)
+                yield Entity("polygon", layer, pts, closed=True, handle=handle, source=src, block=block, pattern=pattern)
         return
 
     if t in ("SOLID", "TRACE", "3DFACE"):

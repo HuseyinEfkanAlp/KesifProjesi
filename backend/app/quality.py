@@ -82,7 +82,8 @@ def build_quality(drawings, elements, items, summary, params, plan_check, cost=N
     if "kalip" in kinds:
         relevant.update(formwork_material="Kalıp malzemesi", formwork_reuse="Kalıp tekrar kullanımı")
     for kind, key, label in [("kazi", "excavation_depth_m", "Kazı derinliği (m)"),
-                             ("kazi", "excavation_margin", "Kazı çalışma / şev payı"),
+                             ("kazi", "excavation_work_m", "Kazı çalışma payı (m)"),
+                             ("koruma_sapi", "protection_screed_cm", "Koruma şapı kalınlığı (cm)"),
                              ("grobeton", "lean_concrete_cm", "Grobeton kalınlığı (cm)"),
                              ("sap", "screed_cm", "Şap kalınlığı (cm)"),
                              ("kablo", "cable_waste_pct", "Kablo firesi (%)"),
@@ -92,11 +93,14 @@ def build_quality(drawings, elements, items, summary, params, plan_check, cost=N
     # Çizimden okunan değer varsayılan sayılmaz: türetilen kalem kaynağını detail.param_source ile taşır.
     # {kalem türü: (parametre, grup -> değer)} — şap grubu cm, kazı grubu cm cinsindendir.
     PLAN_READ_KINDS = {"sap": ("screed_cm", 1.0), "kazi": ("excavation_depth_m", 0.01),
-                       "grobeton": ("lean_concrete_cm", 1.0)}
+                       "grobeton": ("lean_concrete_cm", 1.0), "koruma_sapi": ("protection_screed_cm", 1.0)}
     PLAN_SOURCES = {"rooms": "mahal notundan", "drawing": "çizim notundan", "note": "kesitte yazılı",
                     "kots": "kesit kotlarından", "foundation_kot": "temel kotundan"}
     plan_read = {}
     for i in items:
+        for key, (value, src) in ((i.detail or {}).get("plan_params") or {}).items():
+            if value is not None and src in PLAN_SOURCES:
+                plan_read[key] = (value, src)
         src = (i.detail or {}).get("param_source")
         if i.kind in PLAN_READ_KINDS and src in PLAN_SOURCES:
             key, factor = PLAN_READ_KINDS[i.kind]

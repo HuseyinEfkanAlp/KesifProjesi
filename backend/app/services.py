@@ -184,6 +184,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.unit_verdict = result.unit_verdict
     drawing.discipline_hints = result.discipline_hints or {}
     drawing.spaces = result.spaces or []
+    drawing.hatches = result.hatches or {}
     drawing.levels = [float(v) for v in (result.levels or [])]
     drawing.kot = result.kot
     drawing.analyzed_at = datetime.utcnow()
@@ -788,6 +789,10 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
                  "height_source": sh["per_drawing"].get(d.id, {}).get("source", sh["source"]),
                  "storey_risk": d.id in riskli,
                  "elements": [ksf_entry(e) for e in elements]}
+        duvarlar = [e for e in elements if _measures_wall(e, catalog)]
+        if duvarlar:
+            # sıva / boya yüzü duvar başına: dış duvar yalnız içeriden (quantity/boq.wall_faces)
+            entry["exterior_walls"] = exterior_wall_ids(elements, d.spaces, duvarlar)
         if d.discipline in (STANDARD_DISCIPLINE, MAPPED_DISCIPLINE):
             # KSF statik katmanları (KOLON_ON, DOSEME_ON…) statik motorda beton / kalıp / demir olarak ölçüldü; ikinci kez yazılmaz
             std.append({**entry, "elements": [e for e in entry["elements"] if _g_etype(e) not in STRUCTURAL_TYPES]})
@@ -1612,6 +1617,85 @@ def excavation_depth(project: Project, drawings: list[Drawing], params: dict,
             "detail": "program varsayılanı — kesitte kazı / tabii zemin kotu yazmıyor"}
 
 
+def protection_screed_cm(project: Project, drawings: list[Drawing], params: dict) -> dict:
+    """Temel yalıtımı üstü koruma şapı kalınlığı (cm): çizim notu > kullanıcı parametresi > varsayılan."""
+    cm, note = _cm_from_notes(drawings, "KORUMA_SAPI")
+    if cm > 0:
+        return {"cm": cm, "source": "drawing", "detail": f"çizim notundan: “{note}”"}
+    raw = project.params or {}
+    if raw.get("protection_screed_cm"):
+        return {"cm": float(raw["protection_screed_cm"]), "source": "param", "detail": "proje parametresi (siz girdiniz)"}
+    return {"cm": float(params.get("protection_screed_cm") or 5.0), "source": "default",
+            "detail": "VARSAYILAN — çizimde koruma şapı kalınlığı yazmıyor"}
+
+
+# Yapı İşlerinde İSG Yönetmeliği: bu derinliği aşan kazı şevsiz / iksasız dik yapılamaz. Çizimde şev
+# notu yoksa hacim dik kazı olarak hesaplanır ve kontrol listesinde sorulur.
+DIK_KAZI_SINIRI = 1.25
+
+
+def excavation_volume(project: Project, drawings: list[Drawing], params: dict, found_polys: list,
+                      found_area: float, depth: float) -> dict:
+    """Temel kazısı hacmi (m³) ve nasıl bulunduğu.
+
+    Eski hesap `temel alanı × derinlik × 1,15` idi: sabit %15, 1.500 m²'lik radyede de 2×2'lik tekil
+    temelde de aynı. Oysa çalışma payı **kenara** eklenir — küçük temelde oransal payı çok büyük,
+    büyük radyede küçüktür. Bu yüzden kazı tabanı temel dış hattının çalışma payı kadar
+    genişletilmiş hali, kazı ağzı ise şev kadar daha genişidir; hacim ikisi arasından (Simpson):
+
+        V = D/6 · (A_taban + 4·A_orta + A_ağız),   A(ofset) = alan(temel ∪ ofset kadar tampon)
+
+    Birbirine yakın tekil temellerin çukurları tampon birleşince tek çukur olur — sahada da öyledir.
+    Kullanıcı `excavation_margin` girdiyse eski çarpan kullanılır (açık kararı ezilmez)."""
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    raw = project.params or {}
+    if raw.get("excavation_margin"):
+        m = float(raw["excavation_margin"])
+        return {"m3": found_area * depth * m, "work_m": None, "work_source": "param", "slope": None,
+                "detail": f"temel alanı {found_area:,.0f} m² × derinlik {depth:g} m × çarpan {m:g} (proje parametresi)"}
+    ev = merge_materials([d.materials or {} for d in drawings])
+    w_cm, w_note = _cm_from_notes(drawings, "KAZI_CALISMA_PAYI")
+    if w_cm > 0:
+        work, work_src = w_cm / 100.0, "drawing"
+        work_txt = f"çalışma payı {work:g} m (çizim notundan: “{w_note}”)"
+    elif raw.get("excavation_work_m"):
+        work, work_src = float(raw["excavation_work_m"]), "param"
+        work_txt = f"çalışma payı {work:g} m (proje parametresi)"
+    else:
+        work, work_src = float(params.get("excavation_work_m") or 0.6), "default"
+        work_txt = f"çalışma payı {work:g} m (VARSAYILAN — çizimde yazmıyor)"
+    sev = ev.get("KAZI_SEV") or {}
+    try:
+        n = float(str(sev.get("spec")).replace(",", ".")) if sev.get("spec") else 0.0
+    except ValueError:
+        n = 0.0
+    slope_txt = (f"şev {n:g} yatay / 1 düşey (“{(sev.get('evidence') or [''])[0]}”)" if n > 0
+                 else "şev notu yok — dik kazı")
+    polys = []
+    for pts in found_polys:
+        try:
+            g = Polygon(pts).buffer(0)
+            if not g.is_empty and g.area > 0:
+                polys.append(g)
+        except Exception:
+            continue
+    if not polys:
+        return {"m3": found_area * depth, "work_m": None, "work_source": "default", "slope": None,
+                "detail": f"temel alanı {found_area:,.0f} m² × derinlik {depth:g} m (temel dış hattı yok, çalışma payı eklenemedi)"}
+    base = unary_union(polys)
+
+    def alan(off: float) -> float:
+        return base.buffer(off, join_style=2).area if off > 0 else base.area    # köşeler dik (kazı köşesi)
+
+    a0, a1, a2 = alan(work), alan(work + n * depth / 2), alan(work + n * depth)
+    m3 = depth / 6.0 * (a0 + 4 * a1 + a2)
+    return {"m3": m3, "work_m": work, "work_source": work_src, "slope": n or None,
+            "detail": (f"kazı tabanı {a0:,.0f} m² (temel {found_area:,.0f} m² + {work_txt}), "
+                       + (f"ağzı {a2:,.0f} m², " if n > 0 else "")
+                       + f"derinlik {depth:g} m; {slope_txt}")}
+
+
 def roof_zones(project: Project, session: Session, drawings: list[Drawing] | None = None) -> list[dict]:
     """Çatı planındaki bölgeler: her kapalı alanın sistemi, alanı ve kanıtı.
 
@@ -1861,8 +1945,9 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
     out: list[BoqItem] = []
     check: list[dict] = []
 
-    def add(code: str, spec: str, q: float, note: str, rule: str, source: str = ""):
-        """source: kalemin dayandığı parametre nereden geldi (rooms / drawing / param / default) — kalite raporu bunu kullanır."""
+    def add(code: str, spec: str, q: float, note: str, rule: str, source: str = "", plan_params: dict | None = None):
+        """source: kalemin dayandığı parametre nereden geldi (rooms / drawing / param / default) — kalite raporu bunu kullanır.
+        plan_params: kalemin kullandığı, çizimden okunmuş başka parametreler {anahtar: (değer, kaynak)}."""
         it = catalog.get(code)
         if not it or q <= 0 or rule in off:
             return
@@ -1870,7 +1955,8 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
         # Kanıt kademesi kaynağına bakar: mahal notundan / kesit kotundan okunan ölçü bir türetmedir
         # ("turetildi"); parametre varsayılanı ya da "çevre = 4·√alan" gibi geometrik kabul tahmindir.
         kademe = TAHMIN if (rule == "islak" or source in ("param", "default", "")) else TURETILDI
-        detail = {"derived": True, "rule": rule, "evidence": {kademe: round(q, 3)}} | ({"param_source": source} if source else {})
+        detail = ({"derived": True, "rule": rule, "evidence": {kademe: round(q, 3)}} | ({"param_source": source} if source else {})
+                  | ({"plan_params": plan_params} if plan_params else {}))
         out.append(BoqItem(key=f"{it.code.lower()}:{group}", kind=it.code.lower(), group=group,
                            label=it.name + (f" {spec}" if spec else ""), unit=it.unit, quantity=round(q, 3),
                            discipline=f"ksf:{it.discipline}", kind_label=it.name, discipline_label=catalog.discipline_name(it.discipline),
@@ -1948,12 +2034,14 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                             + ("…" if len(fin["excluded"]) > 8 else "") + " — kiracı işi değilse mahal türlerine ekleyin.", "optional")
     # 3) temel -> su yalıtımı, grobeton, koruma şapı
     found_area = 0.0
+    found_polys: list = []
     found_kots: list[float] = []
     found_thick: list[float] = []
     for d in drawings:
         if d.discipline == DEFAULT_DISCIPLINE:
             fnd = [e for e in _included_elements(d, session) if e.etype == "foundation"]
             found_area += sum((e.area or 0.0) for e in fnd)
+            found_polys += [e.points for e in fnd if len(e.points or []) >= 3]
             if fnd and d.kot is not None:
                 found_kots.append(float(d.kot))
             found_thick += [float(e.thickness) for e in fnd if e.thickness]
@@ -1968,7 +2056,9 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                 + ("VARSAYILAN — çizimde yazmıyor" if lean["source"] == "default" else lean["detail"]),
                 "grobeton", lean["source"])
         if "koruma_sapi" not in kinds:
-            add("KORUMA_SAPI", "5", found_area, "temel yalıtımı üstü koruma şapı 5 cm", "koruma_sapi")
+            ks = protection_screed_cm(project, drawings, params)
+            add("KORUMA_SAPI", f"{ks['cm']:g}", found_area, f"temel yalıtımı üstü koruma şapı {ks['cm']:g} cm; kalınlık: {ks['detail']}",
+                "koruma_sapi", ks["source"])
         params = {**params, "lean_concrete_cm": lean["cm"]}      # kazi / geri dolgu aynı kalınlığı kullansın
         exc_d = excavation_depth(project, drawings, params, min(found_kots) if found_kots else None,
                                  max(found_thick) if found_thick else 0.0)
@@ -1978,12 +2068,16 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                                   "çarpılıyor — metrajı doğrudan etkiler). Kesitte tabii zemin / kazı tabanı kotu varsa o paftayı yükleyin, "
                                   "yoksa proje parametrelerinden derinliği girin.")
         if depth > 0 and "kazi" not in kinds:
-            margin = float(params.get("excavation_margin") or 1.0)
-            exc = found_area * depth * margin
+            xv = excavation_volume(project, drawings, params, found_polys, found_area, depth)
+            exc = xv["m3"]
             add("KAZI", f"{depth*100:.0f}", exc,
-                f"temel alanı {found_area:,.0f} m² × derinlik {depth:g} m × şev / çalışma payı {margin:g}; derinlik: "
-                + ("VARSAYILAN — çizimde yazmıyor" if exc_d["source"] == "default" else exc_d["detail"]),
-                "kazi", exc_d["source"])
+                f"{xv['detail']}; derinlik: " + ("VARSAYILAN — çizimde yazmıyor" if exc_d["source"] == "default" else exc_d["detail"]),
+                "kazi", exc_d["source"],
+                plan_params={"excavation_work_m": (xv["work_m"], "note")} if xv["work_source"] == "drawing" else None)
+            if depth > DIK_KAZI_SINIRI and not xv["slope"] and xv["work_source"] != "param":
+                ask("kazi_sev", f"Kazı {depth:g} m derin ama çizimde şev / iksa bilgisi yok: hacim dik kazı olarak hesaplandı "
+                                f"({DIK_KAZI_SINIRI:g} m'den derin kazı şevsiz / iksasız yapılamaz). Kesitte şev (ör. “ŞEV 1:1”) "
+                                "ya da iksa varsa o paftayı yükleyin.", "optional")
             found_conc = sum(it.quantity for it in items if it.kind == "beton" and it.group == "foundation")
             lean = float(params.get("lean_concrete_cm") or 0.0) / 100.0 * found_area
             # bodrumlu yapıda çukuru bodrum yapısı doldurur: geri dolgu yalnız çevre şeridi
@@ -2115,6 +2209,156 @@ def footprint_polygon(elements, spaces: list[dict] | None = None):
     if big.area > 0 and dolu / big.area < FOOTPRINT_MIN_FILL:
         return None
     return big
+
+
+# Dış duvar: bina dış hattının duvar boyunca uzandığı duvar. Dış hat mahal sınırlarından geliyorsa duvarın iç
+# yüzüne yakın, duvarlardan geliyorsa dış yüzündedir. Gerçek projede mahal "alan çizgisi" duvar yüzünden
+# 0,3–1 m içeride çizilmişti (0,3 m erişimle dış hattın yalnız %45'i duvar buldu).
+EXTERIOR_REACH = 1.0
+EXTERIOR_SHARE = 0.5        # duvar boyunun en az bu kadarında dış hat duvara PARALEL uzanmalı
+# Dış hat güvenilir mi? Gerçek bir dış hattın çoğu duvar boyunca uzanır ve duvarların çoğu onun içindedir.
+# Mahaller katın yalnız bir kısmını kaplıyorsa (Yat Kulübü: 12–20 mahal, duvar boyunun yalnız %3–39'u
+# mahallerin dış hattı içinde) o dış hat bina değildir; sıradaki adaya geçilir, hiçbiri tutmazsa "bilinmiyor".
+EXTERIOR_MIN_COVER = 0.5    # dış hat uzunluğunun duvara yakın payı
+# duvarların (ADET) dış hat içinde kalan payı. Adet, uzunluk değil: tek bir yanlış okunmuş upuzun "duvar" çizgisi
+# (gerçek projede zemin katta vardı) uzunluk payını tek başına düşürür; ikinci bir plan kopyası ise adetçe düşürür.
+EXTERIOR_MIN_INSIDE = 0.7
+# Mahal olmayan koridor / merdiven / şaft şeritleri bu genişliğe kadar kapatılır (2 × değer): mahaller
+# koridorlarla ayrık öbekler oluşturur, en büyük öbeği bina saymak dış duvarların çoğunu kaçırır.
+EXTERIOR_CLOSE = 3.0
+EXTERIOR_WING_SHARE = 0.10  # en büyük parçanın bu payından küçük olmayan ayrık parça da binadır (ayrı kanat)
+# Duvarlardan dış hat: duvarlar bu kadar şişirilir, içi doldurulur, geri büzülür (morfolojik kapama). 2 × değere
+# kadar kapı / pencere / cam cephe boşluğu kapanır ve dış hat dış duvarların dış yüzüne oturur.
+WALL_CLOSE = 2.5
+EXTERIOR_MIN_ENCLOSE = 3.0  # dış hat alanı duvar alanının en az bu katı olmalı (tek duvar "bina" değildir)
+
+
+def _polygons_of(g) -> list:
+    from shapely.geometry import Polygon
+    return [Polygon(x.exterior) for x in (list(g.geoms) if hasattr(g, "geoms") else [g])
+            if x.geom_type == "Polygon" and not x.is_empty]
+
+
+def _outline_candidates(geo, wall_polys: list, spaces: list[dict] | None):
+    """Bina dış hattı adayları, güvenilirlik sırasıyla: (kaynak, [çokgen]).
+
+    1. mahal sınırları — mimarın kendi çizdiği alanlar; koridor boşlukları kapatılır, ayrık kanatlar korunur
+    2. duvarların kendisi — kapama ile birleşen en büyük duvar öbeği (ikinci bir plan kopyası ayrı öbektir)
+    3. taşıyıcı geometri (`footprint_polygon`: döşeme / kolon / kiriş)"""
+    from shapely.ops import unary_union
+    if spaces:
+        try:
+            u = unary_union([g for _, g in _space_polys(spaces)])
+            yield "mahal", _polygons_of(u.buffer(EXTERIOR_CLOSE, join_style=2).buffer(-EXTERIOR_CLOSE, join_style=2))
+        except Exception:
+            pass
+    if wall_polys:
+        try:
+            # _polygons_of delikleri atar: şişirilmiş duvar halkasının içi (odalar) dolar
+            obekler = _polygons_of(unary_union([g.buffer(WALL_CLOSE, join_style=2) for g in wall_polys]))
+            # en çok duvarı taşıyan öbek (adet: tek bir upuzun hatalı çizgi alanca öbeği kazanmasın)
+            obek = max(obekler, key=lambda c: sum(1 for g in wall_polys if c.contains(g.centroid)))
+            yield "duvar", _polygons_of(obek.buffer(-WALL_CLOSE, join_style=2))
+        except Exception:
+            pass
+    fp = footprint_polygon(geo, None)
+    if fp is not None:
+        yield "geometri", [fp]
+
+
+def _long_axis(g) -> tuple[float, float]:
+    """Duvar çokgeninin uzun kenar doğrultusu (birim vektör)."""
+    import math
+    c = list(g.minimum_rotated_rectangle.exterior.coords)
+    edges = [(c[i + 1][0] - c[i][0], c[i + 1][1] - c[i][1]) for i in range(len(c) - 1)]
+    dx, dy = max(edges, key=lambda e: e[0] ** 2 + e[1] ** 2)
+    n = math.hypot(dx, dy) or 1.0
+    return dx / n, dy / n
+
+
+def _parallel_length(geom, u: tuple[float, float]) -> float:
+    """Çizgi geometrisinin u doğrultusundaki izdüşüm uzunluğu. Duvarı dik kesen dış hat parçası ~0 katkı verir."""
+    lines = list(geom.geoms) if hasattr(geom, "geoms") else [geom]
+    total = 0.0
+    for ln in lines:
+        if ln.is_empty or ln.geom_type not in ("LineString", "LinearRing"):
+            if hasattr(ln, "geoms"):
+                total += _parallel_length(ln, u)
+            continue
+        c = list(ln.coords)
+        total += sum(abs((c[i + 1][0] - c[i][0]) * u[0] + (c[i + 1][1] - c[i][1]) * u[1]) for i in range(len(c) - 1))
+    return total
+
+
+def _measures_wall(e, catalog) -> bool:
+    """Duvar mı: sezgisel duvar ya da KSF / katman eşlemeli paftada duvar alanı ölçülen kalem."""
+    if e.etype == "wall":
+        return True
+    meta = e.meta or {}
+    if meta.get("measure") == "wall_area":
+        return True
+    item = catalog.get(meta["ksf_code"]) if meta.get("ksf_code") else None
+    if item is None:
+        p = parse_layer(e.layer or "", catalog)
+        item = p.item if p else None
+    return bool(item and item.measure == "wall_area")
+
+
+def exterior_wall_ids(elements, spaces: list[dict] | None = None, walls: list | None = None) -> set[int] | None:
+    """Dış hatta oturan duvarların kimlikleri; güvenilir bir dış hat çıkarılamazsa None ("bilinmiyor").
+
+    Sıva / boya yüzü buna bağlıdır: iç duvar iki yüzünden, dış duvar yalnız içeriden sıvanıp boyanır —
+    dış yüzü cephe sistemine (mantolama, kaplama) aittir ve orada ayrıca ölçülür. Hepsine 2 yüz vermek
+    dış yüzü iki kez saymaktır. Emin olunamayan dış hatla yanlış duvarı tek yüze düşürmek ise sıvayı
+    eksik yazmaktır; o yüzden güvenilirlik sınanır ve tutmazsa "bilinmiyor" denir (duvarlar 2 yüz kalır).
+
+    Ölçüt dış hattın duvara **paralel** uzanan boyudur: dış duvardan dış duvara uzanan bir iç bölme iki
+    ucundan dış hatta değer, ama hat onu dik keser ve paralel katkısı sıfırdır.
+
+    walls: duvar sayılacak elemanlar (varsayılan: etype "wall"; KSF paftasında duvar alanı ölçülen kalemler)."""
+    from types import SimpleNamespace
+
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    if walls is None:
+        walls = [e for e in elements if e.etype == "wall"]
+    polys = []
+    for e in walls:
+        if len(e.points or []) < 3 or e.id is None:
+            continue
+        try:
+            g = Polygon(e.points).buffer(0)
+        except Exception:
+            continue
+        if not g.is_empty and g.area > 0:
+            polys.append((e, g))
+    if not polys:
+        return set()
+    # KSF duvarları "wall" türünde değildir; dış hat geometrisine duvar olarak katılsınlar
+    geo = list(elements) + [SimpleNamespace(etype="wall", points=e.points) for e, _ in polys if e.etype != "wall"]
+    duvar = unary_union([g for _, g in polys])
+    for _kaynak, parts in _outline_candidates(geo, [g for _, g in polys], spaces):
+        if not parts:
+            continue
+        big = max(p.area for p in parts)
+        parts = [p for p in parts if p.area >= EXTERIOR_WING_SHARE * big]
+        ring = unary_union([p.exterior for p in parts])
+        icerisi = unary_union(parts).buffer(EXTERIOR_REACH)
+        if ring.length <= 0 or ring.intersection(duvar.buffer(EXTERIOR_REACH)).length < EXTERIOR_MIN_COVER * ring.length:
+            continue
+        icteki = [g for _, g in polys if icerisi.contains(g.centroid)]
+        if len(icteki) < EXTERIOR_MIN_INSIDE * len(polys):
+            continue
+        if unary_union(parts).area < EXTERIOR_MIN_ENCLOSE * sum(g.area for g in icteki):
+            continue
+        out: set[int] = set()
+        for e, g in polys:
+            length = float(e.length or 0.0) or g.length / 2
+            along = _parallel_length(ring.intersection(g.buffer(EXTERIOR_REACH)), _long_axis(g))
+            if length > 0 and along >= EXTERIOR_SHARE * length:
+                out.add(e.id)
+        return out
+    return None
 
 
 def building_footprint(elements, spaces: list[dict] | None = None) -> "tuple[float, float] | None":

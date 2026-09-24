@@ -10,8 +10,10 @@ durur ve dosya yüzlerce MB olabilir. ezdxf ile tümünü belleğe almak yerine 
   crop_sheets(...)   -> seçilen paftaların sınır kutusundaki nesneleri (çizgi, polyline, yazı, daire, yay, solid)
                         tek geçişte küçük DXF'lere yazar; bunlar normal yükleyici (loader.load_dxf) ile analiz edilir.
 
-Blok referansları (INSERT) ve tarama (HATCH) kırpmaya alınmaz: kalıp planlarında taşıyıcı elemanlar çizgi /
-polyline olarak durur; bloklar aks balonu, kesit simgesi gibi metraja girmeyen şeylerdir.
+Blok referansları (INSERT) kırpmaya alınmaz: kalıp planlarında taşıyıcı elemanlar çizgi / polyline olarak
+durur; bloklar aks balonu, kesit simgesi gibi metraja girmeyen şeylerdir. Taramalar (HATCH) sınır yoluyla ve
+**desen adıyla birlikte** yeniden tarama olarak yazılır (`_add_hatch`): desen malzemenin çizimdeki ikinci
+dilidir ("AR-CONC" beton, "EARTH" toprak) — düz çizgiye çevrilirse bu bilgi kaybolur (bkz. parser/hatches.py).
 """
 from __future__ import annotations
 
@@ -1297,9 +1299,10 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
                         if not pth["ok"] or len(pts) < 3:
                             continue
                         pxs = [q[0] for q in pts]; pys = [q[1] for q in pts]
+                        desen = "SOLID" if ent.get("70") == 1 else str(ent.get("2") or "").upper()
                         for g in tg:
                             if g.inside(pxs, pys):
-                                g.msp.add_lwpolyline(pts, close=True, dxfattribs={"layer": layer})
+                                _add_hatch(g.msp, pts, layer, desen, float(ent.get("41", 1.0) or 1.0))
                                 g.layers.add(layer)
                                 g.written += 1
                 continue
@@ -1332,7 +1335,8 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
             _expand_blocks_stream(src, tg, ins_records)
         except Exception:
             pass
-    elif include_blocks and inserts_hit and size <= BLOCK_PASS_MAX_BYTES:
+    elif not stream_blocks and include_blocks and inserts_hit and size <= BLOCK_PASS_MAX_BYTES:
+        # akış yolunda taramalar zaten yazıldı; bu geçiş onları ikinci kez yazardı (çift alan)
         try:
             _add_block_contents(src, tg)
         except Exception:
@@ -1537,6 +1541,19 @@ def _write_insert_marker(g: "_Target", ins: dict) -> None:
         pass
 
 
+def _add_hatch(msp, pts, layer: str, pattern: str = "", scale: float = 1.0) -> None:
+    """Kırpılmış paftaya taramayı sınırı ve deseniyle yazar. Yazılamazsa düz çokgene düşer (alan yine ölçülür)."""
+    try:
+        h = msp.add_hatch(dxfattribs={"layer": layer})
+        if not pattern or pattern.upper() == "SOLID":
+            h.set_solid_fill()
+        else:
+            h.set_pattern_fill(pattern, scale=scale if scale and scale > 0 else 1.0)
+        h.paths.add_polyline_path(pts, is_closed=True)
+    except Exception:
+        msp.add_lwpolyline(pts, close=True, dxfattribs={"layer": layer})
+
+
 def _add_block_contents(src: str | Path, tg: list["_Target"]) -> None:
     """Hedef paftalara düşen taramaları (sınır çokgeni) ve INSERT içeriğini (patlatılmış) yazar."""
     import ezdxf
@@ -1552,9 +1569,12 @@ def _add_block_contents(src: str | Path, tg: list["_Target"]) -> None:
                 if len(pts) < 3:
                     continue
                 xs = [q[0] for q in pts]; ys = [q[1] for q in pts]
+                from .loader import hatch_pattern
+                desen = hatch_pattern(h)
+                olcek = float(getattr(h.dxf, "pattern_scale", 1.0) or 1.0)
                 for g in tg:
                     if g.inside(xs, ys):
-                        g.msp.add_lwpolyline(pts, close=True, dxfattribs={"layer": h.dxf.layer}); g.layers.add(h.dxf.layer); g.written += 1
+                        _add_hatch(g.msp, pts, h.dxf.layer, desen, olcek); g.layers.add(h.dxf.layer); g.written += 1
         except Exception:
             continue
     def _explode(ins, depth: int):

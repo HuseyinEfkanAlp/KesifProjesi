@@ -80,10 +80,23 @@ export const SUBTYPE_LABELS: Record<string, string> = {
   data: 'Data / telefon', yangin: 'Yangın algılama', diger: 'Diğer',
 }
 
+export interface HatchSummary {
+  total: number
+  recognized: number
+  patterns: { pattern: string; count: number; area_m2: number; layers: string[]; material: string | null;
+              material_name: string; source: '' | 'lejant' | 'katman' | 'desen'; why: string }[]
+  legend: { pattern: string; material: string; material_name: string; text: string }[]
+}
+
 export interface ProjectParams {
   wall_height: number | null
-  plaster_sides: number
-  paint_sides: number
+  /** boş = çizimden: iç duvar 2 yüz, dış duvar 1 yüz */
+  plaster_sides: number | null
+  paint_sides: number | null
+  /** boş = çizimden (KORUMA ŞAPI 7 CM), yoksa 5 */
+  protection_screed_cm?: number | null
+  /** kazı çalışma payı (m); boş = çizimden (ÇALIŞMA PAYI 80 CM), yoksa 0,60 */
+  excavation_work_m?: number | null
   cable_drop: number
   cable_waste_pct: number
   tray_waste_pct: number
@@ -229,6 +242,8 @@ export interface Drawing {
   unit_verdict?: string | null
   /** Doğrama pozları: ölçü ve kapı / pencere bilgisi (plandaki "EMP1" yazıları bununla sayılır) */
   poz?: { sizes?: Record<string, number[]>; kinds?: Record<string, string>; prefixes?: string[] }
+  /** Taramalar: desen başına adet / alan / tanınan malzeme ve lejant satırları (parser/hatches.py) */
+  hatches?: HatchSummary
   /** Kısa özet: durum, bulunanlar ("99 duvar · 37 pencere"), tek cümlelik not */
   status?: DrawingStatus
   found?: string

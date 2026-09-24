@@ -363,7 +363,9 @@ export default function Quantities() {
           {g.group === 'INCE' && (
             <p className="muted">
               Duvar m² = uzunluk × duvar yüksekliği ({wallH ? `${wallH} m` : `H − d = ${(project.storey_height - project.slab_thickness).toFixed(2)} m`}) × kat sayısı − 0,10 m² ve üstü boşluklar.
-              Sıva ve boya: tüm boşluklar düşülür, × yüz sayısı ({project.params?.plaster_sides ?? 2} / {project.params?.paint_sides ?? 2}). Parametreler proje sayfasında.
+              Sıva ve boya: tüm boşluklar düşülür, × yüz sayısı ({project.params?.plaster_sides != null
+                ? `${project.params.plaster_sides} / ${project.params?.paint_sides ?? project.params.plaster_sides}`
+                : 'çizimden: iç duvar 2, dış duvar 1 — dış yüz cephe sisteminde'}). Parametreler proje sayfasında.
             </p>
           )}
           {g.group === 'ELK' && (

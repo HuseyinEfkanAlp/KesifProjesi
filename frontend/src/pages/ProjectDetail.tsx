@@ -13,8 +13,8 @@ import ProjectNav from './ProjectNav'
 
 const PARAM_FIELDS: Array<{ key: keyof ProjectParams; label: string; step: string; hint: string }> = [
   { key: 'wall_height', label: 'Duvar yüksekliği (m)', step: '0.05', hint: 'Boş: H − d' },
-  { key: 'plaster_sides', label: 'Sıva yüzü', step: '1', hint: '0 = sıva yok' },
-  { key: 'paint_sides', label: 'Boya yüzü', step: '1', hint: '' },
+  { key: 'plaster_sides', label: 'Sıva yüzü', step: '1', hint: 'Boş: iç duvar 2, dış duvar 1 · 0 = yok' },
+  { key: 'paint_sides', label: 'Boya yüzü', step: '1', hint: 'Boş: iç duvar 2, dış duvar 1' },
   { key: 'cable_drop', label: 'Kablo iniş payı (m/hat)', step: '0.5', hint: 'Her hatta eklenir' },
   { key: 'cable_waste_pct', label: 'Kablo fire (%)', step: '1', hint: '' },
   { key: 'tray_waste_pct', label: 'Tava fire (%)', step: '1', hint: '' },
@@ -231,6 +231,8 @@ export default function ProjectDetail() {
               <label className="field" title="Doluysa mahal yazıları kullanılmaz">Şap / kaplama alanı (m²)<input type="number" step="1" value={dparams.finish_area_m2 ?? ''} placeholder="mahallerden" onChange={(e) => setDparams({ ...dparams, finish_area_m2: e.target.value })} /></label>
               <label className="field">Şap kalınlığı (cm)<input type="number" step="0.5" value={dparams.screed_cm ?? ''} placeholder="5" onChange={(e) => setDparams({ ...dparams, screed_cm: e.target.value })} /></label>
               <label className="field">Grobeton (cm)<input type="number" step="1" value={dparams.lean_concrete_cm ?? ''} placeholder="10" onChange={(e) => setDparams({ ...dparams, lean_concrete_cm: e.target.value })} /></label>
+              <label className="field" title="Boşsa çizimdeki “KORUMA ŞAPI … CM” notundan okunur">Koruma şapı (cm)<input type="number" step="0.5" value={dparams.protection_screed_cm ?? ''} placeholder="çizimden / 5" onChange={(e) => setDparams({ ...dparams, protection_screed_cm: e.target.value })} /></label>
+              <label className="field" title="Temel kenarından kazıya eklenen pay. Boşsa çizimdeki “ÇALIŞMA PAYI … CM” notundan okunur">Kazı çalışma payı (m)<input type="number" step="0.05" value={dparams.excavation_work_m ?? ''} placeholder="çizimden / 0,60" onChange={(e) => setDparams({ ...dparams, excavation_work_m: e.target.value })} /></label>
             </div>
             <h3>Demir oranları (kg/m³ beton)</h3>
             <div className="row">

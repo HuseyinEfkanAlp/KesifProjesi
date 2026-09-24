@@ -6,7 +6,7 @@ cam, kapi, tava, kablo, boru, armatur), grup eleman grubudur (kolon, ytong:20, N
 
 Statik:  beton / kalıp / demir (quantity.engine + summary'den)
 Mimari:  duvar m² = uzunluk × duvar yüksekliği × kat çarpanı − kapı/pencere boşlukları (malzeme + kalınlık bazında)
-         sıva m² = net duvar × sıva yüzü sayısı, boya m² = net duvar × boya yüzü sayısı
+         sıva m² = Σ net duvar × yüz sayısı (iç duvar 2, dış duvar 1 — `wall_faces`), boya aynı
          pencere adet (ad / ölçü bazında), cam m² = pencere genişlik × yükseklik, kapı adet
 Elektrik: tava m (boyut bazında), kablo m (kesit bazında; iniş payı × hat sayısı, fire %), boru m, armatür adet (kategori)
 """
@@ -49,8 +49,10 @@ DEFAULT_PARAMS: dict[str, Any] = {
     # çalışacağı saha kararıdır. 1 = tek ekip; büyük şantiyede 5-10 ekip olur.
     "crew_count": 1,
     "wall_height": None,          # m; None -> kat yüksekliği − döşeme kalınlığı
-    "plaster_sides": 2,           # sıva yüzü sayısı (0 = sıva yok)
-    "paint_sides": 2,             # boya yüzü sayısı
+    # Sıva / boya yüzü. None = çizimden: iç duvar 2 yüz, dış hattaki duvar 1 yüz (dış yüzü cephe sistemindedir;
+    # bkz. services.exterior_wall_ids). Sayı girilirse bütün duvarlara o uygulanır (0 = sıva / boya yok).
+    "plaster_sides": None,
+    "paint_sides": None,
     "cable_drop": 0.0,            # her kablo hattına eklenen iniş/çıkış payı (m)
     "cable_waste_pct": 5.0,       # kablo fire %
     "tray_waste_pct": 5.0,
@@ -90,7 +92,11 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "screed_cm": 5.0,             # şap kalınlığı (cm) — seçili mahal alanından türetilir
     "lean_concrete_cm": 10.0,     # grobeton kalınlığı (cm) — temel alanından türetilir
     "excavation_depth_m": 1.5,    # temel altı kazı derinliği (m; 0 = kazı türetme) — temel alanı × derinlik × şev / çalışma payı
-    "excavation_margin": 1.15,    # kazı şev + çalışma payı çarpanı
+    # Kazı hacmi: None = geometriden — temel dış hattı çalışma payı kadar genişletilir, şev notu varsa üstte
+    # açılır (services.excavation_volume). Sayı girilirse eski kaba yol: temel alanı × derinlik × bu çarpan.
+    "excavation_margin": None,
+    "excavation_work_m": 0.60,    # temel kenarından kazı çalışma payı (m); çizimde "ÇALIŞMA PAYI 80 CM" yazıyorsa o
+    "protection_screed_cm": 5.0,  # temel yalıtımı üstü koruma şapı (cm); çizimde "KORUMA ŞAPI 7 CM" yazıyorsa o
     "rebar_dia_split": "auto",    # oran demirini çizimdeki çap dağılımına göre böl (auto) / bölme (off)
     "rebar_layers": "auto",       # donatı kaç sıra: auto (çizimden okunur) / cift / tek — ton başına işçiliği değiştirir
     "rebar_prefab_pct": 0.0,      # hazır kesilmiş - bükülmüş gelen demir %; o oranda kesme / bükme sahada yapılmaz
@@ -460,17 +466,15 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
             if small_openings:
                 it.detail["small_openings"] = it.detail.get("small_openings", 0) + small_openings
         if gross > 0:
-            # sıva ve boya: tüm boşluklar düşülür (küçükler dahil), yüz sayısı ile çarpılır
-            finish_net = sum(max(w["gross"] - a["all"], 0.0) for w, a in zip(walls, allocations)) * mult
-            ps, bs = float(params.get("plaster_sides") or 0), float(params.get("paint_sides") or 0)
-            if ps > 0 and finish_net > 0:
-                finish = acc.add("siva", "*", f"Sıva ({ps:g} yüz)", finish_net * ps, note=RULES["plaster_openings"].text + "; × yüz sayısı",
-                                 ev=worse(*[_tier(d, w["element"]) for w in walls], TURETILDI))
-                _opening_audit(finish, d, allocations, issues, mult)
-            if bs > 0 and finish_net > 0:
-                finish = acc.add("boya", "*", f"Boya ({bs:g} yüz)", finish_net * bs, note=RULES["paint_openings"].text + "; × yüz sayısı",
-                                 ev=worse(*[_tier(d, w["element"]) for w in walls], TURETILDI))
-                _opening_audit(finish, d, allocations, issues, mult)
+            # sıva ve boya: tüm boşluklar düşülür (küçükler dahil), yüz sayısı duvar başına (dış duvar tek yüz)
+            ext = d.get("exterior_walls")
+            for kind, pkey, name, rule in (("siva", "plaster_sides", "Sıva", "plaster_openings"),
+                                           ("boya", "paint_sides", "Boya", "paint_openings")):
+                q, ek, yuz = finish_quantity(walls, allocations, params, pkey, ext, mult)
+                if q > 0:
+                    finish = acc.add(kind, "*", name + ek, q, note=RULES[rule].text + "; " + yuz,
+                                     ev=worse(*[_tier(d, w["element"]) for w in walls], TURETILDI))
+                    _opening_audit(finish, d, allocations, issues, mult)
     return list(acc.items.values())
 
 
@@ -511,6 +515,38 @@ def electrical_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqIt
     return list(acc.items.values())
 
 
+def wall_faces(params: dict[str, Any], key: str, exterior: bool) -> float:
+    """Bir duvarın sıva ("plaster_sides") / boya ("paint_sides") yüz sayısı.
+
+    Kullanıcı sayı girdiyse o. Girmediyse çizimden: iç duvar iki yüz, dış duvar tek yüz — dış yüzü
+    cephe sistemine aittir ve cephe metrajında ölçülür; iki yüz saymak onu iki kez saymaktır."""
+    v = params.get(key)
+    if v not in (None, ""):
+        return float(v)
+    return 1.0 if exterior else 2.0
+
+
+def finish_quantity(walls: list[dict], allocations: list[dict], params: dict[str, Any], key: str,
+                    exterior: set | None, mult: float) -> tuple[float, str, str]:
+    """Duvarların sıva / boya alanı (yüz sayısı duvar başına) → (miktar, etiket eki, not).
+
+    exterior: dış duvar kimlikleri; None = dış hat çıkarılamadı (hepsi iç duvar sayılır ve not düşülür)."""
+    ext = exterior or set()
+    total, n_ext = 0.0, 0
+    for w, a in zip(walls, allocations):
+        is_ext = _g(w["element"], "id") in ext
+        n_ext += is_ext
+        total += max(w["gross"] - a["all"], 0.0) * wall_faces(params, key, is_ext)
+    v = params.get(key)
+    if v not in (None, ""):
+        return total * mult, f" ({float(v):g} yüz)", f"× {float(v):g} yüz (proje parametresi)"
+    if exterior is None:
+        return total * mult, "", ("× 2 yüz — bina dış hattı çıkarılamadı, dış duvarlar da iki yüz sayıldı; "
+                                  "dış yüz cephe sisteminde de ölçülüyorsa bir kez düşün")
+    return total * mult, "", (f"iç duvar 2 yüz, dış duvar 1 yüz ({n_ext} dış duvar; dış yüzü cephe sisteminde)"
+                              if n_ext else "× 2 yüz (bütün duvarlar iç duvar)")
+
+
 def _g(o: Any, k: str, default=None):
     return o.get(k, default) if isinstance(o, dict) else getattr(o, k, default)
 
@@ -533,7 +569,6 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
     from .openings import allocate_openings
     acc = _Acc()
     per_project: dict[str, dict] = {}     # proje geneli kalemler (asansör, kazan…): paftalar arası en büyük adet, kat çarpanı yok
-    ps, bs = float(params.get("plaster_sides") or 0), float(params.get("paint_sides") or 0)
     for d in drawings:
         mult = int(d.get("storey_count") or 1)
         acc.risk = ("Bu paftanın kaç katı temsil ettiği çizimden çıkarılamadı: geometri ölçüldü ama miktar "
@@ -666,14 +701,16 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
             has_ksf_siva = any(_g(e, "etype") == "siva" or (parse_layer(_g(e, "layer") or "", catalog) or ParsedLayer("", "", None, None, "")).code == "SIVA"
                                for e in d["elements"])
             has_ksf_boya = any((parse_layer(_g(e, "layer") or "", catalog) or ParsedLayer("", "", None, None, "")).code == "BOYA" for e in d["elements"])
-            finish_net = sum(max(w["gross"] - a["all"], 0.0) for w, a in zip(pending_walls, allocations) if w["plaster"]) * mult
-            if ps > 0 and finish_net > 0 and not has_ksf_siva:
-                finish = acc.add("siva", "*", f"Sıva ({ps:g} yüz)", finish_net * ps, note=RULES["plaster_openings"].text + "; × yüz sayısı; KSF duvar alanından (alçıpan hariç)",
+            ext = d.get("exterior_walls")
+            sivali = [(w, a) for w, a in zip(pending_walls, allocations) if w["plaster"]]      # alçıpan sıvanmaz
+            q, ek, yuz = finish_quantity([w for w, _ in sivali], [a for _, a in sivali], params, "plaster_sides", ext, mult)
+            if q > 0 and not has_ksf_siva:
+                finish = acc.add("siva", "*", "Sıva" + ek, q, note=RULES["plaster_openings"].text + f"; {yuz}; KSF duvar alanından (alçıpan hariç)",
                                  ev=worse(*[_tier(d, w["element"]) for w in pending_walls], TURETILDI))
                 _opening_audit(finish, d, allocations, issues, mult)
-            if bs > 0 and finish_net > 0 and not has_ksf_boya:
-                paint_net = sum(max(w["gross"] - a["all"], 0.0) for w, a in zip(pending_walls, allocations)) * mult
-                finish = acc.add("boya", "*", f"Boya ({bs:g} yüz)", paint_net * bs, note=RULES["paint_openings"].text + "; × yüz sayısı; KSF duvar alanından",
+            q, ek, yuz = finish_quantity(pending_walls, allocations, params, "paint_sides", ext, mult)
+            if q > 0 and not has_ksf_boya:
+                finish = acc.add("boya", "*", "Boya" + ek, q, note=RULES["paint_openings"].text + f"; {yuz}; KSF duvar alanından",
                                  ev=worse(*[_tier(d, w["element"]) for w in pending_walls], TURETILDI))
                 _opening_audit(finish, d, allocations, issues, mult)
     # Cam etiketine katkı veren bütün pozlar yazılır: "Cam 150×205 cm (EMP4A 2, EMP5 3)"

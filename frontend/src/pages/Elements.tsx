@@ -3,7 +3,7 @@ import Icon from '../components/Icon'
 import Loading from '../components/Loading'
 import { Link, useParams } from 'react-router-dom'
 import { Api, fmt } from '../api/client'
-import { DISCIPLINES, ETYPE_COLORS, ETYPE_LABELS, ETYPES_BY_DISCIPLINE, SUBTYPE_LABELS, layerTypeLabels, type Boq, type Catalog, type Discipline, type Drawing, type Element, type EType } from '../types'
+import { DISCIPLINES, ETYPE_COLORS, ETYPE_LABELS, ETYPES_BY_DISCIPLINE, SUBTYPE_LABELS, layerTypeLabels, type Boq, type Catalog, type Discipline, type Drawing, type Element, type EType, type HatchSummary } from '../types'
 
 /** Tipe göre düzenlenebilir sayısal alanlar */
 const FIELDS: Record<EType, Array<'b' | 'h' | 'thickness' | 'length' | 'area'>> = {
@@ -261,6 +261,8 @@ export default function Elements() {
         </div>
       </div>
 
+      {drawing.hatches && drawing.hatches.total > 0 && <HatchPanel h={drawing.hatches} />}
+
       <details className="section" open={isMapped}>
         <summary>{isMapped ? 'Katman → katalog kalemi eşleme' : isStd ? 'Katmanlar (KSF standardı)' : 'Katman eşleme'} <span className="muted">· hangi katman hangi elemanı çiziyor</span></summary>
         <div className="panel">
@@ -398,6 +400,7 @@ export default function Elements() {
                   </td>
                   <td>
                     {el.label_raw && <div className="mono">{el.label_raw}</div>}
+                    {typeof el.meta?.material_note === 'string' && <div className="muted" title="Malzeme yazıdan / katmandan okunamadı, taramadan okundu">▦ {el.meta.material_note}</div>}
                     {el.warnings.map((w, i) => <div key={i} className="muted">⚠ {w}</div>)}
                   </td>
                   <td><button className="icon-button delete-button" title="Elemanı sil" aria-label="Elemanı sil" onClick={(e) => { e.stopPropagation(); remove(el) }}><Icon name="trash" size={16} /></button></td>
@@ -432,5 +435,40 @@ export default function Elements() {
         </form></details>}
       </div>
     </>
+  )
+}
+
+const HATCH_SOURCE: Record<string, string> = { lejant: 'lejanttan', katman: 'katman adından', desen: 'desenin standart anlamı' }
+
+/** Paftadaki taramalar: hangi desen ne kadar, ne olarak tanındı ve neden. Tanınmayan desen uydurulmaz. */
+function HatchPanel({ h }: { h: HatchSummary }) {
+  return (
+    <details className="section">
+      <summary>Taramalar <span className="muted">· {h.total} tarama, {h.recognized} tanesinin malzemesi tanındı{h.legend.length ? ` · lejantta ${h.legend.length} satır` : ' · lejant bulunamadı'}</span></summary>
+      <div className="panel">
+        <p className="muted">Malzemesi yazıdan ya da katman adından okunamayan duvar, üstünü örten taramanın malzemesini alır.
+          Önce çizimin kendi lejantına, sonra katman adına, en son desenin standart anlamına bakılır (AR-CONC beton, EARTH toprak…).
+          Standart anlamı olmayan desenler (ANSI31, DOTS, NET…) yalnız lejantta ya da katman adında yazıyorsa tanınır; tahmin edilmez.</p>
+        <div className="table-scroll">
+          <table className="table-compact">
+            <thead><tr><th>Desen</th><th className="num">Adet</th><th className="num">Alan (m²)</th><th>Malzeme</th><th>Nereden</th><th>Katman</th></tr></thead>
+            <tbody>{h.patterns.map((p) => (
+              <tr key={p.pattern}>
+                <td className="mono">{p.pattern}</td>
+                <td className="num">{p.count}</td>
+                <td className="num">{fmt(p.area_m2, 1)}</td>
+                <td>{p.material_name || <span className="muted">tanınmadı</span>}</td>
+                <td className="muted" title={p.why}>{HATCH_SOURCE[p.source] ?? '—'}</td>
+                <td className="mono muted">{p.layers.join(', ')}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+        {h.legend.length > 0 && <>
+          <h3>Lejant</h3>
+          <ul>{h.legend.map((r) => <li key={r.pattern}><code className="layer">{r.pattern}</code> → {r.material_name} <span className="muted">(“{r.text}”)</span></li>)}</ul>
+        </>}
+      </div>
+    </details>
   )
 }

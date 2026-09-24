@@ -83,6 +83,7 @@ class AnalysisResult:
     kot: float | None = None                                   # bu paftanın kat kotu (etiket ya da "… KOTU" yazısı)
     ksf_height: float | None = None                            # KSF kolon / perde katman adındaki kat yüksekliği (40x40x300 -> 3,00 m)
     discipline_hints: dict = field(default_factory=dict)      # çalıştırılmayan ama katmanlarında kanıt olan disiplinler -> nesne sayısı
+    hatches: dict = field(default_factory=dict)               # tarama özeti ve lejant (parser/hatches.py)
 
     def by_type(self, etype: str) -> list[DetectedElement]:
         return [e for e in self.elements if e.etype == etype]
@@ -97,7 +98,7 @@ class AnalysisResult:
             "rebar_mix": self.rebar_mix, "rebar_layers": self.rebar_layers,
             "blocks_seen": self.blocks_seen, "own_block": self.own_block,
             "poz": self.poz, "unit_verdict": self.unit_verdict,
-            "disciplines": self.disciplines, "discipline_hints": self.discipline_hints,
+            "disciplines": self.disciplines, "discipline_hints": self.discipline_hints, "hatches": self.hatches,
             "levels": self.levels, "kot": self.kot,
         }
 
@@ -832,16 +833,31 @@ def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectP
         result.warnings.append(f"Birim elle '{unit_override}' seçildi; bu paftanın yazı yükseklikleri '{result.suggested_unit}' ile uyuşuyor "
                                "(görünüş / detay yazıları farklı ölçekte olabilir).")
     if auto_unit and not unit_override and result.suggested_unit and result.suggested_unit != drawing.unit:
-        drawing2 = load_dxf(path, unit_override=result.suggested_unit)
+        drawing = load_dxf(path, unit_override=result.suggested_unit)     # doğru birimle yeniden okunan çizim
         warn = [w for w in result.warnings if "kolon etiketleri" in w or "yazı yükseklikleri" in w]
-        result = analyze_drawing(drawing2, profile, params, discipline, catalog, label, extra_disciplines=extra_disciplines,
+        result = analyze_drawing(drawing, profile, params, discipline, catalog, label, extra_disciplines=extra_disciplines,
                                  rebar_target=rebar_target)
         result.levels, result.kot = scan.levels, scan.kot
         result.unit_detected = False
-        result.unit_verdict = drawing2.unit
+        result.unit_verdict = drawing.unit
         result.warnings = warn + [w for w in result.warnings if "kolon etiketleri" not in w and "yazı yükseklikleri" not in w]
-        result.suggested_unit = drawing2.unit
+        result.suggested_unit = drawing.unit
     # Aynı kalemin bitişik parçaları tek elemanda toplanır (kirişlerle bölünmüş döşeme, parçalanmış kaplama)
     result.elements, mw = merge_area_elements(result.elements)
     result.warnings += mw
+    read_hatches(drawing, result)
     return result
+
+
+def read_hatches(drawing: Drawing, result: AnalysisResult) -> None:
+    """Taramalar: malzemesi yazıdan / katmandan okunamamış duvarlara taramanın malzemesi verilir ve
+    paftanın tarama özeti saklanır (bkz. parser/hatches.py). Her disiplin buradan geçer."""
+    from .hatches import HatchReader, assign_wall_materials
+    reader = HatchReader(drawing)
+    if not reader.hatches:
+        return
+    n = assign_wall_materials(reader, result.elements)
+    result.hatches = reader.summary()
+    result.warnings.extend(reader.warnings)
+    if n:
+        result.warnings.append(f"{n} duvarın malzemesi taramadan okundu (yazı / katman adı malzemeyi söylemiyordu).")

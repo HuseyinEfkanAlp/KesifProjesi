@@ -70,6 +70,7 @@ _ADDED_COLUMNS = [
     ("project", "company_id", "INTEGER"),
     ("priceitem", "equipment_price", "FLOAT DEFAULT 0"),
     ("priceitem", "subcontract_price", "FLOAT DEFAULT 0"),
+    ("drawing", "hatches", "JSON"),
 ]
 
 
