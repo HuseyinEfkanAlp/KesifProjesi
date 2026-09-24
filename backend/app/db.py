@@ -74,6 +74,8 @@ _ADDED_COLUMNS = [
     ("drawing", "level_offset", "FLOAT"),
     ("drawing", "zones", "JSON"),
     ("project", "common_areas", "JSON"),
+    ("drawing", "superseded_by", "INTEGER"),
+    ("drawing", "revision", "VARCHAR DEFAULT ''"),
 ]
 
 

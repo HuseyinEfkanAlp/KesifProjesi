@@ -160,6 +160,7 @@ export const Api = {
       request<Drawing>(`/api/drawings/${id}`, { method: 'PATCH', body: json(body) }),
     remove: (id: number) => request<void>(`/api/drawings/${id}`, { method: 'DELETE' }),
     reanalyze: (id: number) => request<Drawing>(`/api/drawings/${id}/reanalyze`, { method: 'POST' }),
+    makeCurrent: (id: number) => request<Drawing>(`/api/drawings/${id}/make-current`, { method: 'POST' }),
     elements: (id: number) => request<Element[]>(`/api/drawings/${id}/elements`),
     boq: (id: number) => request<Boq>(`/api/drawings/${id}/boq`),
     addElement: (id: number, body: Partial<Element>) => request<Element>(`/api/drawings/${id}/elements`, { method: 'POST', body: json(body) }),

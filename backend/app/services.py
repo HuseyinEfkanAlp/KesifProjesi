@@ -49,7 +49,7 @@ def detect_params(project: Project, session: Session | None = None) -> DetectPar
     if session is None or project.id is None:
         return p
     sizes, kinds, prefixes = {}, {}, set()
-    drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None))).all()
     for d in drawings:
         poz = d.poz or {}
         sizes.update(poz.get("sizes") or {})
@@ -288,7 +288,7 @@ def apply_storey_counts(project: Project, session: Session) -> dict:
     Her yüklemeden sonra **proje geneli** çalışır, tek pafta için değil: kot dizisi kanıtı bütün
     paftalara bakar — yeni bir kat planı yüklenince tip kat planının temsil ettiği kat sayısı azalır."""
     from .derive import storey_counts
-    drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None))).all()
     if not drawings:
         return {"per_drawing": {}, "warnings": []}
     sc = storey_counts(project, drawings)
@@ -315,7 +315,7 @@ def wall_height_default(project: Project, drawing: Drawing, session: Session | N
     p = project_params(project)
     if p.get("wall_height"):
         return float(p["wall_height"])
-    drawings = list(session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()) if session else []
+    drawings = list(session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None))).all()) if session else []
     if drawing not in drawings:
         drawings.append(drawing)
     h = storey_height_of(project, drawing, storey_heights(project, drawings))
@@ -349,7 +349,7 @@ def refresh_wall_areas(project: Project, session: Session, drawings: list[Drawin
     yeniden uzunluk × yükseklik. Elle düzenlenen (manual) elemanlara dokunulmaz. Döndürür: güncellenen eleman sayısı."""
     catalog = load_catalog()
     if drawings is None:
-        drawings = list(session.exec(select(Drawing).where(Drawing.project_id == project.id)).all())
+        drawings = list(session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None))).all())
     n = 0
     for d in drawings:
         h = None
@@ -577,7 +577,7 @@ def rebar_table_rows(project: Project, session: Session) -> list[dict]:
     `meta.weight_kg`'den okunur; yoksa `length` (m) × birim ağırlık."""
     from .parser.rebar_tables import unit_weight
     rows: list[dict] = []
-    for d in session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.discipline == REBAR_DISCIPLINE)).all():
+    for d in session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None), Drawing.discipline == REBAR_DISCIPLINE)).all():
         mult = max(int(d.storey_count or 1), 1)
         for e in _included_elements(d, session):
             if e.etype != "rebar":
@@ -604,7 +604,7 @@ def project_quantities(project: Project, session: Session, drawings: list[Drawin
     donatı paftalarındaki tablolar demiri çap bazında verir ve ilgili eleman tipinin oran tahminini geçersiz kılar.
     drawings: yalnız bu paftalar (tek pafta metrajı); kat yükseklikleri yine projenin tüm paftalarından."""
     from .confidence import element_tier
-    all_drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    all_drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None))).all()
     sh = storey_heights(project, all_drawings)
     if drawings is None:
         drawings = all_drawings
@@ -735,7 +735,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     drawings: yalnız bu paftalar. measured_only: yalnız çizimden ölçülen kalemler (beton / kalıp / demir, duvar, kapı,
     KSF kalemleri…); fire, sarf, cephe / çatı tahmini, türetilmiş kalemler ve reçeteler yazılmaz (pafta metrajı)."""
     from .derive import slab_thicknesses, storey_counts
-    all_drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+    all_drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None))).all()
     if drawings is None:
         drawings = all_drawings
     if summary is None:
@@ -1344,7 +1344,7 @@ def space_breakdown(project: Project, session: Session, drawings: list[Drawing] 
     from .parser.levels import floor_rank
     from .quantity.boq import architectural_items, electrical_items, standard_items
     if drawings is None:
-        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None))).all()
     params = project_params(project)
     catalog = load_catalog()
     sh = storey_heights(project, drawings)
@@ -1713,7 +1713,7 @@ def roof_zones(project: Project, session: Session, drawings: list[Drawing] | Non
     olmayan bölge katmanın kalemiyle kalır ("layer"), iki sistem yazan bölge seçim bekler ("conflict")."""
     from .parser.detectors.standard import ROOF_ZONE_BASE
     if drawings is None:
-        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None))).all()
     rows: list[dict] = []
     for d in drawings:
         for e in _included_elements(d, session):
@@ -1734,7 +1734,7 @@ def roof_area(project: Project, session: Session, items: list[BoqItem] | None = 
     (bodrum olmayan) kat planı oturumu. Sistem: roof_system parametresi, yoksa kesit / detay notlarındaki kanıt."""
     params = params or project_params(project)
     if drawings is None:
-        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None))).all()
     if items is None:
         items = project_boq(project, session, expand=False)
     measured = sum(it.quantity for it in items if it.kind in ROOF_KINDS and it.unit == "m²" and not it.detail.get("info")
@@ -2605,7 +2605,7 @@ def facade_area(project: Project, session: Session, items: list[BoqItem] | None 
     Net = brüt − cam alanı (CAM kalemi varsa)."""
     params = params or project_params(project)
     if drawings is None:
-        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None))).all()
     if items is None:
         items = project_boq(project, session, expand=False)
     measured = sum(it.quantity for it in items if it.kind == "cephe_brut" and not it.detail.get("info"))
@@ -2700,7 +2700,7 @@ def project_systems(project: Project, session: Session, catalog: Catalog | None 
     """
     catalog = catalog or load_catalog()
     if drawings is None:
-        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id)).all()
+        drawings = session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None))).all()
     if items is None:
         items = project_boq(project, session, expand=False)
     evidence = merge_materials([d.materials or {} for d in drawings])
@@ -2943,7 +2943,7 @@ def project_quality(project, session, items, summary, cost=None, cost_required: 
     """Same evidence for API and exported reports, without mutating project data."""
     from .quality import build_quality
     from .planset import PLAN_TYPE_BY_CODE, coverage, plan_check
-    drawings = list(session.exec(select(Drawing).where(Drawing.project_id == project.id)))
+    drawings = list(session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None))))
     elements = list(session.exec(select(Element).join(Drawing).where(Drawing.project_id == project.id)))
     blocks = project_blocks(project, drawings)
     check = plan_check(drawings, project.plan_set, blocks["blocks"], blocks["missing"])

@@ -128,6 +128,11 @@ class Drawing(SQLModel, table=True):
     # Yapı bloğu: "C1", "A4-A5"; "" = ortak / tüm bina (bodrum, zemin, vaziyet, altyapı — bloklara bölünmeyen plan).
     # Dosya adından tanınır (parser/blocks.py), çizim listesinden değiştirilir.
     block: str = ""
+    # Revizyon (app/revisions.py): aynı blok + plan tipi + katın daha yeni paftası yüklenince bu pafta onun
+    # yerine geçer ve hesaba GİRMEZ — silinmez, geçmiş olarak kalır. revision: dosya adından okunan tarih
+    # (ISO, "2025-11-21"); yoksa boş ve yükleme sırası esas alınır.
+    superseded_by: int | None = None
+    revision: str = ""
     discipline: str = "structural"  # structural | architectural | electrical | rebar | standard | mapped
     # Aynı paftada çizilen ek sezgisel disiplinler (mimari paftada elektrik gibi); analizde ana disipline eklenir
     disciplines: list[str] = Field(default_factory=list, sa_column=Column(JSON))

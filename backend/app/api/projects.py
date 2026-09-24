@@ -82,7 +82,7 @@ def get_project(project_id: int, session: Session) -> Project:
 
 def project_out(p: Project, session: Session) -> dict:
     n = len(session.exec(select(Drawing.id).where(Drawing.project_id == p.id)).all())
-    ds = session.exec(select(Drawing).where(Drawing.project_id == p.id)).all()
+    ds = session.exec(select(Drawing).where(Drawing.project_id == p.id, Drawing.superseded_by.is_(None))).all()
     from ..services import project_blocks
     pb = project_blocks(p, ds)
     check = plan_check(ds, p.plan_set, pb["blocks"], pb["missing"])
@@ -149,10 +149,10 @@ def update_project(project_id: int, body: ProjectPatch, session: Session = Depen
     if height_changed and not reanalyze:
         refresh_wall_areas(p, session)   # katman adında yüksekliği olmayan duvarların alanı = uzunluk × yeni yükseklik
     if reanalyze:  # varsayılan döşeme kalınlığı dedektör parametresi
-        for d in session.exec(select(Drawing).where(Drawing.project_id == p.id)):
+        for d in session.exec(select(Drawing).where(Drawing.project_id == p.id, Drawing.superseded_by.is_(None))):
             analyze_and_store(d, p, session)
     elif reanalyze_mapped:
-        for d in session.exec(select(Drawing).where(Drawing.project_id == p.id, Drawing.discipline == "mapped")):
+        for d in session.exec(select(Drawing).where(Drawing.project_id == p.id, Drawing.superseded_by.is_(None), Drawing.discipline == "mapped")):
             analyze_and_store(d, p, session)
     session.refresh(p)
     return project_out(p, session)
@@ -229,7 +229,7 @@ def map_layer(project_id: int, body: LayerMap, session: Session = Depends(get_se
 
 
 def _reanalyze_all(p: Project, session: Session) -> None:
-    for d in session.exec(select(Drawing).where(Drawing.project_id == p.id)):
+    for d in session.exec(select(Drawing).where(Drawing.project_id == p.id, Drawing.superseded_by.is_(None))):
         analyze_and_store(d, p, session)
 
 
@@ -237,7 +237,7 @@ def _reanalyze_all(p: Project, session: Session) -> None:
 def read_plan_check(project_id: int, session: Session = Depends(get_session)):
     """Plan seti kontrolü: hangi plan tipleri yüklü, hangileri eksik (uyarı), hangileri bu projede yok sayıldı."""
     p = get_project(project_id, session)
-    ds = session.exec(select(Drawing).where(Drawing.project_id == p.id)).all()
+    ds = session.exec(select(Drawing).where(Drawing.project_id == p.id, Drawing.superseded_by.is_(None))).all()
     from ..services import project_blocks
     pb = project_blocks(p, ds)
     return {**plan_check(ds, p.plan_set, pb["blocks"], pb["missing"]), "plan_set": effective_levels(p.plan_set),

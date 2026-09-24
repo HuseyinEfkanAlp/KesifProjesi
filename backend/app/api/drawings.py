@@ -219,7 +219,7 @@ def _refresh_openings(project: Project, session: Session) -> None:
     params = detect_params(project, session)
     if not (params.poz_prefixes or params.poz_sizes):
         return
-    for d in session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.discipline == "architectural")):
+    for d in session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None), Drawing.discipline == "architectural")):
         els = session.exec(select(Element).where(Element.drawing_id == d.id)).all()
         has_wall = any(e.etype == "wall" for e in els)
         openings = [e for e in els if e.etype in ("door", "window")]
@@ -231,7 +231,7 @@ def _refresh_openings(project: Project, session: Session) -> None:
 
 def _project_blocks(project: Project, session: Session) -> list[str]:
     """Projede şimdiye kadar tanınmış blok adları (yeni çizimin adını eşlemek için)."""
-    return sorted({(d.block or "") for d in session.exec(select(Drawing).where(Drawing.project_id == project.id))} - {""})
+    return sorted({(d.block or "") for d in session.exec(select(Drawing).where(Drawing.project_id == project.id, Drawing.superseded_by.is_(None)))} - {""})
 
 
 def _detect_block(project: Project, session: Session, *texts: str) -> str:
@@ -389,7 +389,7 @@ def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = F
                 "needs_sheet_selection": True, "source": _source_out(src, scan),
                 "sheets": [_sheet_out(sh) for sh in scan.sheets],
             })
-        mevcut = {d.block for d in session.exec(select(Drawing).where(Drawing.project_id == project_id)).all()
+        mevcut = {d.block for d in session.exec(select(Drawing).where(Drawing.project_id == project_id, Drawing.superseded_by.is_(None))).all()
                   if d.block and any(ch.isdigit() for ch in d.block)}
         picks, rapor = auto_pick_sheets(scan, mevcut)
         if not picks:
@@ -430,6 +430,7 @@ def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = F
         d.warnings = [f"Dosyanın antedinden okundu ve boş proje parametrelerine yazıldı: {', '.join(applied)}."] + list(d.warnings)
         session.add(d)
         session.commit()
+    _note_revisions([d], session)
     _refresh_openings(project, session)
     apply_storey_counts(project, session)   # kat sayisi sorulmaz: cizimden turetilip kaydedilir
     session.refresh(d)
@@ -516,11 +517,23 @@ def ingest_sheets(project: Project, src: Path, scan: SheetScan, picks: list, ses
                                f"{', '.join(applied)}."] + list(created[0].warnings)
         session.add(created[0])
         session.commit()
+    _note_revisions(created, session)
     _refresh_openings(project, session)
     apply_storey_counts(project, session)   # kat sayısı sorulmaz: çizimden türetilip kaydedilir
     for d in created:
         session.refresh(d)
     return created
+
+
+def _note_revisions(new: list, session: Session) -> None:
+    """Yeni paftaların eski revizyonlarını hesaptan çıkarır (app/revisions.py); olanı ilk yeni paftanın
+    uyarılarına yazar ki kullanıcı neyin değiştiğini görsün."""
+    from ..revisions import apply_revisions
+    olaylar = apply_revisions(new, session)
+    if olaylar and new:
+        new[0].warnings = ["Revizyon: " + o for o in olaylar] + list(new[0].warnings or [])
+        session.add(new[0])
+        session.commit()
 
 
 def _read_common_areas(project: Project, src: Path, scan: SheetScan, created: list, orig: str, session: Session) -> None:
@@ -589,6 +602,7 @@ def _run_analyze(session: Session, job) -> dict:
                        f"{', '.join(applied)}."] + list(dr.warnings)
         session.add(dr)
         session.commit()
+    _note_revisions([dr], session)
     _refresh_openings(project, session)
     apply_storey_counts(project, session)
     session.refresh(dr)
@@ -695,8 +709,23 @@ def delete_drawing(drawing_id: int, session: Session = Depends(get_session)):
     for e in session.exec(select(Element).where(Element.drawing_id == d.id)):
         session.delete(e)
     Path(d.stored_path).unlink(missing_ok=True)
+    from ..revisions import release
+    release(d, session)             # yeni revizyon silinirse eskisi geri hesaba girer
     session.delete(d)
     session.commit()
+
+
+@router.post("/drawings/{drawing_id}/make-current")
+def make_current_drawing(drawing_id: int, session: Session = Depends(get_session)):
+    """Eski revizyonu geçerli yapar; aynı paftanın şu an geçerli olanı hesaptan çıkar."""
+    from ..revisions import make_current
+    d = get_drawing(drawing_id, session)
+    make_current(d, session)
+    project = session.get(Project, d.project_id)
+    _refresh_openings(project, session)
+    apply_storey_counts(project, session)
+    session.refresh(d)
+    return drawing_out(d, session)
 
 
 @router.post("/drawings/{drawing_id}/reanalyze")

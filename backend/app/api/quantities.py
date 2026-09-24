@@ -42,7 +42,7 @@ def rebar_mix_out(p, session: Session) -> dict:
     demirin nereden geldiğini burada görür."""
     from sqlmodel import select
 
-    drawings = session.exec(select(Drawing).where(Drawing.project_id == p.id)).all()
+    drawings = session.exec(select(Drawing).where(Drawing.project_id == p.id, Drawing.superseded_by.is_(None))).all()
     mix = project_rebar_mix(p, session, drawings)
     out: dict[str, list[dict]] = {}
     for etype, raw in mix.items():

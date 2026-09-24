@@ -470,3 +470,8 @@ button.link:disabled { opacity: .5; text-decoration: none; }
 .readonly-tag { font-size: 12px; background: var(--warn-bg); border: 1px solid var(--warn-border); color: #7a5410; padding: 4px 10px; border-radius: 5px; }
 
 .check-row { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; font-size: 14px; color: var(--text); cursor: pointer; }
+
+/* Revizyon: yenisi yüklenmiş pafta — metraja girmez, geçmiş olarak soluk görünür */
+tr.eski > td { opacity: 0.55; }
+tr.eski > td:last-child { opacity: 1; }
+.badge-old { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 8px; background: #fde68a; color: #78350f; white-space: nowrap; }

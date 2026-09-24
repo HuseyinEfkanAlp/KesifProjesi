@@ -222,6 +222,8 @@ export interface LayerInfo {
 
 export interface Drawing {
   block?: string                   // yapı bloğu; '' = ortak / tüm bina
+  superseded_by?: number | null    // dolu: daha yeni revizyonu yüklendi — hesaba girmez, geçmiş olarak durur
+  revision?: string                // dosya adındaki tarih (ISO), yoksa ''
   id: number
   project_id: number
   filename: string

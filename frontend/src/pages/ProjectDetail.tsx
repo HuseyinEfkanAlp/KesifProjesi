@@ -98,6 +98,16 @@ export default function ProjectDetail() {
     drawingsChanged()
   }
 
+  const makeCurrent = async (d: Drawing) => {
+    if (!confirm(`"${d.label}" (${d.filename.split(' › ')[0]}) geçerli yapılsın mı? Aynı paftanın şu an geçerli olanı hesaptan çıkar.`)) return
+    setBusy(true)
+    try { await Api.drawings.makeCurrent(d.id); await drawingsChanged() } catch (err) { setError((err as Error).message) } finally { setBusy(false) }
+  }
+
+  const oldBadge = (d: Drawing) => d.superseded_by
+    ? <span className="badge-old" title={`Bu paftanın daha yeni revizyonu yüklendi (${drawings.find((x) => x.id === d.superseded_by)?.filename.split(' › ')[0] ?? ''}). Metraja girmez; silinmedi, geçmiş olarak duruyor.`}>eski revizyon</span>
+    : null
+
   if (!project) return <Loading error={error} />
 
   const disciplineOptions = (Object.keys(DISCIPLINES) as Discipline[]).map((d) => <option key={d} value={d}>{DISCIPLINES[d]}</option>)
@@ -156,9 +166,9 @@ export default function ProjectDetail() {
                 const st = statusOf(d)
                 const pt = planTypes.find((t) => t.code === d.plan_type)
                 return (
-                  <tr key={d.id}>
+                  <tr key={d.id} className={d.superseded_by ? 'eski' : undefined}>
                     <td className="st"><span className={`dot ${st.cls}`} title={st.label} /></td>
-                    <td className="name" title={d.filename}><Link to={`/projects/${id}/drawings/${d.id}`}>{d.label}</Link></td>
+                    <td className="name" title={d.filename}><Link to={`/projects/${id}/drawings/${d.id}`}>{d.label}</Link> {oldBadge(d)}</td>
                     <td className="type muted">{pt ? pt.label : <span className="bad">tip seçilmedi</span>}</td>
                     <td className="found">{d.found || <span className="muted">{st.label === 'Okundu' ? `${d.element_count} eleman` : st.label.toLowerCase()}</span>}</td>
                     <td className="note" title={d.warnings.join('\n')}>{d.note || (d.warnings[0] ?? '')}</td>
@@ -331,8 +341,8 @@ export default function ProjectDetail() {
               </thead>
               <tbody>
                 {drawings.map((d) => (
-                  <tr key={d.id}>
-                    <td><input className="wide" defaultValue={d.label} onBlur={(e) => e.target.value !== d.label && patchDrawing(d, { label: e.target.value })} /></td>
+                  <tr key={d.id} className={d.superseded_by ? 'eski' : undefined}>
+                    <td><input className="wide" defaultValue={d.label} onBlur={(e) => e.target.value !== d.label && patchDrawing(d, { label: e.target.value })} /> {oldBadge(d)}</td>
                     <td>
                       <select value={d.block ?? ''} disabled={busy} className={`narrow${d.block ? '' : ' unset'}`}
                         title="Boş = ortak / tüm bina. Bodrum ve zemin birleşikse ortak bırakın; blok başına çizilen katlarda bloğu seçin."
@@ -385,6 +395,7 @@ export default function ProjectDetail() {
                     <td>{d.warnings.length > 0 ? <span title={d.warnings.join('\n')}>⚠ {d.warnings.length}</span> : <span className="muted">-</span>}</td>
                     <td className="row">
                       <Link className="btn small" to={`/projects/${id}/drawings/${d.id}`}>Elemanlar</Link>
+                      {d.superseded_by ? <button className="small" disabled={busy} onClick={() => makeCurrent(d)} title="Bu revizyonu geçerli yap">Geçerli yap</button> : null}
                       <button className="danger small" onClick={() => removeDrawing(d)}>Sil</button>
                     </td>
                   </tr>
