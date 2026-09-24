@@ -117,3 +117,12 @@ def test_koridor_siniri_yoksa_ic_duvar_bir_yuz_merdiven_duvari_hesapli():
     assert faces == {1: 1, 2: 1} and "TAHMİN" in note
     faces, _ = shell_wall_faces([merdiven_duvari, uzak], [merdiven], exterior=set(), role="bodrum")
     assert faces == {1: 1, 2: 0}                          # bodrumda ortak alan yalnız merdiven: tam bilgi
+
+
+def test_yuruyen_merdiven_adiyla_yazilir():
+    from app.parser.loader import Drawing, Entity
+    from app.parser.zones import scan_zones
+    ents = [Entity("line", "brn_stairs", [(0, y * 0.5), (5.0, y * 0.5)]) for y in range(20)]
+    ents.append(Entity("line", "THYSSENKRUPP", [(2, 3), (3, 3)]))
+    z = scan_zones(Drawing("x", "m", 1.0, True, entities=ents))
+    assert z and z[0]["why"].startswith("yürüyen merdiven")

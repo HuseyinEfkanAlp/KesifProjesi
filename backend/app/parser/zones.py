@@ -44,6 +44,9 @@ STAIR_LAYER = re.compile(r"STAIR|MERD[İI]VEN|MERDIVEN", re.IGNORECASE)
 STAIR_CLUSTER_GAP = 1.0     # m — bu kadar yakın merdiven çizgileri aynı merdivendir
 STAIR_MIN_AREA = 3.0        # m² — bundan küçük öbek merdiven değildir (ok, yön işareti)
 STAIR_FRONT_DEPTH = 1.5     # m — merdiven önü sahanlık derinliği (kabul)
+# Yürüyen merdiven: üretici katmanı / blok adı (A3 bodrum: THYSSENKRUPP katmanı, "Escalator-…" bloğu). Ortak
+# dolaşım alanıdır ama merdiven evi değildir; adıyla ayrı yazılır.
+ESCALATOR = re.compile(r"ESCALAT|THYSSEN|Y[ÜU]R[ÜU]YEN|KONE\b|SCHINDLER|OTIS", re.IGNORECASE)
 
 
 def _dims(p: Polygon) -> tuple[float, float]:
@@ -94,6 +97,8 @@ def stair_zones(drawing: Drawing, covered=None) -> list[dict]:
     if not parcalar:
         return []
     u = unary_union(parcalar)
+    yuruyen = [SPoint(p) for e in drawing.entities if e.points and (ESCALATOR.search(e.layer or "") or ESCALATOR.search(e.block or ""))
+               for p in e.points[:1]]
     out = []
     for g in (list(u.geoms) if hasattr(u, "geoms") else [u]):
         kabuk = g.convex_hull.buffer(-STAIR_CLUSTER_GAP / 2, join_style=2)
@@ -103,10 +108,11 @@ def stair_zones(drawing: Drawing, covered=None) -> list[dict]:
             continue
         uzun, kisa = _dims(kabuk)
         alan = kabuk.area + kisa * STAIR_FRONT_DEPTH
+        ad = "yürüyen merdiven" if any(kabuk.buffer(1.0).contains(pt) for pt in yuruyen) else "merdiven"
         # çokgen, çevresindeki duvarı yakalayacak kadar genişletilir (duvar yüzü ortak alana bakıyor mu sınaması)
         sinir = kabuk.buffer(0.3, join_style=2)
         out.append({"kind": "ortak", "area": round(alan, 2), "source": "merdiven", "estimated": True, "layer": "merdiven",
-                    "why": f"merdiven {uzun:.1f} × {kisa:.1f} m (merdiven çizgilerinden) + önünde {STAIR_FRONT_DEPTH:g} m "
+                    "why": f"{ad} {uzun:.1f} × {kisa:.1f} m (merdiven çizgilerinden) + önünde {STAIR_FRONT_DEPTH:g} m "
                            f"sahanlık kabulü — TAHMİN",
                     "points": [[round(x, 3), round(y, 3)] for x, y in sinir.exterior.coords]})
     return out
