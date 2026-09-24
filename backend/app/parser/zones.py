@@ -37,6 +37,14 @@ MIN_ZONE_AREA = 2.0
 
 KIND_LABEL = {"ortak": "Ortak alan", "dukkan": "Dükkân (kiracı alanı)", "teknik": "Teknik hacim", "belirsiz": "Belirsiz"}
 
+# Merdiven evi: alan çizgisi olmasa da merdiven kendi katmanında çizilir (brn_stairs, VM Merdiven). Çizgilerin
+# öbeği merdivenin kendisidir; önündeki sahanlık çizilmez — merdiven genişliği × STAIR_FRONT_DEPTH kabul edilir
+# (tahmin olarak işaretli). Otoparkta ve üst katlarda ortak alanın çoğu zaman tek parçası budur.
+STAIR_LAYER = re.compile(r"STAIR|MERD[İI]VEN|MERDIVEN", re.IGNORECASE)
+STAIR_CLUSTER_GAP = 1.0     # m — bu kadar yakın merdiven çizgileri aynı merdivendir
+STAIR_MIN_AREA = 3.0        # m² — bundan küçük öbek merdiven değildir (ok, yön işareti)
+STAIR_FRONT_DEPTH = 1.5     # m — merdiven önü sahanlık derinliği (kabul)
+
 
 def _dims(p: Polygon) -> tuple[float, float]:
     """Döndürülmüş en küçük dikdörtgenin (uzun, kısa) kenarı."""
@@ -70,8 +78,51 @@ def classify(poly: Polygon, texts: list[str]) -> tuple[str, str]:
     return "belirsiz", "işaret yok"
 
 
+def stair_zones(drawing: Drawing, covered=None) -> list[dict]:
+    """Merdiven katmanındaki çizgilerden merdiven evleri (ortak alan). covered: zaten alan çizgisiyle
+    sınırlanmış bölgelerin birleşimi — merdiveni kapsayan bir alan çizgisi varsa merdiven ayrıca eklenmez."""
+    from shapely.geometry import LineString
+    from shapely.ops import unary_union
+    parcalar = []
+    for e in drawing.entities:
+        if e.kind == "text" or len(e.points) < 2 or not STAIR_LAYER.search(e.layer or ""):
+            continue
+        try:
+            parcalar.append(LineString(e.points).buffer(STAIR_CLUSTER_GAP / 2))
+        except Exception:
+            continue
+    if not parcalar:
+        return []
+    u = unary_union(parcalar)
+    out = []
+    for g in (list(u.geoms) if hasattr(u, "geoms") else [u]):
+        kabuk = g.convex_hull.buffer(-STAIR_CLUSTER_GAP / 2, join_style=2)
+        if kabuk.is_empty or kabuk.area < STAIR_MIN_AREA or kabuk.geom_type != "Polygon":
+            continue
+        if covered is not None and covered.contains(kabuk.centroid):
+            continue
+        uzun, kisa = _dims(kabuk)
+        alan = kabuk.area + kisa * STAIR_FRONT_DEPTH
+        # çokgen, çevresindeki duvarı yakalayacak kadar genişletilir (duvar yüzü ortak alana bakıyor mu sınaması)
+        sinir = kabuk.buffer(0.3, join_style=2)
+        out.append({"kind": "ortak", "area": round(alan, 2), "source": "merdiven", "estimated": True, "layer": "merdiven",
+                    "why": f"merdiven {uzun:.1f} × {kisa:.1f} m (merdiven çizgilerinden) + önünde {STAIR_FRONT_DEPTH:g} m "
+                           f"sahanlık kabulü — TAHMİN",
+                    "points": [[round(x, 3), round(y, 3)] for x, y in sinir.exterior.coords]})
+    return out
+
+
 def scan_zones(drawing: Drawing) -> list[dict]:
-    """Alan katmanlarındaki kapalı çokgenler, türleriyle: [{"kind", "area", "points", "why", "layer"}]."""
+    """Bölgeler: alan katmanlarındaki kapalı çokgenler (türleriyle) + alan çizgisinin kapsamadığı merdiven evleri.
+    [{"kind", "area", "points", "why", "layer", "source": "alan_cizgisi" | "merdiven"}]."""
+    from shapely.ops import unary_union
+    out = _area_zones(drawing)
+    covered = unary_union([Polygon(z["points"]).buffer(0) for z in out]) if out else None
+    return out + stair_zones(drawing, covered)
+
+
+def _area_zones(drawing: Drawing) -> list[dict]:
+    """Alan katmanlarındaki kapalı çokgenler, türleriyle."""
     polys = []
     for e in drawing.entities:
         if e.kind != "polygon" or len(e.points) < 3 or not AREA_LAYER.search(e.layer or ""):
@@ -89,6 +140,6 @@ def scan_zones(drawing: Drawing) -> list[dict]:
     for p, layer in polys:
         inside = [t for pt, t in texts if p.contains(pt)]
         kind, why = classify(p, inside)
-        out.append({"kind": kind, "area": round(p.area, 2), "why": why, "layer": layer,
+        out.append({"kind": kind, "area": round(p.area, 2), "why": why, "layer": layer, "source": "alan_cizgisi",
                     "points": [[round(x, 3), round(y, 3)] for x, y in p.exterior.coords]})
     return out

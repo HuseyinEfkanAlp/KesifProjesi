@@ -69,3 +69,51 @@ def test_yuz_sayisi_kaba_teslim_hesabinda_kullanilir():
 def test_ayar_okunur():
     assert tenant_shell_on({"tenant_shell": 1.0}) and tenant_shell_on({"tenant_shell": True})
     assert not tenant_shell_on({"tenant_shell": None}) and not tenant_shell_on({"tenant_shell": 0})
+
+
+# ------------------------------------------------------------------ kat rolleri ve merdiven
+
+def test_kat_rolu():
+    from app.services import floor_role
+    assert floor_role("A2 BLOK / BODRUM KAT PLANI ÖLÇEK:1/100") == "bodrum"
+    assert floor_role("A2 BLOK / ÇATI KATI PLANI ÖLÇEK:1/100") == "cati_kati"
+    assert floor_role("A2 BLOK / ZEMİN KAT PLANI ÖLÇEK:1/100") == ""
+
+
+def test_cati_katinda_ic_siva_boya_yok():
+    """Kullanıcı: "çatı katında ise bişey yok" — ortak alan yoktur, iç yüzler yazılmaz."""
+    faces, note = shell_wall_faces([_w(1, _r(0, 0, 5, 0.2)), _w(2, _r(0, 5, 5, 5.2))],
+                                   [{"kind": "ortak", "points": _r(0, 0, 5, 5)}], exterior=set(), role="cati_kati")
+    assert faces == {1: 0, 2: 0} and "çatı katı" in note
+
+
+def test_merdiven_evi_merdiven_cizgilerinden():
+    """Bodrumda (otopark) ortak alan merdiven ve önüdür; merdiven kendi katmanında çizilir."""
+    from app.parser.loader import Drawing, Entity
+    from app.parser.zones import STAIR_FRONT_DEPTH, scan_zones
+    basamak = [Entity("line", "brn_stairs", [(0, y * 0.3), (2.0, y * 0.3)]) for y in range(21)]   # 2 × 6 m merdiven
+    z = scan_zones(Drawing("x", "m", 1.0, True, entities=basamak))
+    assert len(z) == 1 and z[0]["kind"] == "ortak" and z[0]["source"] == "merdiven" and z[0]["estimated"]
+    assert z[0]["area"] == pytest.approx(2.0 * 6.0 + 2.0 * STAIR_FRONT_DEPTH, rel=0.05)
+    assert "TAHMİN" in z[0]["why"]
+
+
+def test_alan_cizgisinin_kapsadigi_merdiven_tekrar_eklenmez():
+    from app.parser.loader import Drawing, Entity
+    from app.parser.zones import scan_zones
+    ents = [Entity("line", "brn_stairs", [(1, 1 + y * 0.3), (3.0, 1 + y * 0.3)]) for y in range(21)]
+    ents.append(Entity("polygon", "brn_area", _r(0, 0, 4, 9), closed=True))
+    ents.append(Entity("text", "yazi", [(2, 4)], text="ZEMİN KAT 24X(30 / 16.45)"))
+    z = scan_zones(Drawing("x", "m", 1.0, True, entities=ents))
+    assert [x["source"] for x in z] == ["alan_cizgisi"]
+
+
+def test_koridor_siniri_yoksa_ic_duvar_bir_yuz_merdiven_duvari_hesapli():
+    """Dükkân katında yalnız merdiven biliniyorsa koridora bakan duvar 0 sayılmaz (koridor yok değil, çizilmemiş)."""
+    merdiven = {"kind": "ortak", "source": "merdiven", "points": _r(0, 0, 3, 6)}
+    merdiven_duvari = _w(1, _r(-0.2, 0, 0, 6))            # merdivenin sol duvarı: bir yüzü merdivene bakar
+    uzak = _w(2, _r(10, 0, 10.2, 6))                      # koridor duvarı olabilir: bilinmiyor
+    faces, note = shell_wall_faces([merdiven_duvari, uzak], [merdiven], exterior=set(), role="")
+    assert faces == {1: 1, 2: 1} and "TAHMİN" in note
+    faces, _ = shell_wall_faces([merdiven_duvari, uzak], [merdiven], exterior=set(), role="bodrum")
+    assert faces == {1: 1, 2: 0}                          # bodrumda ortak alan yalnız merdiven: tam bilgi

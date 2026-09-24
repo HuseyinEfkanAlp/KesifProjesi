@@ -796,7 +796,8 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
             # sıva / boya yüzü duvar başına: dış duvar yalnız içeriden (quantity/boq.wall_faces)
             entry["exterior_walls"] = exterior_wall_ids(elements, d.spaces, duvarlar)
             if tenant_shell_on(params):
-                entry["wall_faces"], entry["wall_faces_note"] = shell_wall_faces(duvarlar, d.zones or [], entry["exterior_walls"])
+                entry["wall_faces"], entry["wall_faces_note"] = shell_wall_faces(duvarlar, d.zones or [], entry["exterior_walls"],
+                                                                                 floor_role(d.label or ""))
         if d.discipline in (STANDARD_DISCIPLINE, MAPPED_DISCIPLINE):
             # KSF statik katmanları (KOLON_ON, DOSEME_ON…) statik motorda beton / kalıp / demir olarak ölçüldü; ikinci kez yazılmaz
             std.append({**entry, "elements": [e for e in entry["elements"] if _g_etype(e) not in STRUCTURAL_TYPES]})
@@ -1985,22 +1986,30 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
     floor = sum(fp["area"] * max(1, fp["storey_count"]) for fp in fps_u if not fp["basement"])
     if tenant_shell_on(params) and "tavan_siva_boya" not in kinds:
         # Kaba teslim: dükkân tavanı kiracının. Yalnız çizimde sınırı olan ortak alanların tavanı.
-        ortak_alan, zonesuz = 0.0, []
+        ortak_alan, tahmini, zonesuz = 0.0, 0.0, []
         for d in drawings:
             if d.plan_type not in ("mim_kat_plani", "") or d.discipline not in ("architectural",):
                 continue
+            rol = floor_role(d.label or "")
+            if rol == "cati_kati":
+                continue                                   # çatı katında ortak alan yok
             z = [x for x in (d.zones or []) if x.get("kind") == "ortak"]
-            if z:
-                ortak_alan += sum(float(x.get("area") or 0) for x in z) * max(1, d.storey_count or 1)
-            else:
+            kat = max(1, d.storey_count or 1)
+            ortak_alan += sum(float(x.get("area") or 0) for x in z) * kat
+            tahmini += sum(float(x.get("area") or 0) for x in z if x.get("estimated")) * kat
+            # dükkân katında koridor / lobi alan çizgisi yoksa ortak alan eksik kalır: sorulur (bodrumda yalnız merdiven)
+            if rol != "bodrum" and not any(x.get("source", "alan_cizgisi") == "alan_cizgisi" for x in z):
                 zonesuz.append(d.label or d.filename)
         if ortak_alan > 0:
             add("TAVAN_SIVA_BOYA", "", ortak_alan, "dükkânlar kaba teslim: yalnız ortak alanların (lobi / koridor / merdiven) "
-                                                   "tavanı — alan çizgili bölgelerden", "tavan", "rooms")
+                                                   "tavanı — alan çizgili bölgelerden ve merdivenlerden"
+                                                   + (f"; {tahmini:,.0f} m²'si merdiven önü sahanlık kabulüyle TAHMİN" if tahmini else "")
+                                                   + "; bodrumda yalnız merdiven ve önü, çatı katında ortak alan yok",
+                "tavan", "rooms")
         if zonesuz:
-            ask("ortak_alan_sinir", f"Dükkânlar kaba teslim: {len(zonesuz)} kat planında ortak alan (lobi / koridor / merdiven) "
-                                    f"sınırı çizili değil ({', '.join(zonesuz[:4])}{'…' if len(zonesuz) > 4 else ''}). Bu katların "
-                                    "tavan sıva-boyası ve döşeme kaplaması hesaplanamadı; alan çizgili planı yükleyin ya da "
+            ask("ortak_alan_sinir", f"Dükkânlar kaba teslim: {len(zonesuz)} dükkân katı planında koridor / lobi "
+                                    f"sınırı çizili değil (merdivenler çizimden alındı) ({', '.join(zonesuz[:4])}{'…' if len(zonesuz) > 4 else ''}). Bu katlarda koridor ve "
+                                    "lobinin tavan sıva-boyası ve döşeme kaplaması eksik; alan çizgili planı yükleyin ya da "
                                     "ortak alanı elle girin.")
         floor = 0.0          # kat oturumundan tavan türetilmez
     elif not str(params.get("tenant_shell") if params.get("tenant_shell") is not None else "").strip() and any(
@@ -2335,7 +2344,19 @@ SHELL_SIDE_REACH = 0.5      # m — duvar yüzünden içeri bakılan şerit
 SHELL_SIDE_SHARE = 0.3      # şeridin bu kadarı ortak alandaysa o yüz ortak alana bakıyor sayılır
 
 
-def shell_wall_faces(walls, zones: list[dict], exterior: set | None) -> tuple[dict, str]:
+def floor_role(label: str) -> str:
+    """Kaba teslim hesabında katın rolü: "bodrum" (otopark — ortak alan yalnız merdiven ve önü), "cati_kati"
+    (ortak alan yok), "" (dükkân katı — koridor / lobi / merdiven). Kullanıcı kuralı, A blokları 24 Eyl 2026."""
+    from .parser.levels import floor_rank
+    r = floor_rank(label or "")
+    if r == 98:
+        return "cati_kati"
+    if r is not None and r < 0:
+        return "bodrum"
+    return ""
+
+
+def shell_wall_faces(walls, zones: list[dict], exterior: set | None, role: str = "") -> tuple[dict, str]:
     """Kaba teslim projede duvar başına sıva / boya yüz sayısı ve açıklaması.
 
     Dış duvar: iç yüzü dükkâna bakar → 0 (dış yüzü cephe sisteminde ölçülür). İç duvar: iki yanından hangisi
@@ -2345,8 +2366,13 @@ def shell_wall_faces(walls, zones: list[dict], exterior: set | None) -> tuple[di
     from shapely.geometry import Polygon
     from shapely.ops import unary_union
     ext = exterior or set()
+    if role == "cati_kati":
+        return {e.id: 0 for e in walls}, "dükkânlar kaba teslim: çatı katında ortak alan yok — iç sıva / boya yazılmadı"
     ortak = [Polygon(z["points"]).buffer(0) for z in zones if z.get("kind") == "ortak" and len(z.get("points") or []) >= 3]
     ortak_u = unary_union(ortak) if ortak else None
+    # Ortak alan tam mı? Dükkân katında koridor / lobi alan çizgisi yoksa yalnız merdivenler bilinir; koridora bakan
+    # duvar bilinmez — 0 yazmak koridoru yok saymaktır. O katta iç duvar en az 1 yüz (tahmin) sayılır.
+    tam = role == "bodrum" or any(z.get("source", "alan_cizgisi") == "alan_cizgisi" for z in zones if z.get("kind") == "ortak")
     out: dict[int, int] = {}
     for e in walls:
         if e.id in ext:
@@ -2368,11 +2394,14 @@ def shell_wall_faces(walls, zones: list[dict], exterior: set | None) -> tuple[di
             serit = translate(g, sgn * nx * half, sgn * ny * half).difference(g)
             if serit.area > 0 and serit.intersection(ortak_u).area >= SHELL_SIDE_SHARE * serit.area:
                 yuz += 1
-        out[e.id] = yuz
+        out[e.id] = yuz if tam else max(yuz, 1)
     n_ext = sum(1 for e in walls if e.id in ext)
     if ortak_u is None:
         note = (f"dükkânlar kaba teslim: dış duvar iç yüzü kiracı işi ({n_ext} dış duvar 0 yüz); ortak alan sınırı "
                 "çizimde yok, iç duvarlar 1 yüz (çekirdek) TAHMİN")
+    elif not tam:
+        note = ("dükkânlar kaba teslim: koridor / lobi sınırı çizimde yok — merdiven duvarları çizimden, öteki iç "
+                "duvarlar 1 yüz TAHMİN; dış duvar iç yüzü kiracı işi")
     else:
         n_ortak = sum(1 for v in out.values() if v > 0)
         note = (f"dükkânlar kaba teslim: yalnız ortak alana (lobi / koridor / merdiven) bakan yüzler — "
