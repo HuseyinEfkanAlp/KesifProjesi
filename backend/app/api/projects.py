@@ -86,7 +86,7 @@ def project_out(p: Project, session: Session) -> dict:
     from ..services import project_blocks
     pb = project_blocks(p, ds)
     check = plan_check(ds, p.plan_set, pb["blocks"], pb["missing"])
-    from ..services import storey_heights
+    from ..services import project_usage, storey_heights
     sh = storey_heights(p, ds)
     return {**p.model_dump(), "drawing_count": n,
             "levels": {"levels": sh["levels"], "heights": sh["heights"], "effective": sh["effective"], "source": sh["source"],
@@ -94,6 +94,7 @@ def project_out(p: Project, session: Session) -> dict:
             "rebar_ratios": {**DEFAULT_REBAR_RATIOS, **(p.rebar_ratios or {})},
             "params": project_params(p),
             "blocks_detected": pb,
+            "usage": project_usage(ds),
             "plan_check": {"missing_required": check["missing_required"], "present": check["present"],
                            "total_required": check["total_required"], "complete": check["complete"],
                            "warnings": check["warnings"]}}

@@ -19,6 +19,7 @@ from .db import DATA_DIR
 from .parser.layer_profile import (DEFAULT_DISCIPLINE, MAPPED_DISCIPLINE, REBAR_DISCIPLINE, STANDARD_DISCIPLINE, STRUCTURAL_TYPES,
                                    TYPE_DISCIPLINE, LayerProfile)
 from .parser.rebar_tables import REBAR_TARGET_BY_PLAN, TARGET_WORDS, kot_from_label, rebar_target_for
+from .parser.usage import floor_usage
 from .parser.materials import merge_materials
 from .parser.blocks import covered_by as block_parts
 from .parser.rebar_mix import layer_verdict as rebar_layer_verdict
@@ -187,6 +188,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.spaces = result.spaces or []
     drawing.hatches = result.hatches or {}
     drawing.zones = result.zones or []
+    drawing.usage = result.usage or {}
     drawing.levels = [float(v) for v in (result.levels or [])]
     drawing.kot = result.kot
     drawing.level_offset = result.level_offset
@@ -795,7 +797,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
         if duvarlar:
             # sıva / boya yüzü duvar başına: dış duvar yalnız içeriden (quantity/boq.wall_faces)
             entry["exterior_walls"] = exterior_wall_ids(elements, d.spaces, duvarlar)
-            if tenant_shell_on(params):
+            if tenant_shell_on(params) and shell_floor(d):
                 entry["wall_faces"], entry["wall_faces_note"] = shell_wall_faces(duvarlar, d.zones or [], entry["exterior_walls"],
                                                                                  floor_role(d.label or ""))
         if d.discipline in (STANDARD_DISCIPLINE, MAPPED_DISCIPLINE):
@@ -1991,8 +1993,11 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
         kullanilan: set[int] = set()
         from .parser.blocks import parts_of
         from .parser.levels import floor_rank
+        tam_katlar = full_finish_floors(drawings)          # karma yapı: konut / ofis / otel katları tam teslim
         for d in drawings:
             if d.plan_type not in ("mim_kat_plani", "") or d.discipline not in ("architectural",):
+                continue
+            if not shell_floor(d):
                 continue
             rol = floor_role(d.label or "")
             if rol == "cati_kati":
@@ -2016,12 +2021,17 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                 bloktan += a
             else:
                 zonesuz.append(d.label or d.filename)
-        if ortak_alan > 0:
-            add("TAVAN_SIVA_BOYA", "", ortak_alan, "dükkânlar kaba teslim: yalnız ortak alanların (lobi / koridor / merdiven) "
-                                                   "tavanı — alan çizgili bölgelerden, mimarın ortak alan bloklarından ve merdivenlerden"
-                                                   + (f"; {bloktan:,.0f} m²'si lobi / koridor bloklarından" if bloktan else "")
-                                                   + (f"; {tahmini:,.0f} m²'si merdiven önü sahanlık kabulüyle TAHMİN" if tahmini else "")
-                                                   + "; bodrumda yalnız merdiven ve önü, çatı katında ortak alan yok",
+        tam = [fp for fp in fps_u if not fp["basement"] and floor_key(fp["block"], fp["drawing"]) in tam_katlar]
+        tam_alan = sum(fp["area"] * max(1, fp["storey_count"]) for fp in tam)
+        if ortak_alan + tam_alan > 0:
+            add("TAVAN_SIVA_BOYA", "", ortak_alan + tam_alan,
+                "dükkânlar kaba teslim: dükkân katlarında yalnız ortak alanların (lobi / koridor / merdiven) "
+                "tavanı — alan çizgili bölgelerden, mimarın ortak alan bloklarından ve merdivenlerden"
+                + (f"; {bloktan:,.0f} m²'si lobi / koridor bloklarından" if bloktan else "")
+                + (f"; {tahmini:,.0f} m²'si merdiven önü sahanlık kabulüyle TAHMİN" if tahmini else "")
+                + "; bodrumda yalnız merdiven ve önü, çatı katında ortak alan yok"
+                + (f"; konut / ofis / otel katları tam teslim: {tam_alan:,.0f} m² kat oturumundan ("
+                   + ", ".join(fp["drawing"] for fp in tam[:4]) + ("…" if len(tam) > 4 else "") + ")" if tam_alan else ""),
                 "tavan", "rooms")
         if zonesuz:
             ask("ortak_alan_sinir", f"Dükkânlar kaba teslim: {len(zonesuz)} dükkân katı planında koridor / lobi "
@@ -2030,9 +2040,12 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                                     "ortak alanı elle girin.")
         floor = 0.0          # kat oturumundan tavan türetilmez
     elif not str(params.get("tenant_shell") if params.get("tenant_shell") is not None else "").strip() and any(
-            z.get("kind") == "dukkan" for d in drawings for z in (d.zones or [])):
-        ask("kiraci_kaba_teslim", "Çizimde dükkân / bağımsız bölüm alanları var: dükkânlar kaba teslim mi? (Öyleyse dükkân içi "
-                                  "sıva, boya, tavan ve döşeme kiracı işidir ve keşiften çıkar.) Proje ayarlarından seçin.")
+            floor_usage(d.usage, d.zones)[0] == "ticari" for d in drawings if d.discipline == "architectural"):
+        dk = [d.label or d.filename for d in drawings
+              if d.discipline == "architectural" and floor_usage(d.usage, d.zones)[0] == "ticari"]
+        ask("kiraci_kaba_teslim", f"Çizimde dükkân / mağaza katları var ({', '.join(dk[:4])}{'…' if len(dk) > 4 else ''}): "
+                                  "dükkânlar kaba teslim mi? (Öyleyse dükkân içi sıva, boya, tavan ve döşeme kiracı işidir "
+                                  "ve keşiften çıkar; konut / ofis katları etkilenmez.) Proje ayarlarından seçin.")
     if floor > 0 and "tavan_siva_boya" not in kinds:
         above = [f for f in fps_u if not f["basement"]]
         src = ", ".join(f"{fp['drawing']} {fp['area']:,.0f} m²" for fp in above[:4]) + ("…" if len(above) > 4 else "")
@@ -2359,6 +2372,51 @@ def tenant_shell_on(params: dict) -> bool:
 # yüz kiracının işidir. Duvarın iki yanındaki şerit ortak alan çokgenleriyle kesiştirilir.
 SHELL_SIDE_REACH = 0.5      # m — duvar yüzünden içeri bakılan şerit
 SHELL_SIDE_SHARE = 0.3      # şeridin bu kadarı ortak alandaysa o yüz ortak alana bakıyor sayılır
+
+
+def floor_key(block: str, label: str) -> tuple | None:
+    """Katın kimliği blok içinde: (blok, kat sırası) — statik kalıp planı ile mimari planı eşleştirmek için."""
+    from .parser.blocks import normalize
+    from .parser.levels import floor_rank
+    r = floor_rank(label or "")
+    if r is None:
+        k = kot_from_label(label or "")
+        if k is None:
+            return None
+        return (normalize(block or ""), "kot", round(float(k), 2))
+    return (normalize(block or ""), "sira", r)
+
+
+def shell_floor(d: Drawing) -> bool:
+    """Kaba teslim kuralı bu paftanın katına uygulanır mı: dükkân katı ya da kullanımı belirsiz kat (eski
+    davranış). Daire / ofis / otel yazıları taşıyan kat tam teslimdir (parser/usage.py)."""
+    from .parser.usage import SHELL_KINDS, floor_usage
+    return floor_usage(d.usage, d.zones)[0] in SHELL_KINDS
+
+
+def full_finish_floors(drawings: list[Drawing]) -> set:
+    """Kaba teslim projede tam teslim edilen katların anahtarları (konut / ofis / otel / sosyal)."""
+    return {k for d in drawings if d.discipline == "architectural" and not shell_floor(d)
+            for k in [floor_key(d.block, d.label or "")] if k is not None}
+
+
+def project_usage(drawings: list[Drawing]) -> dict:
+    """Projenin kullanım özeti: kat başına tür + gerekçe, ve tek satırlık özet ("Ticari: Zemin · Konut: 1.–4. kat")."""
+    from .parser.usage import KIND_LABEL, floor_usage
+    katlar = []
+    for d in drawings:
+        if d.discipline != "architectural" or d.plan_type not in ("mim_kat_plani", ""):
+            continue
+        tur, neden = floor_usage(d.usage, d.zones)
+        katlar.append({"drawing_id": d.id, "label": d.label or d.filename, "block": d.block or "", "usage": tur,
+                       "usage_label": KIND_LABEL[tur], "reason": neden})
+    turler: dict[str, list[str]] = {}
+    for k in katlar:
+        if k["usage"]:
+            turler.setdefault(k["usage"], []).append(k["label"])
+    ozet = " · ".join(f"{KIND_LABEL[t]}: {len(ls)} kat" for t, ls in turler.items())
+    return {"floors": katlar, "kinds": sorted(turler), "summary": ozet,
+            "mixed": len(set(turler) - {"sosyal"}) > 1}
 
 
 def floor_role(label: str) -> str:

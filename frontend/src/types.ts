@@ -147,6 +147,9 @@ export interface Project {
   blocks?: string[]                // kullanıcı düzeltmesi; boş = çizimden okunan liste geçerli
   /** Çizimden okunan blok bilgisi: kapsam, vaziyette görülenler, planı yüklenmemişler */
   blocks_detected?: { blocks: string[]; site: string[]; missing: string[]; source: 'cizim' | 'elle' }
+  // Kat kat kullanım türü (parser/usage.py): dükkân / konut / otel / ofis — kaba teslim yalnız dükkân katlarına
+  usage?: { floors: { drawing_id: number; label: string; block: string; usage: string; usage_label: string; reason: string }[]
+            kinds: string[]; summary: string; mixed: boolean }
   id: number
   name: string
   description: string

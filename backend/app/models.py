@@ -133,6 +133,9 @@ class Drawing(SQLModel, table=True):
     # (ISO, "2025-11-21"); yoksa boş ve yükleme sırası esas alınır.
     superseded_by: int | None = None
     revision: str = ""
+    # Kullanım kanıtı (parser/usage.py): {"ticari": {"n": 12, "ornek": ["DÜKKAN 3"]}, "konut": {...}} — katın
+    # dükkân mı daire mi olduğu; kaba teslim kuralı yalnız ticari katlara uygulanır.
+    usage: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     discipline: str = "structural"  # structural | architectural | electrical | rebar | standard | mapped
     # Aynı paftada çizilen ek sezgisel disiplinler (mimari paftada elektrik gibi); analizde ana disipline eklenir
     disciplines: list[str] = Field(default_factory=list, sa_column=Column(JSON))

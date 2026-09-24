@@ -76,6 +76,7 @@ _ADDED_COLUMNS = [
     ("project", "common_areas", "JSON"),
     ("drawing", "superseded_by", "INTEGER"),
     ("drawing", "revision", "VARCHAR DEFAULT ''"),
+    ("drawing", "usage", "JSON"),
 ]
 
 

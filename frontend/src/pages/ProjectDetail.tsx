@@ -210,6 +210,14 @@ export default function ProjectDetail() {
               onChange={(e) => setDparams({ ...dparams, tenant_shell: e.target.checked ? '1' : '0' })} />
             Dükkânlar kaba teslim (dükkân içi sıva / boya / tavan kiracı işi)
           </label>
+          {project.usage && project.usage.floors.length > 0 && (
+            <div className="muted hint" title={project.usage.floors.map((f) => `${f.label}: ${f.usage_label}${f.reason ? ` — ${f.reason}` : ''}`).join('
+')}>
+              Kullanım (plandaki yazılardan): {project.usage.summary || 'belirlenemedi'}
+              {project.usage.mixed && ' · karma yapı: kaba teslim yalnız dükkân katlarına uygulanır, konut / ofis katları tam teslim'}
+              {project.usage.floors.some((f) => !f.usage) && ` · ${project.usage.floors.filter((f) => !f.usage).length} katta işaret yok (dükkân katı sayılır)`}
+            </div>
+          )}
           <details style={{ marginTop: 8 }}>
             <summary className="muted" style={{ cursor: 'pointer' }}>Cephe, çatı, şap / kaplama, demir oranları, sarf ve fire…</summary>
             <h3>Cephe</h3>
