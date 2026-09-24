@@ -1986,7 +1986,11 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
     floor = sum(fp["area"] * max(1, fp["storey_count"]) for fp in fps_u if not fp["basement"])
     if tenant_shell_on(params) and "tavan_siva_boya" not in kinds:
         # Kaba teslim: dükkân tavanı kiracının. Yalnız çizimde sınırı olan ortak alanların tavanı.
-        ortak_alan, tahmini, zonesuz = 0.0, 0.0, []
+        ortak_alan, tahmini, bloktan, zonesuz = 0.0, 0.0, 0.0, []
+        kayit = [r for r in (project.common_areas or []) if r.get("tur") in ("lobi", "koridor")]
+        kullanilan: set[int] = set()
+        from .parser.blocks import parts_of
+        from .parser.levels import floor_rank
         for d in drawings:
             if d.plan_type not in ("mim_kat_plani", "") or d.discipline not in ("architectural",):
                 continue
@@ -1995,14 +1999,27 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                 continue                                   # çatı katında ortak alan yok
             z = [x for x in (d.zones or []) if x.get("kind") == "ortak"]
             kat = max(1, d.storey_count or 1)
+            cizgili = any(x.get("source", "alan_cizgisi") == "alan_cizgisi" for x in z)
             ortak_alan += sum(float(x.get("area") or 0) for x in z) * kat
             tahmini += sum(float(x.get("area") or 0) for x in z if x.get("estimated")) * kat
-            # dükkân katında koridor / lobi alan çizgisi yoksa ortak alan eksik kalır: sorulur (bodrumda yalnız merdiven)
-            if rol != "bodrum" and not any(x.get("source", "alan_cizgisi") == "alan_cizgisi" for x in z):
+            if cizgili or rol == "bodrum":
+                continue
+            # Alan çizgisi yok: mimarın ortak alan bloklarından (bu blok, bu kat) — "a2 blok zemin kat lobi" gibi
+            r_kat = floor_rank(d.label or "")
+            bloklar = parts_of(d.block or "")
+            bu = [i for i, r in enumerate(kayit) if i not in kullanilan and r.get("blok") in bloklar
+                  and r.get("kat") is not None and r_kat is not None and float(r["kat"]) == float(r_kat)]
+            if bu:
+                kullanilan.update(bu)
+                a = sum(float(kayit[i]["alan"]) for i in bu) * kat
+                ortak_alan += a
+                bloktan += a
+            else:
                 zonesuz.append(d.label or d.filename)
         if ortak_alan > 0:
             add("TAVAN_SIVA_BOYA", "", ortak_alan, "dükkânlar kaba teslim: yalnız ortak alanların (lobi / koridor / merdiven) "
-                                                   "tavanı — alan çizgili bölgelerden ve merdivenlerden"
+                                                   "tavanı — alan çizgili bölgelerden, mimarın ortak alan bloklarından ve merdivenlerden"
+                                                   + (f"; {bloktan:,.0f} m²'si lobi / koridor bloklarından" if bloktan else "")
                                                    + (f"; {tahmini:,.0f} m²'si merdiven önü sahanlık kabulüyle TAHMİN" if tahmini else "")
                                                    + "; bodrumda yalnız merdiven ve önü, çatı katında ortak alan yok",
                 "tavan", "rooms")

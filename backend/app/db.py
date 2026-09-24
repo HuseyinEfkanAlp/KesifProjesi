@@ -73,6 +73,7 @@ _ADDED_COLUMNS = [
     ("drawing", "hatches", "JSON"),
     ("drawing", "level_offset", "FLOAT"),
     ("drawing", "zones", "JSON"),
+    ("project", "common_areas", "JSON"),
 ]
 
 

@@ -69,6 +69,9 @@ class Project(SQLModel, table=True):
     blocks: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     # Katmanlı sistem bileşen kararları: {sistem_kodu: {bileşen_kodu: {"include": bool, "spec": str}}} (bkz. services.project_systems)
     systems: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    # Ortak alan kaydı (parser/common_areas.py): mimarın lobi / koridor / ışıklık bloklarından blok ve kat bazında
+    # alanlar. Kaba teslim projede tavan ve döşeme kaplaması buradan hesaplanır.
+    common_areas: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

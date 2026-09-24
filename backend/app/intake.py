@@ -88,7 +88,13 @@ class IntakeReport:
                 "unknown": self.unknown, "note": self.note}
 
 
-def auto_pick_sheets(scan) -> tuple[list[dict], IntakeReport]:
+# "A BLOKLAR-ZEMİN KAT PLANI": birden çok bloğu tek paftada gösteren genel plan. Projede o blokların ayrı
+# planları zaten varsa genel planın duvarları ikinci kez (ve kapsam dışı bloklarla birlikte) sayılırdı;
+# ölçülmez, ortak alanları ve notları okunur. (A blokları: birleşik dosya A1–A5'i taşıyor, keşif A1–A3.)
+MULTI_BLOCK_TITLE = re.compile(r"BLOKLAR", re.IGNORECASE)
+
+
+def auto_pick_sheets(scan, existing_blocks: set | None = None) -> tuple[list[dict], IntakeReport]:
     """Analiz edilecek paftaları seçer. Döner: seçimler (index + tanınan tip), rapor.
 
     Seçim, kullanıcıya gösterilen listedekiyle **aynı** karardır (`sheet_verdict`): arayüzde
@@ -103,6 +109,12 @@ def auto_pick_sheets(scan) -> tuple[list[dict], IntakeReport]:
         ad = sh.title if sh.titled else f"Pafta {i + 1}"
         kayit = {"index": i, "title": ad, "plan_type": v["plan_type"], "plan_type_label": v["plan_type_label"],
                  "discipline": v["discipline"], "entity_count": sh.entity_count}
+        if (v["analyze"] and existing_blocks and v["plan_type"] in ("mim_kat_plani", "mim_tavan", "mim_doseme_kaplama")
+                and MULTI_BLOCK_TITLE.search(ad)):
+            picks.append({"index": i, "plan_type": "mim_vaziyet", "discipline": PLAN_TYPE_BY_CODE["mim_vaziyet"].discipline})
+            rapor.evidence.append({**kayit, "reason": "birden çok bloğu gösteren genel plan; blokların kendi planları "
+                                                      "projede var — ölçülmez, ortak alanları ve notları okunur"})
+            continue
         if v["analyze"] and olcek[i] and olcek[i] >= GENERAL_SCALE and v["plan_type"] in ince:
             picks.append({"index": i, "plan_type": "mim_vaziyet", "discipline": PLAN_TYPE_BY_CODE["mim_vaziyet"].discipline})
             rapor.evidence.append({**kayit, "reason": f"genel ölçekli plan (1/{olcek[i]}): birden çok bloğu kapsar, aynı tipte "

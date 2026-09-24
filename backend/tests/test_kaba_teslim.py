@@ -126,3 +126,50 @@ def test_yuruyen_merdiven_adiyla_yazilir():
     ents.append(Entity("line", "THYSSENKRUPP", [(2, 3), (3, 3)]))
     z = scan_zones(Drawing("x", "m", 1.0, True, entities=ents))
     assert z and z[0]["why"].startswith("yürüyen merdiven")
+
+
+# ------------------------------------------------------------------ mimarın ortak alan blokları
+
+@pytest.mark.parametrize("ad, tur, blok, kat", [
+    ("a2 blok zemin kat lobi", "lobi", "A2", 0),
+    ("a3 1.kat lobi", "lobi", "A3", 1),
+    ("a bloklar 1. kat lobi seramik", "lobi", "", 1),       # genel: blok öbeğin yerinden bulunur
+    ("orta alan döş planı", "koridor", "", None),
+    ("a1a2 ışıklık", "isiklik", "", None),
+    ("a2 tavan çalışması_rev2", "tavan", "A2", None),
+])
+def test_ortak_alan_blok_adi(ad, tur, blok, kat):
+    from app.parser.common_areas import block_of, floor_of, kind_of
+    assert kind_of(ad) == tur and block_of(ad) == blok and floor_of(ad) == kat
+
+
+def test_bloklar_basligi_blok_planlari_varken_olculmez():
+    """A blokları birleşik dosyası A1–A5'i taşıyor; A1/A2/A3'ün kendi planları projede varken duvarları ikinci kez
+    (ve kapsam dışı A4–A5 ile) sayılırdı."""
+    from app.intake import auto_pick_sheets
+    sh = NS(index=0, title="A BLOKLAR-BİRİNCİ KAT PLANI", titles=[], layers={}, kind="plan", entity_count=5000,
+            titled=True, to_dict=lambda: {})
+    _, rapor = auto_pick_sheets(NS(sheets=[sh]), {"A1", "A2", "A3"})
+    assert rapor.picked == [] and "genel plan" in rapor.evidence[0]["reason"]
+    _, rapor = auto_pick_sheets(NS(sheets=[sh]), set())          # tek kaynaksa ölçülür
+    assert [e["index"] for e in rapor.picked] == [0]
+
+
+def test_tavan_ortak_alan_kaydindan(client):
+    """Alan çizgisi olmayan dükkân katında tavan, mimarın lobi / koridor bloklarından (blok + kat eşleşmesi)."""
+    from app import db
+    from app.models import Drawing, Project
+    from sqlmodel import Session
+    from app.services import project_boq
+    pid = client.post("/api/projects", json={"name": "AVM", "params": {"tenant_shell": 1}}).json()["id"]
+    with Session(db.engine) as s:
+        p = s.get(Project, pid)
+        p.common_areas = [{"blok": "A2", "kat": 0, "tur": "lobi", "alan": 100.0}, {"blok": "A2", "kat": 0, "tur": "koridor", "alan": 190.0},
+                          {"blok": "A2", "kat": 1, "tur": "lobi", "alan": 84.0}, {"blok": "A5", "kat": 0, "tur": "lobi", "alan": 99.0}]
+        s.add(p)
+        s.add(Drawing(project_id=pid, filename="a2.dxf", stored_path="x", label="A2 BLOK / ZEMİN KAT PLANI", block="A2",
+                      discipline="architectural", plan_type="mim_kat_plani", zones=[]))
+        s.commit()
+        tavan = [i for i in project_boq(s.get(Project, pid), s) if i.kind == "tavan_siva_boya"]
+    assert len(tavan) == 1 and tavan[0].quantity == pytest.approx(290.0)     # A2 zemin: lobi + koridor; A5 ve 1. kat değil
+    assert "bloklarından" in tavan[0].notes[0]

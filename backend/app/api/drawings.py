@@ -389,7 +389,9 @@ def upload_drawing(project_id: int, file: UploadFile = File(...), label: str = F
                 "needs_sheet_selection": True, "source": _source_out(src, scan),
                 "sheets": [_sheet_out(sh) for sh in scan.sheets],
             })
-        picks, rapor = auto_pick_sheets(scan)
+        mevcut = {d.block for d in session.exec(select(Drawing).where(Drawing.project_id == project_id)).all()
+                  if d.block and any(ch.isdigit() for ch in d.block)}
+        picks, rapor = auto_pick_sheets(scan, mevcut)
         if not picks:
             raise HTTPException(400, "Dosyada ölçülebilir plan bulunamadı: " + rapor.note)
         # Kırpma + analiz dakikalar sürüyor (177 MB'lık dosyada 6 dakika); istek içinde beklenmez.
@@ -507,6 +509,7 @@ def ingest_sheets(project: Project, src: Path, scan: SheetScan, picks: list, ses
         raise HTTPException(400, "Eklenecek pafta seçilmedi")
     if not unit_override:
         _harmonize_units(project, created, session)
+    _read_common_areas(project, src, scan, created, orig, session)
     applied = apply_titleblock(project, scan.titleblock, session)
     if applied:
         created[0].warnings = [f"Dosyanın antedinden okundu ve boş proje parametrelerine yazıldı: "
@@ -518,6 +521,25 @@ def ingest_sheets(project: Project, src: Path, scan: SheetScan, picks: list, ses
     for d in created:
         session.refresh(d)
     return created
+
+
+def _read_common_areas(project: Project, src: Path, scan: SheetScan, created: list, orig: str, session: Session) -> None:
+    """Kaynak dosyadaki ortak alan bloklarını (lobi / koridor / ışıklık) okuyup projeye yazar. Aynı dosyanın
+    eski satırları değiştirilir. Okunamazsa sessizce geçilir — ölçüm akışını durduracak bir bilgi değildir."""
+    from ..parser.common_areas import scan_common_areas
+    from ..parser.sheets import UNIT_SCALE
+    try:
+        unit = (created[0].unit if created else None) or scan.suggested_unit or "cm"
+        rows = scan_common_areas(str(src), UNIT_SCALE.get(unit, 0.01), [(sh.bbox, sh.title) for sh in scan.sheets])
+    except Exception:
+        return
+    if not rows:
+        return
+    for r in rows:
+        r["dosya"] = orig
+    project.common_areas = [r for r in (project.common_areas or []) if r.get("dosya") != orig] + rows
+    session.add(project)
+    session.commit()
 
 
 # Yükleme varsayılan olarak ARKA PLANDA analiz eder: 7 MB'lık bir aydınlatma planı bile istek
