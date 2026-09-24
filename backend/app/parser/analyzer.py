@@ -84,6 +84,7 @@ class AnalysisResult:
     ksf_height: float | None = None                            # KSF kolon / perde katman adındaki kat yüksekliği (40x40x300 -> 3,00 m)
     discipline_hints: dict = field(default_factory=dict)      # çalıştırılmayan ama katmanlarında kanıt olan disiplinler -> nesne sayısı
     hatches: dict = field(default_factory=dict)               # tarama özeti ve lejant (parser/hatches.py)
+    level_offset: float | None = None                         # yapı ±0,00'ının mutlak kotu (parantezli kot yazılarından)
 
     def by_type(self, etype: str) -> list[DetectedElement]:
         return [e for e in self.elements if e.etype == etype]
@@ -826,7 +827,7 @@ def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectP
     result = analyze_drawing(drawing, profile, params, discipline, catalog, label, defer_on_unit=defer,
                              extra_disciplines=extra_disciplines, rebar_target=rebar_target)
     scan = parse_levels([e.text for e in drawing.entities if e.kind == "text" and e.text], label)
-    result.levels, result.kot = scan.levels, scan.kot
+    result.levels, result.kot, result.level_offset = scan.levels, scan.kot, scan.offset
     if unit_override and result.suggested_unit and result.suggested_unit != drawing.unit:
         # kullanıcı (ya da pafta oylaması) birimi seçti: yazı kanıtı aksini söylese de yeniden okunmaz, yalnız not düşülür
         result.warnings = [w for w in result.warnings if "yazı yükseklikleri" not in w and "kolon etiketleri" not in w]
@@ -837,7 +838,7 @@ def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectP
         warn = [w for w in result.warnings if "kolon etiketleri" in w or "yazı yükseklikleri" in w]
         result = analyze_drawing(drawing, profile, params, discipline, catalog, label, extra_disciplines=extra_disciplines,
                                  rebar_target=rebar_target)
-        result.levels, result.kot = scan.levels, scan.kot
+        result.levels, result.kot, result.level_offset = scan.levels, scan.kot, scan.offset
         result.unit_detected = False
         result.unit_verdict = drawing.unit
         result.warnings = warn + [w for w in result.warnings if "kolon etiketleri" not in w and "yazı yükseklikleri" not in w]

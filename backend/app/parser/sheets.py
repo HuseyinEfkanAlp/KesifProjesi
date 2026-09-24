@@ -71,6 +71,12 @@ FRAME_COVERAGE_MIN = 0.5   # çerçevelerin içine düşen nesne oranı bunun al
 CLUSTER_TYPES = {"LINE", "LWPOLYLINE", "VERTEX", "TEXT", "MTEXT", "ATTRIB", "CIRCLE", "ARC", "SOLID", "TRACE",
                  "INSERT", "SPLINE", "ELLIPSE", "POINT"}
 
+# Konumu YALNIZ ilk noktası (10/20) olan nesneler. Yazıda 11/21 ikinci hizalama noktası (sola hizalı yazıda
+# çoğunlukla 0,0) ya da MTEXT'te doğrultu vektörüdür (1,0) — koordinat değildir. Kırpmada "herhangi bir noktası
+# kutudaysa" denirse bütün yazılar çizim orijinini içeren paftaya da yazılıyordu: C1 blokta 11 paftanın başlıkları
+# ve doğrama poz listesi çatı planına düştü, doğramalar iki kez sayıldı (166 yerine 332).
+ANCHOR_TYPES = {"TEXT", "MTEXT", "ATTRIB", "CIRCLE", "ARC", "INSERT", "POINT"}
+
 Bbox = tuple[float, float, float, float]   # x0, y0, x1, y1 (çizim birimi)
 
 INSUNITS_NAME = {4: "mm", 5: "cm", 6: "m"}
@@ -1255,8 +1261,11 @@ BLOCK_EXPAND_DEPTH = 4
 
 def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_ratio: float = 0.02,
                 include_blocks: bool = True, neighbors: list[Bbox] | None = None,
-                stream_min_bytes: int | None = None) -> list[int]:
+                stream_min_bytes: int | None = None, on_progress=None, total: int = 0) -> list[int]:
     """Birden çok paftayı tek geçişte kırpar; her hedef için yazılan nesne sayısını döndürür.
+
+    on_progress(oran 0–1, mesaj): uzun kırpmada ilerleme (88 MB'lık ruhsat 3 dakika sürüyor; ilerleme
+    görünmezse kullanıcı sitenin donduğunu sanar). total: dosyadaki nesne sayısı (tarama sonucundan).
 
     neighbors: dosyadaki bütün pafta çerçeveleri (kırpılmayanlar dahil); kırpma payı bunların içine taşmaz.
 
@@ -1273,9 +1282,13 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
     size = Path(src).stat().st_size
     stream_blocks = include_blocks and size > (STREAM_BLOCK_MIN_BYTES if stream_min_bytes is None else stream_min_bytes)
     ins_records: list[list[dict]] = [[] for _ in tg]   # akış genişletmesi için hedef başına INSERT kayıtları
+    seen = 0
     with _open_dxf_text(src) as f:
         for ent in _iter_entities(f):
             t = ent["t"]
+            seen += 1
+            if on_progress and total and seen % 20000 == 0:
+                on_progress(min(0.6, 0.6 * seen / total), "paftalar kesiliyor")
             if t == "__header__":
                 insunits = int(ent.get("insunits", 0) or 0)
                 continue
@@ -1327,8 +1340,9 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
             xs, ys = ent["xs"], ent["ys"]
             if not xs or not ys:
                 continue
+            ax, ay = (xs[:1], ys[:1]) if t in ANCHOR_TYPES else (xs, ys)
             for g in tg:
-                if g.inside(xs, ys):
+                if g.inside(ax, ay):
                     _write_entity(g, t, ent, xs, ys, layer)
     if stream_blocks and any(ins_records):
         try:
@@ -1337,6 +1351,8 @@ def crop_sheets(src: str | Path, targets: list[tuple[Bbox, str | Path]], margin_
             pass
     elif not stream_blocks and include_blocks and inserts_hit and size <= BLOCK_PASS_MAX_BYTES:
         # akış yolunda taramalar zaten yazıldı; bu geçiş onları ikinci kez yazardı (çift alan)
+        if on_progress:
+            on_progress(0.6, "blok içerikleri ve taramalar açılıyor (büyük dosyada birkaç dakika sürer)")
         try:
             _add_block_contents(src, tg)
         except Exception:

@@ -40,6 +40,11 @@ def _label(d: Drawing) -> str:
 
 # --------------------------------------------------------------------------------------- kat sayısı
 
+# Binanın tamamını anlatan paftalar: kat çarpanı yoktur, kat sayısı sorulmaz.
+WHOLE_BUILDING_TYPES = {"mim_cephe", "mim_dograma", "mim_prekast", "mim_kesit", "mim_detay", "mim_vaziyet", "mim_cati",
+                        "sta_temel_kalip", "sta_temel_donati", "pey_peyzaj", "alt_altyapi", "asn_asansor", "elk_kolon_sema"}
+
+
 def storey_counts(project: Project, drawings: list[Drawing]) -> dict:
     """Her paftanın temsil ettiği kat sayısı ve kaynağı.
 
@@ -57,9 +62,9 @@ def storey_counts(project: Project, drawings: list[Drawing]) -> dict:
 
     Antetteki kat adedi (`Project.titleblock`) çapraz doğrulama olarak kullanılır: çelişirse uyarı
     yazılır ama sayı değiştirilmez (antet bütün bloğu, pafta tek bloğu anlatıyor olabilir)."""
-    seviyeler = [float(v) for d in drawings for v in (d.levels or [])]
-    seviyeler += [float(d.kot) for d in drawings if d.kot is not None]
-    katlar = floor_levels(seviyeler)
+    from .parser.levels import building_datum, building_levels
+    katlar = floor_levels(building_levels(drawings))
+    datum = building_datum(drawings)
 
     per: dict[int, dict] = {}
     uyarilar: list[dict] = []
@@ -69,6 +74,11 @@ def storey_counts(project: Project, drawings: list[Drawing]) -> dict:
         elle = getattr(d, "storey_manual", None)
         if elle and int(elle) > 0:
             per[d.id] = {"value": int(elle), "source": "çizime girildi", "kind": "user", "conf": 1.0}
+            continue
+        if (getattr(d, "plan_type", "") or "") in WHOLE_BUILDING_TYPES:
+            # Görünüş, doğrama listesi, kesit, çatı planı binanın TAMAMINI anlatır: "kaç katı temsil ediyor"
+            # sorusu bunlara uygulanmaz. C1 ruhsatında doğrama listesinin 166 adedi bu yüzden "tahmin" sayılıyordu.
+            per[d.id] = {"value": 1, "kind": "whole", "conf": 1.0, "source": "bina geneli pafta — kat çarpanı uygulanmaz"}
             continue
         ad = _label(d)
         aralik = storey_span(ad)
@@ -91,7 +101,7 @@ def storey_counts(project: Project, drawings: list[Drawing]) -> dict:
         if d.discipline not in PLAN_DISCIPLINES:
             continue
         sira = floor_rank(_label(d))
-        lvl = float(d.kot) if d.kot is not None else (level_for_rank(katlar, sira) if sira is not None else None)
+        lvl = float(d.kot) if d.kot is not None else (level_for_rank(katlar, sira, datum) if sira is not None else None)
         if lvl is None:
             continue
         yakin = min(katlar, key=lambda f: abs(f - lvl)) if katlar else None

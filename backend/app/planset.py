@@ -350,6 +350,28 @@ PRODUCES: dict[str, tuple[str, ...]] = {
 KIND_FALLBACK = {"kazi": "Kazı", "grobeton": "Grobeton", "cephe_brut": "Cephe alanı"}
 
 
+def _kind_matches(kind: str, produced: tuple[str, ...]) -> bool:
+    """"duvar_ytong" imalatı "duvar"a aittir; önek eşleşmesi alt tipleri kapsar."""
+    return any(kind == p or kind.startswith(p + "_") for p in produced)
+
+
+def foreign_owner(plan_type: str, code: str) -> str:
+    """Bu kalemin asıl paftası başka bir pafta tipiyse onun adı, değilse "".
+
+    Otomatik katman eşlemesi bunu sorar: çatı planının altlığında çizilen çatı katı duvarları, görünüşteki
+    kapı sembolleri o paftanın imalatı değildir — asıl paftasında (kat planı, doğrama listesi) zaten
+    ölçülür. C1 ruhsatında çatı planı 990 m² "ytong duvar", görünüş 66 "kapı" ekliyordu.
+    Hiçbir pafta tipinin sahiplenmediği kalem (görünüşteki yağmur iniş borusu) serbesttir."""
+    kind = (code or "").lower()
+    if not plan_type or plan_type not in PRODUCES or _kind_matches(kind, PRODUCES[plan_type]):
+        return ""
+    for other, produced in PRODUCES.items():
+        pt = PLAN_TYPE_BY_CODE.get(other)
+        if other != plan_type and pt is not None and pt.analyze and _kind_matches(kind, produced):
+            return pt.label
+    return ""
+
+
 def kind_label(kind: str, catalog=None) -> str:
     """İmalat türünün okunabilir adı."""
     from .quantity.boq import KIND_META

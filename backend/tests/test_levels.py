@@ -214,3 +214,36 @@ def test_sabit_katta_fark_varsa_hala_uyarilir_ve_duzeltme_sunulur():
     issues = _storey_height_override(_proje(2.8), ds)
     assert len(issues) == 1 and issues[0]["code"] == "storey_height_override"
     assert issues[0]["fix"]["action"] == "storey_height_auto"
+
+
+def test_temel_kotu_kat_kotu_sayilmaz():
+    """C1 ruhsatı: bodrum planındaki "-3.10 Temel Alt Kot" bodrumun kat kotu sanılıyordu. Temel paftasında ise
+    temel kotu paftanın kendi kotudur (kazı derinliği ona dayanır)."""
+    from app.parser.levels import parse_levels
+    s = parse_levels(["-3.33(+0.82)", "-3.10 Temel Alt Kot", "-1.70 Temel Üst Kot"], "C1 BLOK / BODRUM KAT PLANI")
+    assert s.levels == [0.82] and s.kot is None
+    s = parse_levels(["-2.55 TEMEL ÜST KOTU"], "TEMEL KALIP PLANI")
+    assert s.kot == -2.55
+
+
+def test_vaziyet_kotlari_kat_dizisine_girmez():
+    from types import SimpleNamespace as NS
+    from app.parser.levels import building_levels, floor_levels
+    paftalar = [NS(plan_type="mim_kat_plani", levels=[0.82], kot=None), NS(plan_type="mim_kat_plani", levels=[4.15], kot=None),
+                NS(plan_type="mim_kesit", levels=[0.82, 4.15, 7.95, 11.65], kot=None),
+                NS(plan_type="mim_vaziyet", levels=[0.0, 2.5], kot=0.82)]
+    assert floor_levels(building_levels(paftalar)) == [0.82, 4.15, 7.95, 11.65]
+
+
+def test_kat_sirasi_mutlak_sistemde_sifir_kotuna_oturur():
+    """C1: ±0,00 = +4,15 (mutlak). Zemin kat 0,00'a en yakın seviyeye (bodrumun +0,82'si) oturuyordu."""
+    from types import SimpleNamespace as NS
+    from app.parser.levels import building_datum, level_for_rank
+    katlar = [0.82, 4.15, 7.95, 11.65, 14.55]
+    datum = building_datum([NS(level_offset=4.15, plan_type="mim_kat_plani"), NS(level_offset=None, plan_type="mim_kesit"),
+                            NS(level_offset=0.0, plan_type="mim_vaziyet")])
+    assert datum == 4.15
+    assert level_for_rank(katlar, 0, datum) == 4.15        # zemin
+    assert level_for_rank(katlar, -1, datum) == 0.82       # bodrum
+    assert level_for_rank(katlar, 1, datum) == 7.95        # birinci
+    assert level_for_rank([-3.0, 0.0, 3.0], 0) == 0.0      # tek sistemli projede eski davranış

@@ -300,3 +300,53 @@ def test_auto_pick_takes_evidence_sheets():
     assert {e["index"] for e in rapor.evidence} == {1, 2}      # kesit ve vaziyet KANIT olarak okunur
     assert {e["plan_type"] for e in rapor.evidence} == {"mim_kesit", "mim_vaziyet"}
     assert "kanıt için okundu" in rapor.note
+
+
+@pytest.mark.parametrize("akis", [False, True])
+def test_yazi_orijini_iceren_paftaya_sizmaz(tmp_path, monkeypatch, akis):
+    """Yazının 11/21 kodu (MTEXT doğrultu vektörü, TEXT ikinci hizalama noktası — çoğu zaman 0,0) koordinat
+    değildir. C1 blokta bütün yazılar orijini içeren çatı planı paftasına da yazılıyor, doğrama poz listesi iki
+    kez sayılıyordu (166 yerine 332)."""
+    from app.parser import sheets as sheetsmod
+    if akis:
+        monkeypatch.setattr(sheetsmod, "STREAM_BLOCK_MIN_BYTES", 0)
+    doc = ezdxf.new("R2010")
+    msp = doc.modelspace()
+    msp.add_line((-100, 10), (-10, 10))                       # sol pafta: orijini içerir (-200..200)
+    msp.add_line((1000, 10), (1100, 10))                      # sağ pafta
+    m = msp.add_mtext("Poz: P1 Adet: 44")
+    m.set_location((1050, 50))
+    m.dxf.text_direction = (1, 0, 0)                          # AutoCAD bunu yazar: 11/21 = (1, 0)
+    t = msp.add_text("SAĞDAKİ YAZI", height=5)
+    t.set_placement((1060, 80))
+    t.dxf.align_point = (0, 0, 0)                             # sola hizalı yazıda ikinci hizalama noktası 0,0
+    src = tmp_path / "iki.dxf"
+    doc.saveas(src)
+    sol, sag = tmp_path / "sol.dxf", tmp_path / "sag.dxf"
+    crop_sheets(src, [((-200.0, -200.0, 200.0, 200.0), sol), ((900.0, -200.0, 1300.0, 200.0), sag)])
+    yazilar = lambda p: sorted((e.dxf.text if e.dxftype() == "TEXT" else e.text)   # noqa: E731
+                               for e in ezdxf.readfile(str(p)).modelspace() if e.dxftype() in ("TEXT", "MTEXT"))
+    assert yazilar(sol) == []
+    assert yazilar(sag) == ["Poz: P1 Adet: 44", "SAĞDAKİ YAZI"]
+
+
+def test_genel_olcekli_plan_blok_plani_varken_olculmez():
+    """C1 ruhsatında "GENEL BODRUM KAT PLANI 1/500" bütün sitenin bodrumuydu (B2, P1, P2… blokları) ve C1'in
+    katı gibi ölçülmüştü. Aynı tipte daha ayrıntılı plan varsa genel plan yalnız notları için okunur."""
+    from types import SimpleNamespace as NS
+    from app.intake import auto_pick_sheets, title_scale
+
+    def sh(i, title):
+        return NS(index=i, title=title, titles=[], layers={}, kind="plan", entity_count=5000, titled=True,
+                  to_dict=lambda: {})
+
+    assert title_scale("GENEL BODRUM KAT PLANI ÖLÇEK:1/500") == 500 and title_scale("ZEMİN KAT PLANI") is None
+    scan = NS(sheets=[sh(0, "GENEL BODRUM KAT PLANI ÖLÇEK:1/500"), sh(1, "C1 BLOK / BODRUM KAT PLANI ÖLÇEK:1/100")])
+    picks, rapor = auto_pick_sheets(scan)
+    assert [e["index"] for e in rapor.picked] == [1]
+    genel = rapor.evidence[0]
+    assert genel["index"] == 0 and "1/500" in genel["reason"]
+    assert next(p for p in picks if p["index"] == 0)["plan_type"] == "mim_vaziyet"     # ölçülmez
+    # tek kaynak genel planse ölçülür: başka yerden gelmeyecek
+    picks, rapor = auto_pick_sheets(NS(sheets=[sh(0, "GENEL BODRUM KAT PLANI ÖLÇEK:1/500")]))
+    assert [e["index"] for e in rapor.picked] == [0]

@@ -45,6 +45,7 @@ class DetectParams:
     # eşlemeli paftada otomatik eşleme: proje parametresiyle seçilen sistem (roof_system / facade_system) katman önerisini yönlendirir
     system_overrides: dict = field(default_factory=dict)   # {"CATI_KIREMIT": "TERAS_CATI", "MANTOLAMA": "KOMPOZIT_PANEL"}
     auto_map: bool = True                   # eşlemeli paftada katman adından otomatik eşleme (kesit / detay paftalarında kapalı)
+    plan_type: str = ""                     # paftanın tipi: otomatik eşleme başka paftanın imalatını burada saymaz (planset.foreign_owner)
     # elektrik
     elec_label_unit_scale: float = 0.001    # etiketlerdeki sayılar mm
     elec_label_radius: float = 0.8          # hat etiketi arama yarıçapı (m); etiket hattın hemen üstünde yazılır

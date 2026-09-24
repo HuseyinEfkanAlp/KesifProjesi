@@ -18,6 +18,7 @@ Bu modül saf karardır (dosya açmaz, veritabanına yazmaz); yürütme `api/dra
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from .planset import PLAN_TYPE_BY_CODE, resolve_plan
@@ -33,6 +34,17 @@ NOT_A_PLAN = {"antet", "bos"}
 # Tipi tanınmayan bir pafta bu kadar nesne taşıyorsa "atlanan artık" değil, bildirilmesi gereken
 # bir kapsam boşluğudur: kullanıcı neyin ölçülmediğini görmeli.
 REPORT_MIN_ENTITIES = 500
+# Genel ölçek: 1/500 ve daha kaba ölçekteki kat planı bütün sitenin planıdır (C1 ruhsatında "GENEL BODRUM KAT
+# PLANI 1/500" B2, P1, P2… bloklarını da taşıyordu ve C1'in katı gibi ölçülmüştü). Aynı tipte daha ince ölçekli
+# bir plan varsa genel plan ölçülmez, vaziyet planı gibi yalnız notları okunur. Yoksa ölçülür (başka kaynak yok).
+GENERAL_SCALE = 500
+_SCALE = re.compile(r"\b1\s*[/:]\s*(\d{2,5})\b")
+
+
+def title_scale(title: str) -> int | None:
+    """Başlıktaki ölçeğin paydası: "ÖLÇEK:1/500" → 500; yazmıyorsa None."""
+    m = _SCALE.search(title or "")
+    return int(m.group(1)) if m else None
 
 
 def sheet_verdict(sh) -> dict:
@@ -83,11 +95,19 @@ def auto_pick_sheets(scan) -> tuple[list[dict], IntakeReport]:
     işaretli gelen paftalar neyse sistem de onları alır."""
     picks: list[dict] = []
     rapor = IntakeReport()
+    verdicts = [sheet_verdict(sh) for sh in scan.sheets]
+    olcek = [title_scale(sh.title if sh.titled else "") for sh in scan.sheets]
+    ince = {v["plan_type"] for v, o in zip(verdicts, olcek) if v["analyze"] and (o is None or o < GENERAL_SCALE)}
     for i, sh in enumerate(scan.sheets):
-        v = sheet_verdict(sh)
+        v = verdicts[i]
         ad = sh.title if sh.titled else f"Pafta {i + 1}"
         kayit = {"index": i, "title": ad, "plan_type": v["plan_type"], "plan_type_label": v["plan_type_label"],
                  "discipline": v["discipline"], "entity_count": sh.entity_count}
+        if v["analyze"] and olcek[i] and olcek[i] >= GENERAL_SCALE and v["plan_type"] in ince:
+            picks.append({"index": i, "plan_type": "mim_vaziyet", "discipline": PLAN_TYPE_BY_CODE["mim_vaziyet"].discipline})
+            rapor.evidence.append({**kayit, "reason": f"genel ölçekli plan (1/{olcek[i]}): birden çok bloğu kapsar, aynı tipte "
+                                                      "daha ayrıntılı plan var — ölçülmez, notları okunur"})
+            continue
         if v["analyze"] or sh.kind == "cetvel":
             picks.append({"index": i, "plan_type": v["plan_type"], "discipline": v["discipline"]})
             rapor.picked.append(kayit)

@@ -21,6 +21,12 @@ _KOT_WORD = re.compile(r"\bKOT(U|LARI)?\b|S[Iİ]FIR\s*KOT|D[OÖ][SŞ]EME\s*KOT|L
 _EXCLUDE = re.compile(r"PEYZAJ|ZEM[Iİ]N\s*KOT|TABAN\s*KOT|SU\s*KOT|KAZI", re.IGNORECASE)
 # yapı sıfır kotu referansı bütün paftalarda yazılır; paftanın kat kotu için oy sayılmaz
 _DATUM = re.compile(r"S[Iİ]FIR\s*KOT", re.IGNORECASE)
+# Temel kotları ("-3.10 Temel Alt Kot", "-1.70 Temel Üst Kot") kat seviyesi değildir. C1 ruhsatında bodrum
+# planındaki temel alt kotu bodrumun kat kotu sanıldı (-3.10; gerçeği -3.33) ve üstelik parantezli
+# yazılardan bulunan mutlak sisteme çevrilmeden kaldı. Kazı derinliği için ayrıca okunur (materials).
+_FOUNDATION = re.compile(r"TEMEL|GROBETON|RADYE", re.IGNORECASE)
+# Arazi / yol kotu taşıyan paftalar: binanın katlarını anlatmaz (bkz. building_levels)
+SITE_PLAN_TYPES = {"mim_vaziyet", "pey_peyzaj", "alt_altyapi"}
 MIN_STOREY = 2.0
 LEVEL_RANGE = (-30.0, 200.0)
 
@@ -43,6 +49,33 @@ class LevelScan:
         return [round(b - a, 2) for a, b in zip(self.floors, self.floors[1:])]
 
 
+def building_levels(drawings) -> list[float]:
+    """Projedeki paftaların kot seviyeleri (kat kotları dahil) — vaziyet / peyzaj / altyapı paftaları hariç.
+
+    Vaziyet planı yol, arazi ve bina ±0,00'ının araziye oturduğu kotu taşır; binanın kat dizisine
+    karışırsa sahte katlar doğar (C1: vaziyetten gelen +0,82 ve genel bodrum planının +2,50'si kat
+    yüksekliklerini 2,50 / 5,45 m yaptı; gerçeği 3,33 / 3,80 / 3,70 / 2,90)."""
+    out: list[float] = []
+    for d in drawings:
+        if (getattr(d, "plan_type", "") or "") in SITE_PLAN_TYPES:
+            continue
+        out.extend(float(v) for v in (d.levels or []))
+        if d.kot is not None:
+            out.append(float(d.kot))
+    return out
+
+
+def building_datum(drawings) -> float:
+    """Yapı ±0,00'ının mutlak sistemdeki kotu: paftaların parantezli kot yazılarından (medyan); yoksa 0.
+
+    Kotlar mutlak sisteme çevrildiği için "zemin kat = 0,00'a en yakın seviye" artık doğru değildir:
+    C1 ruhsatında ±0,00 = +4,15 idi ve 0,00'a en yakın seviye bodrumun +0,82'siydi — zemin kat bodrumun
+    kotunu, birinci kat zeminin kotunu aldı."""
+    vals = sorted(float(d.level_offset) for d in drawings
+                  if getattr(d, "level_offset", None) is not None and (getattr(d, "plan_type", "") or "") not in SITE_PLAN_TYPES)
+    return vals[len(vals) // 2] if vals else 0.0
+
+
 def floor_levels(levels: list[float], min_gap: float = MIN_STOREY) -> list[float]:
     out: list[float] = []
     for v in sorted(set(round(x, 2) for x in levels)):
@@ -55,9 +88,10 @@ def parse_levels(texts: list[str], label: str = "") -> LevelScan:
     pairs: list[tuple[float, float]] = []
     bare: list[tuple[float, bool, bool]] = []   # (değer, KOT sözcüğü var mı, işaretli mi)
     kot_votes: Counter = Counter()
+    temel_disi = not _FOUNDATION.search(label or "")   # temel paftasının kendi kotu temel kotudur
     for raw in texts:
         t = (raw or "").replace("\\P", " ").strip()
-        if not t:
+        if not t or (temel_disi and _FOUNDATION.search(t)):
             continue
         m = _PAIR.match(t)
         has_kot = bool(_KOT_WORD.search(t)) and not _EXCLUDE.search(t)
@@ -252,7 +286,7 @@ def is_typical_floor(label: str) -> bool:
     return bool(TYPICAL_FLOOR.search(_title_upper(label)))
 
 
-def level_for_rank(floors: list[float], rank: float) -> float | None:
+def level_for_rank(floors: list[float], rank: float, datum: float = 0.0) -> float | None:
     """Kat sirasini (floor_rank) kot dizisindeki seviyeye oturtur. Bilinmiyorsa None.
 
     Sira mutlak okunur: zemin (0) = dizide 0,00'a en yakin kot, 1. kat onun bir ustu, 1. bodrum bir alti.
@@ -260,7 +294,7 @@ def level_for_rank(floors: list[float], rank: float) -> float | None:
     "1. kat" planlari birbirinin kotunu alir.)"""
     if not floors:
         return None
-    zero = min(range(len(floors)), key=lambda i: abs(floors[i]))
+    zero = min(range(len(floors)), key=lambda i: abs(floors[i] - datum))   # zemin: ±0,00'a (mutlak: datum) en yakın
     if rank == -100:                       # temel: en alt seviye
         return floors[0]
     if rank == 99:                         # cati: en ust kat seviyesi

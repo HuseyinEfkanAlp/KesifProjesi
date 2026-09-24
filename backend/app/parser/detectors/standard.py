@@ -314,6 +314,7 @@ def detect_mapped(drawing: Drawing, profile, catalog: Catalog, params: DetectPar
     info: dict = {}
     mapped_n = 0
     auto: list[tuple[str, str, int]] = []
+    skipped_foreign: list[str] = []      # asıl paftası başka olan kalemler (çatı altlığındaki duvar, görünüşteki kapı)
     for layer in drawing.layers:
         if not drawing.by_layer(layer):
             continue
@@ -337,7 +338,13 @@ def detect_mapped(drawing: Drawing, profile, catalog: Catalog, params: DetectPar
                            "suggested": None}
         else:
             sug = suggest_item(layer, catalog, materials, getattr(params, "system_overrides", None))
-            if sug and getattr(params, "auto_map", True) and not profile.is_ignored(layer) and catalog.get(sug):
+            from ...planset import foreign_owner
+            sahibi = foreign_owner(getattr(params, "plan_type", ""), sug) if sug else ""
+            if sahibi and getattr(params, "auto_map", True) and not profile.is_ignored(layer):
+                info[layer] = {"code": None, "measure": None, "label": None, "suggested": sug,
+                               "foreign": f"{catalog.get(sug).name if catalog.get(sug) else sug} → {sahibi} paftasında ölçülür"}
+                skipped_foreign.append(f"{layer} ({catalog.get(sug).name if catalog.get(sug) else sug} — {sahibi})")
+            elif sug and getattr(params, "auto_map", True) and not profile.is_ignored(layer) and catalog.get(sug):
                 # katman adından güçlü öneri: onay beklemeden ölçülür (düşük güven, "otomatik" işaretli);
                 # kullanıcı Elemanlar sayfasında değiştirir ya da "ölçülmez" yapar
                 item = catalog.get(sug)
@@ -361,7 +368,10 @@ def detect_mapped(drawing: Drawing, profile, catalog: Catalog, params: DetectPar
         warnings.append(f"Katman adından otomatik eşlendi ({len(auto)} katman): "
                         + "; ".join(f"{l} → {n} ({k})" for l, n, k in auto[:8]) + ("…" if len(auto) > 8 else "")
                         + ". Yanlışsa Elemanlar sayfasında değiştirin ya da 'ölçülmez' yapın.")
-    elif not mapped_n:
+    if skipped_foreign:
+        warnings.append("Bu paftada ölçülmedi, asıl paftasında ölçülüyor (ikinci kez sayılmasın): " + "; ".join(skipped_foreign[:6])
+                        + ("…" if len(skipped_foreign) > 6 else "") + ". Bu paftada ayrıca ölçülmesi gerekiyorsa katmanı elle eşleyin.")
+    if not auto and not mapped_n:
         warnings.append("Katman eşlenmedi ve katman adlarından kalem tanınamadı: Elemanlar sayfasında katmanları katalog kalemine atayın.")
     return elements, warnings, info
 

@@ -60,7 +60,15 @@ class Drawing:
     warnings: list[str] = field(default_factory=list)
 
     def by_layer(self, layer: str) -> list[Entity]:
-        return [e for e in self.entities if e.layer == layer]
+        # Katman dizini bir kez kurulur: katman başına bütün listeyi taramak, 230 bin nesneli ve yüzlerce
+        # katmanlı bir paftada (C1 genel bodrum planı) analizi dakikalarca uzatıyordu. Liste değişirse yenilenir.
+        idx = self.__dict__.get("_layer_idx")
+        if idx is None or self.__dict__.get("_layer_n") != len(self.entities):
+            idx = {}
+            for e in self.entities:
+                idx.setdefault(e.layer, []).append(e)
+            self.__dict__["_layer_idx"], self.__dict__["_layer_n"] = idx, len(self.entities)
+        return list(idx.get(layer, ()))
 
     def texts(self) -> list[Entity]:
         return [e for e in self.entities if e.kind == "text"]

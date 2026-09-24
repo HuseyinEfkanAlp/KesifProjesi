@@ -133,6 +133,9 @@ class Drawing(SQLModel, table=True):
     # Kot yazılarından seviyeler (mutlak sistem) ve bu paftanın kat kotu (parser/levels.py) — kat yüksekliği bunlardan türer
     levels: list[float] = Field(default_factory=list, sa_column=Column(JSON))
     kot: float | None = None
+    # Parantezli kot yazılarından ('+0.00 (+4.15)') bulunan iki sistem arası fark: yapı ±0,00'ının mutlak kotu.
+    # Kat sırasını kot dizisine oturtmanın sıfır noktasıdır (parser/levels.level_for_rank).
+    level_offset: float | None = None
     plan_type: str = ""             # plan seti tipi (sta_kat_kalip, elk_tava, mim_tavan ...; bkz. planset.py)
     storey_count: int = 1           # bu planın temsil ettiği kat sayısı (derive.storey_counts yazar)
     # Kullanıcının bu pafta için açıkça girdiği kat sayısı; None = çizimden türetilsin. Asla ezilmez.

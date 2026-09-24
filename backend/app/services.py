@@ -92,6 +92,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     from .planset import PLAN_TYPE_BY_CODE
     params = detect_params(project, session)
     pt = PLAN_TYPE_BY_CODE.get(drawing.plan_type or "")
+    params.plan_type = drawing.plan_type or ""
     if pt is not None and not pt.analyze:
         params.auto_map = False    # kesit / detay / şema paftası: kesitteki duvar taraması plan duvarı değildir, otomatik eşleme yok
     result = analyze_file(drawing.stored_path, project_profile(project), params,
@@ -187,6 +188,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.hatches = result.hatches or {}
     drawing.levels = [float(v) for v in (result.levels or [])]
     drawing.kot = result.kot
+    drawing.level_offset = result.level_offset
     drawing.analyzed_at = datetime.utcnow()
     session.add(drawing)
     session.commit()
@@ -214,12 +216,9 @@ def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
     kanıt (elle girilen ya da form varsayılanı tek sayı) yerine güçlü kanıt (çizimin kendi kotları)
     kullanılır. Paftaya **elle girilmiş** yükseklik her zaman üstündür; kullanıcının pafta bazındaki
     kararı değişmez."""
-    from .parser.levels import floor_levels, floor_rank, level_for_rank
-    all_levels = [float(v) for d in drawings for v in (d.levels or [])]
-    for d in drawings:
-        if d.kot is not None:
-            all_levels.append(float(d.kot))
-    floors = floor_levels(all_levels)
+    from .parser.levels import building_datum, building_levels, floor_levels, floor_rank, level_for_rank
+    floors = floor_levels(building_levels(drawings))
+    datum = building_datum(drawings)
     diffs = [round(b - a, 2) for a, b in zip(floors, floors[1:])]
     med = round(sorted(diffs)[len(diffs) // 2], 2) if diffs else None
     def above(level: float) -> float | None:
@@ -269,7 +268,7 @@ def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
     # kotu olmayan planlar: kat sırasına göre seviye dizisine oturtulur (aynı sıradaki planlar aynı seviyeyi alır)
     ranked.sort(key=lambda t: t[0])
     for r, d in ranked:
-        lvl = level_for_rank(floors, r)
+        lvl = level_for_rank(floors, r, datum)
         nxt = above(lvl) if lvl is not None else None
         if lvl is not None and nxt is not None:
             per[d.id] = {"height": round(nxt - lvl, 2), "source": f"kat sırası → kot {lvl:+.2f} → {nxt:+.2f}", "kot": lvl}
@@ -2848,8 +2847,8 @@ def project_quality(project, session, items, summary, cost=None, cost_required: 
     sc = storey_counts(project, drawings)
     for d in drawings:
         v = sc["per_drawing"].get(d.id)
-        if not v or PLAN_TYPE_BY_CODE.get(d.plan_type) and not PLAN_TYPE_BY_CODE[d.plan_type].analyze:
-            continue
+        if not v or v["kind"] == "whole" or PLAN_TYPE_BY_CODE.get(d.plan_type) and not PLAN_TYPE_BY_CODE[d.plan_type].analyze:
+            continue     # bina geneli paftada (görünüş, doğrama listesi) kat sayısı bir varsayım değildir
         quality["assumptions"].append({"key": f"storey_count:{d.id}",
                                        "label": f"{d.label or d.filename} — temsil ettiği kat sayısı",
                                        "value": v["value"], "source": v["kind"], "detail": v["source"]})

@@ -461,7 +461,7 @@ def source_sheets(token: str):
 
 def ingest_sheets(project: Project, src: Path, scan: SheetScan, picks: list, session: Session,
                  orig: str, unit_override: str | None = None, discipline: str = AUTO_DISCIPLINE,
-                 plan_type: str | None = None, whole: bool = False) -> list[Drawing]:
+                 plan_type: str | None = None, whole: bool = False, on_progress=None) -> list[Drawing]:
     """Seçilen paftaları kırpar, her birini ayrı çizim olarak ekleyip analiz eder.
 
     Hem otomatik yükleme (`upload_drawing`) hem uzman seçimi (`drawings_from_source`) buraya gelir;
@@ -488,8 +488,13 @@ def ingest_sheets(project: Project, src: Path, scan: SheetScan, picks: list, ses
         dest = UPLOAD_DIR / f"{project_id}_{uuid.uuid4().hex[:8]}_pafta{pick.index + 1}_{orig}"
         jobs.append((sheet, pick, dest))
     if jobs:
-        counts = crop_sheets(src, [(sh.bbox, dest) for sh, _, dest in jobs], neighbors=[sh.bbox for sh in scan.sheets])
-        for (sheet, pick, dest), n in zip(jobs, counts):
+        # ilerleme: kırpma %0–45, paftaların analizi %45–95 (on_progress oran 0–1 alır)
+        kirp = (lambda r, m: on_progress(0.45 * r, m)) if on_progress else None
+        counts = crop_sheets(src, [(sh.bbox, dest) for sh, _, dest in jobs], neighbors=[sh.bbox for sh in scan.sheets],
+                             on_progress=kirp, total=scan.entity_count)
+        for i, ((sheet, pick, dest), n) in enumerate(zip(jobs, counts)):
+            if on_progress:
+                on_progress(0.45 + 0.5 * i / len(jobs), f"{i + 1}/{len(jobs)} pafta analiz ediliyor: {sheet.title}")
             if n == 0:
                 dest.unlink(missing_ok=True)
                 continue
@@ -539,7 +544,8 @@ def _run_upload(session: Session, job) -> dict:
                 for x in d["picks"]]
     progress(session, job.id, 5.0, f"{len(secimler)} pafta kırpılıp analiz edilecek")
     created = ingest_sheets(project, src, scan, secimler, session, d["file_label"],
-                            d.get("unit_override"), d["discipline"], d.get("plan_type"))
+                            d.get("unit_override"), d["discipline"], d.get("plan_type"),
+                            on_progress=lambda r, m: progress(session, job.id, 5.0 + 90.0 * r, m))
     return {"drawings": [drawing_out(x, session) for x in created], "intake": d.get("intake") or {}}
 
 

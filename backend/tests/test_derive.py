@@ -117,3 +117,18 @@ def test_antetle_celisen_kat_sayisi_bildirilir():
     sc = storey_counts(p, ds)
     w = [x for x in sc["warnings"] if x["code"] == "storey_count_titleblock"]
     assert w and "8 kat" in w[0]["message"]
+
+
+def test_bina_geneli_paftada_kat_sayisi_sorulmaz():
+    """Doğrama listesi, görünüş, kesit binanın tamamını anlatır. C1 ruhsatında doğrama listesinin adetleri
+    "kat sayısı çıkarılamadı" diye tahmin kademesine düşüyordu."""
+    from types import SimpleNamespace as NS
+    from app.derive import storey_counts
+    prj = NS(params={}, titleblock={}, storey_height=0)
+    d = [NS(id=1, label="C1 BLOK DOĞRAMALAR", filename="", plan_type="mim_dograma", discipline="mapped",
+            levels=[], kot=None, level_offset=None, storey_manual=None),
+         NS(id=2, label="ZEMİN KAT PLANI", filename="", plan_type="mim_kat_plani", discipline="architectural",
+            levels=[0.0], kot=0.0, level_offset=None, storey_manual=None)]
+    sc = storey_counts(prj, d)
+    assert sc["per_drawing"][1]["kind"] == "whole" and sc["per_drawing"][1]["value"] == 1
+    assert not any(w["code"] == "storey_count_default" for w in sc["warnings"])

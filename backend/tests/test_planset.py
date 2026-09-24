@@ -209,3 +209,15 @@ def test_generic_storey_upload_is_structural(client, storey_dxf):
     assert response.status_code == 201
     assert response.json()["discipline"] == "structural"
     assert response.json()["element_count"] == 8
+
+
+def test_baska_paftanin_imalati_otomatik_olculmez():
+    """Çatı planının altlığındaki duvar, görünüşteki kapı sembolü: asıl paftasında ölçülür (C1 ruhsatında çatı
+    planı 990 m² ytong duvar, görünüş 66 kapı ekliyordu). Kimsenin sahiplenmediği kalem serbest."""
+    from app.planset import foreign_owner
+    assert foreign_owner("mim_cati", "DUVAR_YTONG") == "Mimari kat planları"
+    assert foreign_owner("mim_cephe", "KAPI")
+    assert foreign_owner("mim_cati", "CATI_KIREMIT") == ""       # kendi imalatı
+    assert foreign_owner("mim_cephe", "CATI_DERE") == ""         # hiçbir paftanın değil: serbest
+    assert foreign_owner("mim_kat_plani", "DUVAR_YTONG") == ""
+    assert foreign_owner("", "DUVAR_YTONG") == ""                # tipi bilinmeyen paftada kısıt yok
