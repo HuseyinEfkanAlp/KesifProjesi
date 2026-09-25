@@ -42,7 +42,7 @@ CODEPAGES = {"ANSI_1254": "cp1254", "ANSI_1252": "cp1252", "ANSI_1250": "cp1250"
 BIG_FILE_BYTES = 40 * 1024 * 1024
 # Pafta tespiti değiştikçe artar: eski .sheets.json önbellekleri yok sayılır (yoksa kullanıcı eski, bozuk
 # pafta listesini görmeye devam eder).
-SCAN_VERSION = 5
+SCAN_VERSION = 6
 MIN_SHEET_ENTITIES = 5
 # "Boş çerçeve": başlığı olduğu için listeye giren ama ölçülecek hiçbir şey taşımayan kutu — ruhsat antedinin
 # çerçevesi, şablondan kalmış boş pafta ("VAZİYET PLANI" yazan 11 nesnelik kutu). Eşik **göreli**: aynı
@@ -877,6 +877,26 @@ def segmentation_score(sheets: list[Sheet]) -> float:
     return titled - 0.3 * blank - 2.0 * over
 
 
+# Ölçülen eleman türleri: paftada bunlardan birinin katmanı varsa nesnesi az da olsa pafta boş değildir. Radye temel
+# planı tek bir çokgenden ibaret olabilir (altın bina 2: 8 nesne, "boş çerçeve" sanılıp radye 123 m³ kayboluyordu).
+_OLCULEN = {"foundation", "slab", "column", "shear_wall", "beam", "wall"}
+
+
+def _olculur(sh) -> bool:
+    """Başlığı bir temel / kalıp / kat planı olan ve ölçülen bir elemanın katmanını taşıyan pafta, nesnesi az da olsa
+    boş değildir. Şablondan kalmış "VAZİYET PLANI" kutusu başlığı yüzünden yine boş sayılır."""
+    from ..planset import classify_title
+    from .layer_profile import LayerProfile
+    t = classify_title(sh.title or "") if sh.title else None
+    if t is None or t.code not in ("sta_temel_kalip", "sta_kat_kalip", "mim_kat_plani"):
+        return False
+    prof = _olculur.__dict__.setdefault("prof", LayerProfile())
+    for name, cnt in (sh.layers or {}).items():
+        if cnt and any(prof.classify(name, d) in _OLCULEN for d in ("structural", "architectural")):
+            return True
+    return False
+
+
 def classify_sheets(sheets: list[Sheet], antet_pts: list[tuple[float, float]] | None = None,
                     cetvel_pts: list[tuple[float, float]] | None = None) -> None:
     """Her paftanın içerik türünü belirler: "plan" | "antet" | "bos" (yerinde yazar).
@@ -891,7 +911,7 @@ def classify_sheets(sheets: list[Sheet], antet_pts: list[tuple[float, float]] | 
     for sh, n in zip(sheets, geo):
         x0, y0, x1, y1 = sh.bbox
         labels = sum(1 for x, y in pts if x0 <= x <= x1 and y0 <= y <= y1)
-        bos = ref > 0 and n < BOS_SHARE * ref and n < BOS_MAX_ENTITIES
+        bos = ref > 0 and n < BOS_SHARE * ref and n < BOS_MAX_ENTITIES and not _olculur(sh)
         rows = sum(1 for x, y in (cetvel_pts or []) if x0 <= x <= x1 and y0 <= y <= y1)
         if labels >= ANTET_MIN_LABELS and (ref <= 0 or n < ref):
             sh.kind = "antet"

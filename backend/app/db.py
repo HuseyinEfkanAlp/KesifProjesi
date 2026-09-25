@@ -68,6 +68,7 @@ _ADDED_COLUMNS = [
     ("project", "slab_manual", "FLOAT"),
     ("project", "titleblock", "JSON"),
     ("project", "company_id", "INTEGER"),
+    ("drawing", "column_marks", "JSON"),
     ("priceitem", "equipment_price", "FLOAT DEFAULT 0"),
     ("priceitem", "subcontract_price", "FLOAT DEFAULT 0"),
     ("drawing", "hatches", "JSON"),

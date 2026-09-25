@@ -32,7 +32,9 @@ from .loader import Drawing, Point
 from .schedules import parse_room_area
 
 # Bir GRUP (bağımsız bölüm) adı: içindeki odalar onun mahalleridir.
-GROUP_WORDS = re.compile(r"DA[İI]RE|D[AÜU]KKAN|MA[GĞ]AZA|OF[İI]S|B[ÜU]RO|BLOK|V[İI]LLA|BA[GĞ]IMSIZ\s*B[ÖO]L[ÜU]M"
+# "DAİRE" yalnız kendi başına bir sözcükse bağımsız bölümdür: "KAZAN DAİRESİ", "YÖNETİM DAİRESİ" bir mahaldir
+# (eskiden grup sayılıyor, sıva / tavan hesabından düşüyordu).
+GROUP_WORDS = re.compile(r"DA[İI]RE(?![A-ZÇĞİÖŞÜa-zçğıöşü])|D[AÜU]KKAN|MA[GĞ]AZA|OF[İI]S|B[ÜU]RO|BLOK|V[İI]LLA|BA[GĞ]IMSIZ\s*B[ÖO]L[ÜU]M"
                          r"|[İI][SŞ]\s*YER[İI]|UN[İI]TE|[ÜU]N[İI]TE", re.IGNORECASE)
 # Mahal adı sayılmayan yazılar: kotlar, poz / eleman adları, ölçüler, pafta işaretleri.
 _NOT_NAME = re.compile(r"^[+\-±]?\d[\d.,/xX*\s-]*$|^[SKPDTM]\d+([./]\d+)?$|KES[İI]T|DETAY|PLAN\b|[ÖO]L[ÇC]EK|KOT"
@@ -339,7 +341,7 @@ def detect_spaces(drawing: Drawing, layers: list[str], snap_tol: float = DOOR_GA
     # yüz bulunamasa da mahal yazıları mahaldir (alanı yazıdan): aşağıdaki "çokgensiz etiket" adımı onları ekler
     faces.sort(key=lambda p: -p.area)
     spaces = [Space(index=i, name="", kind="mahal", points=[(x, y) for x, y in p.exterior.coords[:-1]],
-                    area=p.area, perimeter=p.exterior.length)
+                    area=p.area, perimeter=p.length)   # iç halkalar dahil: serbest kolonun yüzleri de sıvanır
               for i, p in enumerate(faces)]
     # 1) hiyerarşi: bir alanı içeren en küçük alan onun üstüdür
     for i, p in enumerate(faces):

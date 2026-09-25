@@ -234,6 +234,9 @@ def floor_rank(label: str) -> float | None:
         return None
     if "TEMEL" in n or re.search(r"\bTEM\b", n):
         return -100
+    span = storey_span(label or "")
+    if span:
+        return span[0]       # "1.-2. NORMAL KAT": tip plan en alttaki katından başlar (eskiden son sayı, 2, alınıyordu)
     m = re.search(r"\b[A-Z]{2,4}[-_ ](\d{1,2})\b", n)     # STA-03, MIM-00: dosya adındaki kat numarası
     if m and not re.search(r"\d\s*\.\s*(KAT|NORMAL)", n):
         return int(m.group(1))
@@ -242,7 +245,7 @@ def floor_rank(label: str) -> float | None:
         return -int(m.group(1))
     if "BODRUM" in n:
         return -1
-    if re.search(r"CATI\s*(KATI|ARASI)|TERAS\s*KATI", n):
+    if re.search(r"CATI\s*(KAT|ARASI)|TERAS\s*KAT", n):     # "ÇATI KAT PLANI" yazımı da çatı katıdır (Yat Kulübü)
         return 98            # çatı katı: çatının ALTINDAKİ kat (en üst seviye çatının kendisidir)
     if "CATI" in n or "TERAS" in n:
         return 99

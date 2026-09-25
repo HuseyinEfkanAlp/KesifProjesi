@@ -231,7 +231,8 @@ def golden_truth() -> dict:
     """Doğru metraj, elle (formülle). Kurallar Türkiye metraj alışkanlığıdır:
       - kolon betonu döşeme altına (H − d); kiriş yüzden yüze, döşeme altı gövde; döşeme tam alan
       - duvar örgüsü kolonlar arası net boy × kiriş altı yükseklik (H − kiriş), boşluklar düşülür
-      - iç sıva / boya duvar yüzü × tavana kadar (H − d): iç duvar 2 yüz, dış duvar 1 yüz, boşluklar düşülür
+      - iç sıva / boya mahal çevresi × tavana kadar (H − d), odaya taşan kolon yüzleri dahil; boşluk iç kapıda
+        iki yüz, dış doğramada bir yüz düşülür
       - tavan = mahal alanları; şap tüm mahaller; kaplama kuru mahaller; ıslak hacim ayrı (seramik)
       - geri dolgu = kazı − temel betonu − grobeton"""
     from shapely.geometry import box
@@ -254,7 +255,9 @@ def golden_truth() -> dict:
         t["tugla"] += int_len * orgu_h - int_op
         t["kapi"] += sum(1 for o in ops if o[4] == "K")
         t["pencere"] += sum(1 for o in ops if o[4] == "P")
-        t["siva"] += (ext_len * yuzey_h - ext_op) + 2 * (int_len * yuzey_h - int_op)
+        # sıva: mahal çevresi × tavana kadar (odaya taşan kolon yüzleri dahil) − boşluk (iç kapı iki yüz, dış bir yüz)
+        cevre = sum(room_polygon(*bb).length for _n, bb in ROOMS) * m
+        t["siva"] += cevre * yuzey_h - ext_op - 2 * int_op
         for name, bb in ROOMS:
             a = box(*bb).area * m * m                          # mahal: duvar yüzleri arası
             t["tavan"] += a

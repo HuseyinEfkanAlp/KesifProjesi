@@ -23,6 +23,7 @@ DEFAULT_WIDTH = {"door": 0.90, "window": 1.20}
 # durduğunu bilemez: ekleme noktası kasanın köşesindeyse kesilmiş duvarın ucuna değer ve açıklık iki kez düşülür.
 # Kutu, ekleme noktasına değen (ya da bu kadar yakın) çizgilerden başlayıp birbirine değenlerle büyütülerek kurulur.
 MARKER_SEED = 0.25          # m — ekleme noktasına bu kadar yakın çizgi bloğun parçasıdır
+MARKER_SEED_CENTER = 0.65  # m — ortadan yerleşmiş blokta en geniş kapının yarısı + pay
 MARKER_TOUCH = 0.01         # m — birbirine değen çizgiler aynı bloktandır
 MARKER_MAX = 4.0            # m — bundan büyük öbek tek bir doğrama değildir (komşu blokları yutmasın)
 
@@ -41,7 +42,13 @@ def _marker_extent(drawing: Drawing, ins: Entity, cache: dict) -> list | None:
     if tree is None:
         return None
     p = SPoint(ins.points[0])
-    comp = {int(i) for i in tree.query(p.buffer(MARKER_SEED)) if geoms[int(i)].distance(p) <= MARKER_SEED}
+    comp: set[int] = set()
+    # blok köşeden (kasa) ya da ORTADAN yerleşmiş olabilir: ortadan yerleşen kapıda ekleme noktasında çizgi yoktur,
+    # kanat yarım genişlik ötededir — yakından başlanır, bulunamazsa yarım kapı genişliği kadar aranır
+    for r in (MARKER_SEED, MARKER_SEED_CENTER):
+        comp = {int(i) for i in tree.query(p.buffer(r)) if geoms[int(i)].distance(p) <= r}
+        if comp:
+            break
     frontier = list(comp)
     while frontier:
         g = geoms[frontier.pop()]

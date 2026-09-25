@@ -22,7 +22,7 @@ from .detectors.openings import detect_openings, detect_poz_openings, poz_catalo
 from .detectors.shear_walls import detect_shear_walls
 from .detectors.slabs import detect_slabs
 from .detectors.standard import assign_roof_zones, detect_mapped, detect_standard, standard_layers
-from .detectors.walls import detect_walls, mark_walls_on_axes
+from .detectors.walls import deduct_wall_crossings, detect_walls, mark_walls_on_axes
 from .merge import merge_area_elements
 from .geometry import polygon_area
 from shapely.geometry import Point as SPoint, Polygon
@@ -87,6 +87,7 @@ class AnalysisResult:
     hatches: dict = field(default_factory=dict)               # tarama özeti ve lejant (parser/hatches.py)
     level_offset: float | None = None                         # yapı ±0,00'ının mutlak kotu (parantezli kot yazılarından)
     zones: list = field(default_factory=list)                 # alan çizgili bölgeler (parser/zones.py)
+    column_marks: list = field(default_factory=list)          # mimari plandaki kolon izi merkezleri (m)
     usage: dict = field(default_factory=dict)                 # kullanım kanıtı: dükkân / konut / otel … (parser/usage.py)
 
     def by_type(self, etype: str) -> list[DetectedElement]:
@@ -212,6 +213,19 @@ def _structural(drawing: Drawing, layers_by_type: dict[str, list[str]], params: 
             result.warnings.append(f"{len(gap)} döşeme etiketi kapalı bir hücreye düşmedi (kiriş / perde çizgileri hücreyi kapatmıyor): "
                                    + _names(gap) + " — bu döşemeleri elle ekleyin")
     return columns + walls + beams + slabs + founds + parapets
+
+
+def _centroids(polys: list) -> list[list[float]]:
+    """Kolon izlerinin tekil merkezleri (aynı kolon çokgen + tarama olarak iki kez çizilir)."""
+    out: list[list[float]] = []
+    for pts in polys:
+        if len(pts) < 3:
+            continue
+        cx = sum(p[0] for p in pts) / len(pts)
+        cy = sum(p[1] for p in pts) / len(pts)
+        if not any(abs(cx - a) < 0.05 and abs(cy - b) < 0.05 for a, b in out):
+            out.append([round(cx, 3), round(cy, 3)])
+    return out
 
 
 def _labels_inside(labels: LabelIndex, elements: list[DetectedElement], type_hint: str, names: set[str]) -> set[str]:
@@ -483,6 +497,11 @@ def space_layers(drawing: Drawing, profile, catalog: Catalog | None) -> list[str
             continue
         if profile is not None and profile.classify(name, "architectural") in ("wall", "column", "shear_wall"):
             out.add(name)
+        # Mimari plandaki kolon / perde izleri statik katman adıyla çizilir (S-COLS, KOLON) ve mimari sınıflamada
+        # yok sayılır; ama duvar kolonun yüzünde biter. Kolon sınıra girmezse uçları kapatılmış duvarlar kolonda
+        # açık kalır, hiçbir mahal kapanmaz (altın bina 2: 10 odanın hiçbiri ölçülmedi).
+        elif profile is not None and profile.classify(name, "structural") in ("column", "shear_wall"):
+            out.add(name)
     return sorted(out)
 
 
@@ -547,6 +566,25 @@ def room_rows(drawing: Drawing) -> list[dict]:
         if f["screed_cm"] > 0 and not rows[i].get("screed_cm"):
             rows[i]["screed_cm"], rows[i]["screed_note"] = f["screed_cm"], f["text"]
     return rows
+
+
+def reconcile_rooms(rows: list[dict], spaces: list[dict]) -> list[dict]:
+    """Mahal yazıları (ad + alan) aynı ise tek satıra iner — aynı yazı iki kez yazılmış olabilir. Ama planda o ad
+    ve alanla AYRI AYRI ölçülmüş mahaller varsa (aynı kattaki iki eş daire: iki "SALON 21,82 m²") hepsi sayılır:
+    satır, ölçülen mahal sayısı kadar çoğaltılır. Altın bina 2'de 10 odanın 5'i kayboluyordu (tavan, şap −%63)."""
+    if not rows or not spaces:
+        return rows
+    from collections import Counter
+    olculen = Counter((str(sp.get("name") or ""), round(float(sp.get("label_area") or 0.0), 2)) for sp in spaces
+                      if sp.get("area_source") == "drawing" and sp.get("kind") == "mahal")
+    out: list[dict] = []
+    for r in rows:
+        k = (str(r.get("name") or ""), round(float(r.get("area_m2") or 0.0), 2))
+        n = max(1, olculen.get(k, 0))
+        out.append(r)
+        for _ in range(n - 1):
+            out.append({**r, "copy": True})
+    return out
 
 
 def _nearest_room(npt, rows: list[dict], pts: list) -> int | None:
@@ -641,6 +679,7 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
     result.blocks_seen, result.own_block = scan_blocks(drawing), own_block_of_drawing(drawing)
     result.rooms = room_rows(drawing)
     result.spaces, sp_warns = scan_spaces(drawing, profile, catalog)
+    result.rooms = reconcile_rooms(result.rooms, result.spaces)
     result.warnings.extend(sp_warns)
     if suggested and suggested != drawing.unit:
         result.suggested_unit = suggested
@@ -770,8 +809,10 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
         # duvarın kendi katmanı kolon / perde deseni de taşıyabilir: duvar kendi çizgisiyle kesilmez
         col_layers = {n for n in drawing.layers if profile.classify(n, "structural") in ("column", "shear_wall")}             - {w.layer for w in walls}
         cols = [e.points for e in drawing.entities if e.layer in col_layers and e.is_closed_polygon]
+        result.column_marks = _centroids(cols)
         cols += [w.points for w in walls if w.meta.get("perde") and len(w.points or []) >= 3]
         n_axis = mark_walls_on_axes([w for w in walls if not w.meta.get("perde")], cols)
+        deduct_wall_crossings(walls, cols)
         if n_axis:
             result.warnings.append(f"{n_axis} duvar kolon aksında (kiriş altında): yüksekliği kiriş altına kadar alınır; "
                                    "kolonun içinden geçen boy duvardan düşüldü.")
@@ -825,6 +866,14 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
 
     # mahal SINIRLARI: duvar / kolon / perde katmanlarından kapalı alanlar (keşif mahal bazında dökülsün)
     result.spaces, sp_warns = scan_spaces(drawing, profile, catalog)
+    if result.rooms:
+        once = len(result.rooms)
+        result.rooms = reconcile_rooms(result.rooms, result.spaces)
+        if len(result.rooms) != once:
+            result.warnings = [w for w in result.warnings if not w.startswith("Mahal alanı yazıları okundu:")]
+            result.warnings.append(f"Mahal alanı yazıları okundu: {len(result.rooms)} mahal, "
+                                   f"{sum(r['area_m2'] for r in result.rooms):,.0f} m² (aynı ad ve alanlı "
+                                   f"{len(result.rooms) - once} mahal planda ayrıca ölçüldü, ayrı sayıldı)")
     result.warnings.extend(sp_warns)
     result.discipline_hints = {} if is_std else discipline_hints(drawing, profile, discs)
     for d, n in result.discipline_hints.items():

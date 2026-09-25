@@ -188,6 +188,7 @@ def analyze_and_store(drawing: Drawing, project: Project, session: Session) -> D
     drawing.spaces = result.spaces or []
     drawing.hatches = result.hatches or {}
     drawing.zones = result.zones or []
+    drawing.column_marks = getattr(result, "column_marks", None) or []
     drawing.usage = result.usage or {}
     drawing.levels = [float(v) for v in (result.levels or [])]
     drawing.kot = result.kot
@@ -204,6 +205,10 @@ DEFAULT_STOREY_HEIGHT = 3.0
 
 # Çizimden okunan kat yükseklikleri bu kadar ayrışıyorsa bina değişken katlıdır ve tek bir H uygulanamaz.
 VARIABLE_HEIGHT_SPREAD = 0.30
+
+
+# Kotu katın tavan döşemesi olan pafta tipleri (kalıp planı ve döşeme donatısı döşemeyi gösterir)
+SLAB_TOP_TYPES = {"sta_kat_kalip", "sta_doseme_donati"}
 
 
 def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
@@ -228,10 +233,29 @@ def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
         ups = [f for f in floors if f > level + 0.5]
         return ups[0] if ups else None
 
+    def below(level: float) -> float | None:
+        downs = [f for f in floors if f < level - 0.5]
+        return downs[-1] if downs else None
+
+    def kot_height(d) -> tuple[float, str] | None:
+        """Paftanın kotundan kat yüksekliği. Kalıp / döşeme donatı planının kotu o katın TAVAN döşemesidir
+        (kolonlar altındaki kattadır): yükseklik alttaki seviyeden bu kota. "BODRUM KAT KALIP PLANI ±0,00" bodrumun
+        tavanıdır; üstteki kata göre ölçülünce bodrum 3,20 yerine 3,00 çıkıyordu (altın bina 2: kolon −%1,7,
+        perde −%6,6). "+15.65 KOTU KALIP PLANI" (A blokları) çatı döşemesidir, üstünde kat yoktur. Mimari planın
+        kotu ise katın tabanıdır: yükseklik bu kottan bir üst seviyeye."""
+        k = float(d.kot)
+        if (getattr(d, "plan_type", "") or "") in SLAB_TOP_TYPES:
+            alt = below(k)
+            if alt is not None:
+                return round(k - alt, 2), f"kot {alt:+.2f} → {k:+.2f} (kalıp planı kotu tavan döşemesi)"
+            return None
+        nxt = above(k)
+        return (round(nxt - k, 2), f"kot {k:+.2f} → {nxt:+.2f}") if nxt is not None else None
+
     # Çizimin kendi kanıtı: her paftanın kotundan çıkan yükseklik. Proje H'sinden bağımsız hesaplanır,
     # çünkü kararı veren şey bu dizinin kendi içinde değişip değişmediğidir.
-    kot_h = [round(above(float(d.kot)) - float(d.kot), 2) for d in drawings
-             if d.kot is not None and above(float(d.kot)) is not None]
+    kot_h = [h for d in drawings if d.kot is not None for h in [kot_height(d)] if h is not None]
+    kot_h = [h for h, _ in kot_h]
     degisken = bool(kot_h) and (max(kot_h) - min(kot_h)) > VARIABLE_HEIGHT_SPREAD
     proje_h = float(project.storey_height or 0)
     # Tek bir H, kat kat değişen bir binada hiçbir katta doğru olamaz: çizimin kotları esas alınır.
@@ -259,9 +283,9 @@ def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
             per[d.id] = {"height": proje_h, "source": "projeye girildi", "kot": d.kot}
             continue
         if d.kot is not None:
-            nxt = above(float(d.kot))
-            if nxt is not None:
-                per[d.id] = {"height": round(nxt - float(d.kot), 2), "source": f"kot {d.kot:+.2f} → {nxt:+.2f}", "kot": d.kot}
+            kh = kot_height(d)
+            if kh is not None:
+                per[d.id] = {"height": kh[0], "source": kh[1], "kot": d.kot}
                 continue
         r = floor_rank(d.label or d.filename)
         if r is not None and d.discipline in (DEFAULT_DISCIPLINE, "architectural", "electrical", "mechanical"):
@@ -435,6 +459,86 @@ def dominant_slab_thickness(elements) -> float | None:
         if acc >= total / 2:
             return t
     return pairs[-1][0]
+
+
+def _centerline(points):
+    """Dikdörtgen elemanın (duvar / kiriş) uzun eksenindeki orta çizgisi."""
+    from shapely.geometry import LineString, Polygon
+    try:
+        r = Polygon(points).minimum_rotated_rectangle
+        c = list(r.exterior.coords)[:4]
+    except Exception:
+        return None
+    import math as _m
+    if _m.dist(c[0], c[1]) >= _m.dist(c[1], c[2]):
+        a, b = ((c[0][0] + c[3][0]) / 2, (c[0][1] + c[3][1]) / 2), ((c[1][0] + c[2][0]) / 2, (c[1][1] + c[2][1]) / 2)
+    else:
+        a, b = ((c[0][0] + c[1][0]) / 2, (c[0][1] + c[1][1]) / 2), ((c[3][0] + c[2][0]) / 2, (c[3][1] + c[2][1]) / 2)
+    return LineString([a, b])
+
+
+def _column_shift(marks, cols) -> tuple[float, float] | None:
+    """Mimari paftanın kolon izlerini kalıp planının kolonlarına oturtan öteleme (mimari → kalıp). Aday kaymalar
+    bütün çiftlerden oylanır; en az yarısı (≥3) 10 cm içinde eşleşmiyorsa hizalanamaz (None)."""
+    from collections import Counter
+    if len(marks) < 3 or len(cols) < 3:
+        return None
+    oy = Counter((round((kx - ax) / 0.05) * 0.05, round((ky - ay) / 0.05) * 0.05) for ax, ay in marks for kx, ky in cols)
+    for (dx, dy), _n in oy.most_common(5):
+        tut = sum(1 for ax, ay in marks if any(abs(ax + dx - kx) < 0.1 and abs(ay + dy - ky) < 0.1 for kx, ky in cols))
+        if tut >= max(3, 0.5 * len(marks)):
+            return dx, dy
+    return None
+
+
+def wall_beam_depths(arch: Drawing, walls, structural: list[tuple[Drawing, list]], sh: dict) -> dict[int, float]:
+    """Duvar kimliği → üstündeki kirişin yüksekliği (m); kiriş yoksa 0. Hizalanamazsa boş sözlük (baskın kiriş).
+
+    Tek bir "baskın kiriş yüksekliği" farklı kesitli binada yanlıştır: altın bina 2'de çevre kirişi 60, iç kiriş 50 cm;
+    dış duvarların örgüsü 10 cm fazla çıkıyordu. Mimari paftanın kolon izleri aynı katın kalıp planındaki kolonlara
+    oturtulur (öteleme), her duvarın ekseni kalıp planındaki kirişlerle çakıştırılır. Aynı kat: kalıp planının kotu
+    katın tavanıdır (mimari kot + kat yüksekliği)."""
+    from shapely.geometry import Polygon
+    from shapely.affinity import translate
+    marks = arch.column_marks or []
+    per = sh["per_drawing"].get(arch.id, {})
+    if not marks or per.get("kot") is None or not walls:
+        return {}
+    H = float(per.get("height") or 0.0)
+    tavanlar = [float(per["kot"]) + H * (i + 1) for i in range(max(1, arch.storey_count or 1))]   # tip plan: her katın tavanı
+
+    def ortak(k) -> bool:
+        pk = sh["per_drawing"].get(k.id, {})
+        if pk.get("kot") is None:
+            return False
+        tepeler = [float(pk["kot"]) + float(pk.get("height") or H) * j for j in range(max(1, k.storey_count or 1))]
+        return any(abs(a - b) < 0.3 for a in tavanlar for b in tepeler)
+    aday = [(k, els) for k, els in structural if ortak(k)]
+    for k, els in aday:
+        cols = [(sum(p[0] for p in e.points) / len(e.points), sum(p[1] for p in e.points) / len(e.points))
+                for e in els if e.etype == "column" and e.points and len(e.points) >= 3]
+        kay = _column_shift(marks, cols)
+        if kay is None:
+            continue
+        beams = []
+        for e in els:
+            if e.etype == "beam" and e.h and e.points and len(e.points) >= 3:
+                try:
+                    beams.append((Polygon(e.points).buffer(0.05), float(e.h)))
+                except Exception:
+                    continue
+        out: dict[int, float] = {}
+        for w in walls:
+            cl = _centerline(w.points) if w.points and len(w.points) >= 3 else None
+            if cl is None or cl.length <= 0:
+                continue
+            cl = translate(cl, *kay)
+            # duvar kolonun içinden geçip birkaç açıklık boyunca uzanabilir: üstündeki kirişlerin örttüğü toplam boy
+            ortu = [(g.intersection(cl).length, h) for g, h in beams]
+            ortu = [(L, h) for L, h in ortu if L > 0.05]
+            out[w.id] = max(h for _L, h in ortu) if sum(L for L, _h in ortu) >= 0.5 * cl.length else 0.0
+        return out
+    return {}
 
 
 def dominant_beam_depth(elements) -> float | None:
@@ -787,6 +891,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
               if (sc["per_drawing"].get(d.id, {}).get("kind") == "default" and (sc["total"] or 1) > 1)}
     # kiriş hattındaki duvar kiriş altına kadar örülür: kiriş yüksekliği statik paftalardaki baskın kiriş
     beam_depth = dominant_beam_depth([e for d in drawings for e in els_by_id.get(d.id, []) if e.etype == "beam"])
+    kalip = [(d, els_by_id.get(d.id, [])) for d in drawings if (d.plan_type or "") in SLAB_TOP_TYPES]
     for d in drawings:
         elements = els_by_id[d.id]
         entry = {"id": d.id, "label": d.label or d.filename, "storey_count": d.storey_count,
@@ -796,6 +901,12 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
                  "storey_risk": d.id in riskli,
                  "elements": [ksf_entry(e) for e in elements]}
         duvarlar = [e for e in elements if _measures_wall(e, catalog)]
+        if duvarlar and d.column_marks:
+            entry["wall_beam"] = wall_beam_depths(d, duvarlar, kalip, sh)
+        mahaller = [sp for sp in (d.spaces or []) if sp.get("kind") == "mahal"]
+        if duvarlar and mahaller and all(sp.get("area_source") == "drawing" and sp.get("perimeter") for sp in mahaller):
+            # bütün mahallerin sınırı ölçüldüyse sıva / boya mahal çevresinden (boq.architectural_items)
+            entry["room_perimeter"] = round(sum(float(sp["perimeter"]) for sp in mahaller), 3)
         if duvarlar:
             # sıva / boya yüzü duvar başına: dış duvar yalnız içeriden (quantity/boq.wall_faces)
             entry["exterior_walls"] = exterior_wall_ids(elements, d.spaces, duvarlar)
@@ -1846,7 +1957,7 @@ def finish_area(project: Project, drawings: list[Drawing], params: dict | None =
         mult = max(1, d.storey_count or 1)
         # Konut / ofis / otel katı tam teslimdir: salon, oda, mutfak… hepsinin şapı ve kaplaması yapılır. Tür listesi
         # (lobi, koridor…) yalnız dükkân katları ve kullanımı belirsiz katlar içindir (kiracı işi ayrımı).
-        full = d.discipline == "architectural" and bool(d.usage) and not shell_floor(d)
+        full = full_finish_floor(d, drawings)
         for r in (d.rooms or []):
             name = str(r.get("name") or "")
             name_n = normalize_title(name)
@@ -1856,7 +1967,7 @@ def finish_area(project: Project, drawings: list[Drawing], params: dict | None =
             # ayrı kuralla (seramik + sürme izolasyon) gelir: çift saymamak için yalnız açıkça istenirse girer.
             by_note = bool(note) or bool(r.get("screed_cm"))
             by_kw = any(k and k in name_n for k in kws_n)
-            hit = by_kw or ((by_note or full) and not wet)
+            hit = by_kw or ((by_note or full) and not wet and not OTOPARK.search(name))
             area = float(r.get("area_m2") or 0.0) * mult
             row = {"drawing": d.label or d.filename, "name": r.get("name"), "area_m2": r.get("area_m2", 0.0), "included": hit,
                    "finish": note.get("code", ""), "finish_spec": note.get("spec", ""), "finish_text": note.get("text", ""),
@@ -2054,17 +2165,24 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
         ask("kiraci_kaba_teslim", f"Çizimde dükkân / mağaza katları var ({', '.join(dk[:4])}{'…' if len(dk) > 4 else ''}): "
                                   "dükkânlar kaba teslim mi? (Öyleyse dükkân içi sıva, boya, tavan ve döşeme kiracı işidir "
                                   "ve keşiften çıkar; konut / ofis katları etkilenmez.) Proje ayarlarından seçin.")
+    bodrum_dahil = False
     # Tam teslim katların mahalleri ölçüldüyse tavan mahal alanlarının toplamıdır: kat oturumu duvar kalınlıklarını
     # da içerir (altın bina: 127 m² oturum, 109 m² mahal — tavan %16 fazla çıkıyordu).
     if floor > 0 and "tavan_siva_boya" not in kinds:
         oda_alan, oda_kat = 0.0, 0
+        from .parser.levels import floor_rank as _rank
         for d in drawings:
-            if d.discipline != "architectural" or not d.rooms or not d.usage or shell_floor(d):
+            if not d.rooms or not full_finish_floor(d, drawings):
                 continue
             k = max(1, d.storey_count or 1)
-            oda_alan += sum(float(r.get("area_m2") or 0.0) for r in d.rooms) * k
-            oda_kat += k
+            oda_alan += sum(float(r.get("area_m2") or 0.0) for r in d.rooms if not OTOPARK.search(str(r.get("name") or ""))) * k
+            if (_rank(d.label or "") or 0) < 0:
+                bodrum_dahil = True          # bodrum kat oturum sayısına girmez, mahalleri tavana girer
+            else:
+                oda_kat += k
         kat_sayisi = sum(max(1, fp["storey_count"]) for fp in fps_u if not fp["basement"])
+        if not (oda_alan > 0 and oda_kat >= kat_sayisi):
+            bodrum_dahil = False
         if oda_alan > 0 and oda_kat >= kat_sayisi:
             add("TAVAN_SIVA_BOYA", "", oda_alan, f"mahal alanlarının toplamı ({oda_kat} kat, planda ölçülen mahaller)",
                 "tavan", "rooms")
@@ -2074,25 +2192,36 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
         src = ", ".join(f"{fp['drawing']} {fp['area']:,.0f} m²" for fp in above[:4]) + ("…" if len(above) > 4 else "")
         add("TAVAN_SIVA_BOYA", "", floor, f"kat oturumu × kat sayısı ({src}); bodrum (otopark) hariç, asma tavanlı mahalleri düşün", "tavan")
     base_area = sum(fp["area"] * max(1, fp["storey_count"]) for fp in fps_u if fp["basement"])
-    if base_area > 0 and "tavan_siva_boya" not in kinds:
+    if base_area > 0 and "tavan_siva_boya" not in kinds and not bodrum_dahil:
         ask("tavan_bodrum", f"Bodrum katlarının tavanı ({base_area:,.0f} m²) sıva-boya listesine alınmadı (otopark / depo). Gerekiyorsa elle ekleyin.", "optional")
     # ıslak hacimler: mahal adından (WC / BANYO / DUŞ / ISLAK / LAVABO / TUVALET) yer + duvar seramiği ve sürme izolasyon
     wet_rooms = []
+    kapilar: list[float] = []             # ıslak hacim başına kapı alanı (seramik kotuna kadar); None = bulunamadı
     for d in drawings:
         mult = max(1, d.storey_count or 1)
-        olcum = {(str(sp.get("name") or ""), round(float(sp.get("label_area") or 0.0), 2)): float(sp.get("perimeter") or 0.0)
-                 for sp in (d.spaces or []) if sp.get("area_source") == "drawing" and sp.get("perimeter")}
+        olcum: dict[tuple, list] = {}
+        for sp in (d.spaces or []):
+            if sp.get("area_source") == "drawing" and sp.get("perimeter"):
+                olcum.setdefault((str(sp.get("name") or ""), round(float(sp.get("label_area") or 0.0), 2)), []).append(sp)
+        kapi_els = None
         for r in (d.rooms or []):
             name = str(r.get("name") or "")
             if WET_ROOM.search(name):
                 a = float(r.get("area_m2") or 0.0)
-                wet_rooms.append((name, a, mult, olcum.get((name, round(a, 2)))))
+                eslesen = olcum.get((name, round(a, 2))) or []
+                sp = eslesen.pop(0) if eslesen else None
+                if sp is not None and kapi_els is None:
+                    kapi_els = [e for e in session.exec(select(Element).where(Element.drawing_id == d.id, Element.etype == "door"))]
+                wet_rooms.append((name, a, mult, float(sp["perimeter"]) if sp else None))
+                kapilar.append(_wet_room_doors(sp, kapi_els or [], float(params.get("wet_wall_h") or 2.2)) if sp else None)
     wet_area = sum(a * m for _, a, m, _p in wet_rooms)
     if wet_area > 0:
         wet_h = float(params.get("wet_wall_h") or 2.2)
         # çevre planda ölçülen mahal sınırından; ölçülemeyen mahalde kare varsayımı 4·√alan. Kapı 0,9 × 2,1 düşülür.
         cevre = lambda a, p: p if p else 4 * (a ** 0.5)          # noqa: E731
-        wall = sum((cevre(a, p) * wet_h - 0.9 * min(wet_h, 2.1)) * m for _, a, m, p in wet_rooms)
+        # kapı: ölçülen mahal sınırına değen kapıların kendi ölçüsü; bulunamazsa 0,90 × 2,10 varsayımı
+        wall = sum((cevre(a, p) * wet_h - (k if k is not None else 0.9 * min(wet_h, 2.1))) * m
+                   for (_, a, m, p), k in zip(wet_rooms, kapilar))
         n_olcu = sum(1 for *_x, p in wet_rooms if p)
         cevre_notu = ("çevre planda ölçülen mahal sınırından" if n_olcu == len(wet_rooms) else
                       f"çevre {n_olcu} mahalde ölçüldü, {len(wet_rooms) - n_olcu} mahalde 4·√alan varsayımı")
@@ -2424,6 +2553,49 @@ def shell_floor(d: Drawing) -> bool:
     davranış). Daire / ofis / otel yazıları taşıyan kat tam teslimdir (parser/usage.py)."""
     from .parser.usage import SHELL_KINDS, floor_usage
     return floor_usage(d.usage, d.zones)[0] in SHELL_KINDS
+
+
+def _wet_room_doors(space: dict, doors, wet_h: float) -> float | None:
+    """Islak hacim sınırına değen kapıların duvar seramiğinden düşülecek alanı (genişlik × seramik kotuna kadar)."""
+    from shapely.geometry import Point, Polygon
+    try:
+        sinir = Polygon(space.get("points") or []).exterior
+    except Exception:
+        return None
+    toplam, bulundu = 0.0, False
+    for e in doors:
+        if not e.points or not e.b:
+            continue
+        try:
+            g = Polygon(e.points) if len(e.points) >= 3 else Point(e.points[0])
+        except Exception:
+            g = None
+        if g is None or g.distance(sinir) > 0.3:
+            continue
+        toplam += float(e.b) * min(float(e.h or 2.1), wet_h)
+        bulundu = True
+    return toplam if bulundu else None
+
+
+def full_finish_floor(d: Drawing, drawings: list[Drawing]) -> bool:
+    """Bu mimari katın mahalleri tam teslim mi (şap, kaplama, tavan)? Konut / ofis / otel / sosyal katı evet. Kullanımı
+    yazmayan kat (bodrum: DEPO, KAZAN DAİRESİ, SIĞINAK) ticari katı olmayan konut / ofis projesinde de evet — o
+    binanın servis katıdır, kiracıya kaba teslim edilen dükkân değil (altın bina 2: bodrum şap / tavan eksikti).
+    Ticari ya da tamamen belirsiz projede eski kural: yalnız ortak alan listesi."""
+    from .parser.usage import floor_usage
+    if d.discipline != "architectural":
+        return False
+    tur = floor_usage(d.usage, d.zones)[0]
+    if tur and tur != "ticari":
+        return True
+    if tur == "ticari":
+        return False
+    turler = {floor_usage(x.usage, x.zones)[0] for x in drawings if x.discipline == "architectural"}
+    return "ticari" not in turler and bool(turler & {"konut", "ofis", "otel"})
+
+
+# Otopark şap / kaplama / tavan kuralına girmez (beton perdah / epoksi ayrı iştir); adıyla ayrılır.
+OTOPARK = re.compile(r"OTOPARK|GARAJ|PARKING", re.IGNORECASE)
 
 
 def full_finish_floors(drawings: list[Drawing]) -> set:

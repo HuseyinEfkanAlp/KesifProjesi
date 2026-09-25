@@ -174,6 +174,9 @@ class Drawing(SQLModel, table=True):
     hatches: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     # Alan çizgili bölgeler ve türleri — ortak / dükkân / teknik / belirsiz (parser/zones.py)
     zones: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
+    # Mimari plandaki kolon izlerinin merkezleri (m, pafta koordinatı): paftayı aynı katın kalıp planına oturtmak
+    # için — duvarın üstündeki kirişin yüksekliği oradan okunur (services.wall_beam_depths)
+    column_marks: list[list[float]] = Field(default_factory=list, sa_column=Column(JSON))
     # Doğrama pozları: {"sizes": {"EMP1": [1.9, 1.4]}, "kinds": {"EMP3": "door"}} (detectors/openings.py: poz_catalog)
     poz: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     analyzed_at: datetime | None = None

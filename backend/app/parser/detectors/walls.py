@@ -173,3 +173,64 @@ def mark_walls_on_axes(walls: list[DetectedElement], columns: list[list]) -> int
             w.meta["beam_line"] = True
             n_axis += 1
     return n_axis
+
+
+def deduct_wall_crossings(walls: list[DetectedElement], supports: list | None = None) -> int:
+    """Kesişen duvarlarda ortak kare bir kez sayılır: ince olan duvardan düşülür.
+
+    Dedektör aynı hizadaki parçaları birleştirir; araya dik bir duvar girmişse birleşen duvar onun içinden geçer ve
+    kesişim iki duvarda da sayılır (altın bina 2: 10'luk bölme 20'lik daire arası duvarın içinden, katta 0,2 m).
+    Kalın duvar süreklidir (örülürken o sürer), ince olan ona dayanır. Döndürür: düzeltilen duvar sayısı."""
+    import math
+    from shapely import STRtree
+    polys = []
+    for w in walls:
+        try:
+            polys.append(Polygon(w.points).buffer(0) if len(w.points or []) >= 3 else None)
+        except Exception:
+            polys.append(None)
+    valid = [(i, g) for i, g in enumerate(polys) if g is not None and not g.is_empty]
+    if len(valid) < 2:
+        return 0
+    tree = STRtree([g for _, g in valid])
+    idx = [i for i, _ in valid]
+    # kolon içindeki kesişim sayılmaz: o boy kolon kesiminde (mark_walls_on_axes) zaten düşüldü
+    from shapely.ops import unary_union
+    kolon = None
+    try:
+        kp = [Polygon(pts).buffer(0) for pts in (supports or []) if len(pts) >= 3]
+        kolon = unary_union(kp) if kp else None
+    except Exception:
+        kolon = None
+
+    def yon(g):
+        r = g.minimum_rotated_rectangle
+        c = list(r.exterior.coords)
+        a = (c[0], c[1]) if math.dist(c[0], c[1]) >= math.dist(c[1], c[2]) else (c[1], c[2])
+        return math.atan2(a[1][1] - a[0][1], a[1][0] - a[0][0])
+    cut: dict[int, float] = {}
+    seen: set[tuple[int, int]] = set()
+    for i, gi in valid:
+        for j in tree.query(gi):
+            jj = idx[int(j)]
+            key = (min(i, jj), max(i, jj))
+            if jj == i or key in seen:
+                continue
+            seen.add(key)
+            kes = gi.intersection(polys[jj])
+            ov = (kes.difference(kolon) if kolon is not None else kes).area
+            if ov < 1e-4:
+                continue
+            d = abs(math.sin(yon(gi) - yon(polys[jj])))
+            if d < 0.5:
+                continue                        # paralel üst üste binme: kopya çizim, burada değil
+            a, b = walls[i], walls[jj]
+            ince = i if (a.b or 0.2) <= (b.b or 0.2) else jj
+            cut[ince] = cut.get(ince, 0.0) + ov / max(walls[ince].b or 0.1, 0.05)
+    for i, dl in cut.items():
+        w = walls[i]
+        if w.length and dl < w.length:
+            w.length -= dl
+            w.area = max((w.area or 0.0) - dl * (w.b or 0.0), 0.0)
+            w.meta["crossing_cut_m"] = round(dl, 3)
+    return len(cut)

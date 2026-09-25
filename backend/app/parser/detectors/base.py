@@ -276,12 +276,14 @@ def polygons_on_layers(drawing: Drawing, layers: list[str], close_open: bool = F
                 segs.append(LineString([e.points[i], e.points[i + 1]]))
         try:
             merged = shapely.set_precision(unary_union(segs + _bridge_gaps(segs, snap_tol)), 0.001)   # 1 mm ızgara: 1e-13 uç farkları düğümlenir
+            dup = _DupIndex(result)
             for poly in polygonize(merged):
                 if poly.area < max(min_area, 1e-9):
                     continue
                 pts = [(x, y) for x, y in poly.exterior.coords[:-1]]
-                if len(pts) >= 3 and not _duplicate(pts, result):
+                if len(pts) >= 3 and not dup.is_dup(pts):
                     result.append(Entity("polygon", open_lines[0].layer, pts, closed=True, source="LINES>LOOP"))
+                    dup.add(pts)
                     loops.append(poly)
         except Exception:
             pass
@@ -302,6 +304,39 @@ def polygons_on_layers(drawing: Drawing, layers: list[str], close_open: bool = F
             result.append(Entity("polygon", e.layer, list(e.points), closed=True, handle=e.handle,
                                  source="POLYLINE>CLOSED", block=e.block))
     return result
+
+
+class _DupIndex:
+    """_duplicate'in hızlı hali: var olan çokgenler bir kez kurulur, yalnız kutusu çakışanlar karşılaştırılır.
+    Eskisi her yeni döngüde bütün çokgenleri yeniden kurup tek tek kesiştiriyordu (C1 zemin planı 135 sn)."""
+
+    def __init__(self, existing: list[Entity]):
+        self.polys: list = []
+        self.boxes: list[tuple[float, float, float, float]] = []
+        for e in existing:
+            self.add(e.points)
+
+    def add(self, pts) -> None:
+        try:
+            q = Polygon(pts).buffer(0)
+        except Exception:
+            return
+        if q.area < 1e-9:
+            return
+        self.polys.append(q)
+        self.boxes.append(q.bounds)
+
+    def is_dup(self, pts, tol: float = 0.9) -> bool:
+        p = Polygon(pts).buffer(0)
+        if p.area < 1e-9:
+            return True
+        x0, y0, x1, y1 = p.bounds
+        for q, (a0, b0, a1, b1) in zip(self.polys, self.boxes):
+            if a0 > x1 or a1 < x0 or b0 > y1 or b1 < y0:
+                continue
+            if p.intersection(q).area / max(p.area, q.area) > tol:
+                return True
+        return False
 
 
 def _duplicate(pts: list[Point], existing: list[Entity], tol: float = 0.9) -> bool:

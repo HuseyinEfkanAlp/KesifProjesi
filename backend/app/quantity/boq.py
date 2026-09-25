@@ -409,6 +409,7 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
         elements = [e for e in d["elements"] if _g(e, "etype") in ("wall", "door", "window")]
         wall_groups: dict[str, float] = {}      # anahtar -> brüt örgü alanı (tek kat)
         beam_line_walls = 0
+        beam_used: set[float] = set()
         wall_labels: dict[str, str] = {}
         walls = []
         openings = []
@@ -421,9 +422,17 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
             # Örgü kiriş hattında kiriş altına kadar yapılır; sıva / boya ise tavana (döşeme altına) kadar gider —
             # kirişin yanağı da sıvanır. Bu yüzden örgü ve yüzey yükseklikleri ayrıdır.
             h_orgu = h
-            if not _g(e, "h") and not params.get("wall_height") and d.get("beam_depth")                     and (_g(e, "meta") or {}).get("beam_line"):
+            kb = (d.get("wall_beam") or {}).get(_g(e, "id"))
+            if not _g(e, "h") and not params.get("wall_height") and kb is not None:
+                # aynı katın kalıp planında duvarın üstündeki kiriş (services.wall_beam_depths); 0 = kiriş yok
+                if kb > 0:
+                    h_orgu = max((d.get("storey_height") or 3.0) - kb, 0.0)
+                    beam_line_walls += 1
+                    beam_used.add(kb)
+            elif not _g(e, "h") and not params.get("wall_height") and d.get("beam_depth")                     and (_g(e, "meta") or {}).get("beam_line"):
                 h_orgu = max((d.get("storey_height") or 3.0) - float(d["beam_depth"]), 0.0)
                 beam_line_walls += 1
+                beam_used.add(float(d["beam_depth"]))
             mat = _g(e, "subtype") or "duvar"
             key = f"{slug(mat)}:{_fmt_cm(b)}"
             mat_label = WALL_MATERIALS.get(mat, (mat.capitalize(),))[0] if mat != "duvar" else "Duvar (malzeme belirsiz)"
@@ -486,8 +495,10 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
             if h_note and h_note not in it.notes:
                 it.notes.append(h_note)
             if beam_line_walls:
-                bn = (f"Kolon aksındaki duvarlar kiriş altına kadar: {max((d.get('storey_height') or 3.0) - float(d['beam_depth']), 0):g} m "
-                      f"(kat {d.get('storey_height') or 3.0:g} − kiriş {float(d['beam_depth']):g} m)")
+                H_ = d.get('storey_height') or 3.0
+                bn = ("Kiriş altındaki duvarlar kiriş altına kadar örüldü: " + ", ".join(
+                    f"{max(H_ - kb, 0):g} m (kat {H_:g} − kiriş {kb:g} m)" for kb in sorted(beam_used))
+                      + ("; kiriş kalıp planından duvar duvar okundu" if d.get("wall_beam") else ""))
                 if bn not in it.notes:
                     it.notes.append(bn)
             rule = RULES["wall_opening"].text
@@ -501,6 +512,19 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
             for kind, pkey, name, rule in (("siva", "plaster_sides", "Sıva", "plaster_openings"),
                                            ("boya", "paint_sides", "Boya", "paint_openings")):
                 q, ek, yuz = finish_quantity(walls, allocations, params, pkey, ext, mult, d.get("wall_faces"), d.get("wall_faces_note", ""))
+                cevre = d.get("room_perimeter")
+                # Mahaller katı kaplamıyorsa (koridor / merdiven mahal olarak çizilmemiş) oda çevresi duvar yüzlerinden
+                # kısa kalır: o zaman duvar yüzü yöntemi — çevre yöntemi koridor duvarlarını atlardı.
+                yuz_boyu = sum((_g(w["element"], "length") or 0.0) * (_g(w["element"], "count") or 1)
+                               * wall_faces(params, pkey, _g(w["element"], "id") in (ext or set())) for w in walls)
+                if cevre and cevre >= 0.95 * yuz_boyu and not d.get("wall_faces") and params.get(pkey) in (None, ""):
+                    # Mahal çevresi × tavana kadar yükseklik: odaya taşan kolon / perde yüzleri de sıvanır. Duvar yüzü
+                    # yöntemi onları atlıyordu (altın bina 2: sıva %7,6 eksik). Boşluklar duvar başına yüz sayısıyla düşülür.
+                    ded = sum(a["all"] * wall_faces(params, pkey, _g(w["element"], "id") in (ext or set()))
+                              for w, a in zip(walls, allocations))
+                    q = max(cevre * wall_h - ded, 0.0) * mult
+                    yuz = (f"mahal çevresi {cevre:,.1f} m × {wall_h:g} m (kolon / perde yüzleri dahil) − boşluklar; "
+                           "dış yüz cephe sisteminde")
                 if q > 0:
                     finish = acc.add(kind, "*", name + ek, q, note=RULES[rule].text + "; " + yuz,
                                      ev=worse(*[_tier(d, w["element"]) for w in walls], TURETILDI))
