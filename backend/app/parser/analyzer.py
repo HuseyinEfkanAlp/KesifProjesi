@@ -957,7 +957,7 @@ def analyze_file(path: str, profile: LayerProfile | None = None, params: DetectP
     result.warnings += mw
     read_hatches(drawing, result)
     from .zones import scan_zones
-    result.zones = scan_zones(drawing)
+    result.zones = scan_zones(drawing, result.spaces)
     from .usage import scan_usage
     result.usage = scan_usage(drawing)
     return result

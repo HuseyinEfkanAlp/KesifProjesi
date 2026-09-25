@@ -259,6 +259,15 @@ def _has_openings(layers: dict[str, int] | None) -> bool:
     return any(n > 0 and prof.classify(name, "architectural") in ("door", "window") for name, n in layers.items() if name)
 
 
+def _has_frame(layers: dict[str, int] | None) -> bool:
+    """Kalıp planının kendine özgü katmanı (kiriş / döşeme) var mı? Kolon ve perde mimari planda da iz olarak çizilir."""
+    if not layers:
+        return False
+    from .parser.layer_profile import LayerProfile
+    prof = LayerProfile()
+    return any(n > 0 and prof.classify(name, "structural") in ("beam", "slab") for name, n in layers.items() if name)
+
+
 def resolve_plan(titles: list[str], layers: dict[str, int] | None = None, explicit: str = "") -> tuple[str, str]:
     """(plan tipi kodu, disiplin). explicit verilmişse o tip; yoksa başlıklardan, zayıfsa katmanlardan."""
     if explicit:
@@ -291,7 +300,9 @@ def resolve_plan(titles: list[str], layers: dict[str, int] | None = None, explic
     # Kapı / pencere çizilmiş pafta kalıp planı olamaz: bodrum planında çevre perdesi ve kolon izleri nesnelerin
     # çoğunu tutar, katman oyu "statik" der ve mimari plan kalıp planı sanılır — kolon ve perde ikinci kez sayılır,
     # bodrumun duvarları, mahalleri ve kapısı kaybolur (altın bina 2: kolon %25, perde %93 fazla).
-    if found is not None and found.discipline == "architectural" and _has_openings(layers):
+    if found is not None and found.discipline == "architectural" and (_has_openings(layers) or not _has_frame(layers)):
+        # kiriş / döşeme katmanı olmayan "kat planı" da kalıp planı değildir: otopark planında kapı yoktur, çevre
+        # perdesi ve kolon izleri oyu "statik"e çevirir (altın bina 3: bodrum kolonu ve perdesi iki kez sayıldı)
         strong_arch = True
     if found is None or (found.code in WEAK_TYPES and not strong_arch):
         ld = discipline_from_layers(layers)

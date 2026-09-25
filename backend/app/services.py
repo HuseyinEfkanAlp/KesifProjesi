@@ -461,6 +461,33 @@ def dominant_slab_thickness(elements) -> float | None:
     return pairs[-1][0]
 
 
+def room_finish_basis(polys: list, elements) -> tuple[float, float]:
+    """(bitirilen mahallerin toplam çevresi m, düşülecek boşluk alanı m²). Boşluk, sınırına 0,3 m'den yakın her
+    bitirilen mahal için bir kez düşülür: iki odanın arasındaki kapı iki yüz, dış pencere bir yüz, dükkân ile koridor
+    arasındaki kapı (kaba teslim) yalnız koridor yüzü."""
+    from shapely.geometry import Point, Polygon
+    pg = []
+    for pts in polys:
+        try:
+            g = Polygon(pts).buffer(0)
+        except Exception:
+            continue
+        if not g.is_empty:
+            pg.append(g)
+    cevre = sum(g.length for g in pg)
+    dusum = 0.0
+    for e in elements:
+        if e.etype not in ("door", "window") or not e.points or not e.b or not e.h:
+            continue
+        try:
+            og = Polygon(e.points) if len(e.points) >= 3 else Point(e.points[0])
+        except Exception:
+            continue
+        yuz = sum(1 for g in pg if g.exterior.distance(og) <= 0.3 or g.contains(og))
+        dusum += float(e.b) * float(e.h) * float(e.count or 1) * yuz
+    return round(cevre, 3), round(dusum, 3)
+
+
 def _centerline(points):
     """Dikdörtgen elemanın (duvar / kiriş) uzun eksenindeki orta çizgisi."""
     from shapely.geometry import LineString, Polygon
@@ -904,13 +931,27 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
         if duvarlar and d.column_marks:
             entry["wall_beam"] = wall_beam_depths(d, duvarlar, kalip, sh)
         mahaller = [sp for sp in (d.spaces or []) if sp.get("kind") == "mahal"]
-        if duvarlar and mahaller and all(sp.get("area_source") == "drawing" and sp.get("perimeter") for sp in mahaller):
-            # bütün mahallerin sınırı ölçüldüyse sıva / boya mahal çevresinden (boq.architectural_items)
-            entry["room_perimeter"] = round(sum(float(sp["perimeter"]) for sp in mahaller), 3)
+        kaba = tenant_shell_on(params) and shell_floor(d)
+        bitirilen = None
+        if kaba:
+            # kaba teslim kat: yalnız ortak alan bölgeleri sıvanır; sınırı ölçülmüş mahallerden geliyorsa çevre yöntemi
+            oz = [z for z in (d.zones or []) if z.get("kind") == "ortak" and z.get("source") == "mahal"]
+            if oz:
+                bitirilen = [z["points"] for z in oz]
+        elif duvarlar and mahaller and all(sp.get("area_source") == "drawing" and sp.get("perimeter") for sp in mahaller):
+            bitirilen = [sp["points"] for sp in mahaller if len(sp.get("points") or []) >= 3]
+        if duvarlar and bitirilen:
+            # sıva / boya mahal çevresinden: odaya taşan kolon yüzleri dahil, boşluk hangi bitirilen mahale bakıyorsa
+            # o kadar yüz düşülür (boq.architectural_items)
+            entry["room_perimeter"], entry["room_openings"] = room_finish_basis(bitirilen, elements)
+            if not kaba:
+                # ölçülen çevre iç halkaları da içerir (serbest duran kolonun dört yüzü); kayıtlı sınır yalnız dış çizgidir
+                entry["room_perimeter"] = round(sum(float(sp["perimeter"]) for sp in mahaller), 3)
+            entry["room_perimeter_shell"] = bool(kaba)
         if duvarlar:
             # sıva / boya yüzü duvar başına: dış duvar yalnız içeriden (quantity/boq.wall_faces)
             entry["exterior_walls"] = exterior_wall_ids(elements, d.spaces, duvarlar)
-            if tenant_shell_on(params) and shell_floor(d):
+            if kaba:
                 entry["wall_faces"], entry["wall_faces_note"] = shell_wall_faces(duvarlar, d.zones or [], entry["exterior_walls"],
                                                                                  floor_role(d.label or ""))
         if d.discipline in (STANDARD_DISCIPLINE, MAPPED_DISCIPLINE):
@@ -2123,7 +2164,7 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                 continue                                   # çatı katında ortak alan yok
             z = [x for x in (d.zones or []) if x.get("kind") == "ortak"]
             kat = max(1, d.storey_count or 1)
-            cizgili = any(x.get("source", "alan_cizgisi") == "alan_cizgisi" for x in z)
+            cizgili = any(x.get("source", "alan_cizgisi") in ("alan_cizgisi", "mahal") for x in z)
             ortak_alan += sum(float(x.get("area") or 0) for x in z) * kat
             tahmini += sum(float(x.get("area") or 0) for x in z if x.get("estimated")) * kat
             if cizgili or rol == "bodrum":
@@ -2142,6 +2183,11 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                 zonesuz.append(d.label or d.filename)
         tam = [fp for fp in fps_u if not fp["basement"] and floor_key(fp["block"], fp["drawing"]) in tam_katlar]
         tam_alan = sum(fp["area"] * max(1, fp["storey_count"]) for fp in tam)
+        # tam teslim katların mahalleri ölçüldüyse tavan mahallerden (kat oturumu duvarları da içerir)
+        odali = [d for d in drawings if d.rooms and d.discipline == "architectural" and not shell_floor(d)
+                 and floor_key(d.block, d.label or "") in tam_katlar]
+        if odali and len(odali) >= len(tam):
+            tam_alan = sum(sum(float(r.get("area_m2") or 0.0) for r in d.rooms) * max(1, d.storey_count or 1) for d in odali)
         if ortak_alan + tam_alan > 0:
             add("TAVAN_SIVA_BOYA", "", ortak_alan + tam_alan,
                 "dükkânlar kaba teslim: dükkân katlarında yalnız ortak alanların (lobi / koridor / merdiven) "
@@ -2651,10 +2697,13 @@ def shell_wall_faces(walls, zones: list[dict], exterior: set | None, role: str =
     ortak_u = unary_union(ortak) if ortak else None
     # Ortak alan tam mı? Dükkân katında koridor / lobi alan çizgisi yoksa yalnız merdivenler bilinir; koridora bakan
     # duvar bilinmez — 0 yazmak koridoru yok saymaktır. O katta iç duvar en az 1 yüz (tahmin) sayılır.
-    tam = role == "bodrum" or any(z.get("source", "alan_cizgisi") == "alan_cizgisi" for z in zones if z.get("kind") == "ortak")
+    tam = role == "bodrum" or any(z.get("source", "alan_cizgisi") in ("alan_cizgisi", "mahal")
+                                  for z in zones if z.get("kind") == "ortak")
     out: dict[int, int] = {}
     for e in walls:
-        if e.id in ext:
+        # dış duvarın iç yüzü dükkâna bakıyorsa kiracının; koridorun ucundaki dış duvar ortak alana bakar (sınır
+        # biliniyorsa şeritle sınanır — dış yanı bina dışıdır, ortak alana hiç değmez)
+        if e.id in ext and not (tam and ortak_u is not None):
             out[e.id] = 0
             continue
         if ortak_u is None:

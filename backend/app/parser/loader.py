@@ -43,6 +43,10 @@ class Entity:
     # Tarama deseni (HATCH): "AR-CONC", "EARTH", "SOLID"… Malzemenin çizimdeki ikinci dili — yazı
     # yoksa desen ne olduğunu söyler (parser/hatches.py). Boş = tarama değil.
     pattern: str = ""
+    # Blok yerleşimi (kind == "insert"): ekleme noktası (m) ve dönme açısı (derece). Doğrama bloğunun x ekseni
+    # duvar boyuncadır; açıklığın hangi doğrultuda kapandığını açı söyler (parser/spaces._opening_bridges).
+    anchor: tuple | None = None
+    rotation: float = 0.0
 
     @property
     def is_closed_polygon(self) -> bool:
@@ -145,7 +149,8 @@ def _convert(entity: DXFEntity, scale: float, insert_layer: str | None, block: s
             else:
                 pts = [(ins.x * scale, ins.y * scale)]
             yield Entity("insert", layer, pts, closed=True, text=str(entity.dxf.name), handle=handle,
-                         source="INSERT", block=str(entity.dxf.name))
+                         source="INSERT", block=str(entity.dxf.name), anchor=(ins.x * scale, ins.y * scale),
+                         rotation=float(getattr(entity.dxf, "rotation", 0.0) or 0.0))
         return
 
     if t in ("TEXT", "MTEXT", "ATTRIB"):

@@ -108,6 +108,14 @@ def storey_counts(project: Project, drawings: list[Drawing]) -> dict:
         if yakin is not None and abs(yakin - lvl) <= MIN_STOREY / 2:
             sahipli.add(yakin)
             kot_of[d.id] = yakin
+            # "1.-5. NORMAL KAT PLANI" başladığı kattan itibaren beş katın sahibidir; yalnız ilkini sahiplenirse öteki
+            # dört kat "planı yüklenmedi" diye engelleyici uyarı verir (altın bina 3)
+            n = int(per.get(d.id, {}).get("value") or 1) if per.get(d.id, {}).get("kind") == "drawing" else 1
+            if n > 1:
+                i = katlar.index(yakin)
+                if (getattr(d, "plan_type", "") or "") in ("sta_kat_kalip", "sta_doseme_donati"):
+                    i -= 1                      # kalıp planının kotu ilk katın tavanıdır; kat bir alttan başlar
+                sahipli.update(katlar[max(i, 0):max(i, 0) + n])
     # Çatı kat değildir. En üst seviye, üstünde yaşanan bir kat yoksa çatı döşemesidir: kalıp planının kotu
     # (döşeme üstü) ve kesit onu gösterir ama o seviyeden başlayan bir kat yoktur. Katı başlatan kanıt mimari kat
     # planıdır (çatı planı değil; "çatı katı" planı en üstün bir altına oturur). Mimari plan hiç yoksa (yalnız

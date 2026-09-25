@@ -517,14 +517,21 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
                 # kısa kalır: o zaman duvar yüzü yöntemi — çevre yöntemi koridor duvarlarını atlardı.
                 yuz_boyu = sum((_g(w["element"], "length") or 0.0) * (_g(w["element"], "count") or 1)
                                * wall_faces(params, pkey, _g(w["element"], "id") in (ext or set())) for w in walls)
-                if cevre and cevre >= 0.95 * yuz_boyu and not d.get("wall_faces") and params.get(pkey) in (None, ""):
+                kaba_cevre = bool(d.get("room_perimeter_shell"))
+                if cevre and (kaba_cevre or (cevre >= 0.95 * yuz_boyu and not d.get("wall_faces"))) \
+                        and params.get(pkey) in (None, ""):
                     # Mahal çevresi × tavana kadar yükseklik: odaya taşan kolon / perde yüzleri de sıvanır. Duvar yüzü
-                    # yöntemi onları atlıyordu (altın bina 2: sıva %7,6 eksik). Boşluklar duvar başına yüz sayısıyla düşülür.
-                    ded = sum(a["all"] * wall_faces(params, pkey, _g(w["element"], "id") in (ext or set()))
-                              for w, a in zip(walls, allocations))
+                    # yöntemi onları atlıyordu (altın bina 2: sıva %7,6 eksik). Kaba teslim katta yalnız ortak alan
+                    # mahalleri (altın bina 3: koridorun ucundaki dış duvar yüzü duvar yöntemiyle kayboluyordu).
+                    ded = d.get("room_openings")
+                    if ded is None:
+                        ded = sum(a["all"] * wall_faces(params, pkey, _g(w["element"], "id") in (ext or set()))
+                                  for w, a in zip(walls, allocations))
                     q = max(cevre * wall_h - ded, 0.0) * mult
-                    yuz = (f"mahal çevresi {cevre:,.1f} m × {wall_h:g} m (kolon / perde yüzleri dahil) − boşluklar; "
-                           "dış yüz cephe sisteminde")
+                    yuz = ((f"dükkânlar kaba teslim: yalnız ortak alan mahalleri, çevre {cevre:,.1f} m × {wall_h:g} m − boşluklar"
+                            if kaba_cevre else
+                            f"mahal çevresi {cevre:,.1f} m × {wall_h:g} m (kolon / perde yüzleri dahil) − boşluklar")
+                           + "; dış yüz cephe sisteminde")
                 if q > 0:
                     finish = acc.add(kind, "*", name + ek, q, note=RULES[rule].text + "; " + yuz,
                                      ev=worse(*[_tier(d, w["element"]) for w in walls], TURETILDI))

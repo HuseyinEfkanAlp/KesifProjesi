@@ -98,13 +98,18 @@ OPENING_GAP_MAX = 4.0       # m — bundan geniş açıklık tek doğrama değil
 COLLINEAR_TOL = 0.01        # m — iki çizgi aynı doğru üstünde sayılır
 
 
-def _opening_bridges(segs: list[LineString], openings: list) -> list[LineString]:
-    """Doğrama çizimi bulunan eş doğrultulu açıklıkları kapatan köprüler."""
+def _opening_bridges(segs: list[LineString], openings: list, blocks: list | None = None) -> list[LineString]:
+    """Doğrama çizimi bulunan eş doğrultulu açıklıkları kapatan köprüler.
+
+    blocks: [(ekleme noktası, açı°)] doğrama blokları. Blok varsa açıklık yalnız bloğun DOĞRULTUSUNDA kapatılır:
+    kapı kanadı açıklığa dik çizilir ve karşılıklı iki kapının uç kapanışları aynı hizaya düşer — kanat çizgisi
+    "doğrama var" sayılınca koridor enine köprüleniyor, parçalanıyordu (altın bina 3)."""
     import math
     from shapely import STRtree
-    if not segs or not openings:
+    blocks = blocks or []
+    if not segs or (not openings and not blocks):
         return []
-    otree = STRtree(openings)
+    otree = STRtree(openings) if openings else None
     ends: dict[tuple, list[tuple[float, int]]] = {}
     out: list[LineString] = []
     # her çizgi kendi doğrusunun anahtarıyla gruplanır: yön + doğruya olan dik uzaklık
@@ -130,8 +135,15 @@ def _opening_bridges(segs: list[LineString], openings: list) -> list[LineString]
                 a = (cur_end * ux - c * uy, cur_end * uy + c * ux)
                 b = (t0 * ux - c * uy, t0 * uy + c * ux)
                 bridge = LineString([a, b])
-                mid = bridge.interpolate(0.5, normalized=True)
-                if any(openings[int(j)].distance(mid) <= 0.35 for j in otree.query(mid.buffer(0.35))):
+                if blocks:
+                    zone = bridge.buffer(0.35)
+                    ok = any(zone.contains(SPoint(pt)) and abs(((rot - ang) + 90.0) % 180.0 - 90.0) <= 10.0
+                             for pt, rot in blocks)
+                else:
+                    mid = bridge.interpolate(0.5, normalized=True)
+                    ok = otree is not None and any(openings[int(j)].distance(mid) <= 0.35
+                                                   for j in otree.query(mid.buffer(0.35)))
+                if ok:
                     out.append(bridge)
             cur_end = max(cur_end, t1)
     return out
@@ -158,14 +170,17 @@ def _faces(drawing: Drawing, layers: list[str], snap_tol: float, opening_layers:
                     segs.append(LineString([pts[i], pts[i + 1]]))
     out: list[Polygon] = []
     if segs and len(segs) < 20000:
-        ops = []
+        ops, blocks = [], []
         for lay in opening_layers or []:
             for e in drawing.by_layer(lay):
                 if e.kind == "text" or not e.points:
                     continue
+                if e.kind == "insert" and e.anchor is not None:
+                    blocks.append((e.anchor, e.rotation))
+                    continue
                 ops.append(LineString(e.points) if len(e.points) >= 2 else SPoint(e.points[0]))
         try:
-            segs = segs + _opening_bridges(segs, ops)
+            segs = segs + _opening_bridges(segs, ops, blocks)
             merged = shapely.set_precision(unary_union(segs + _bridge_gaps(segs, snap_tol)), 0.001)
             for poly in polygonize(merged):
                 if poly.area < MIN_SPACE_AREA or poly.area / max(poly.length, 1e-9) < MIN_WIDTH / 2:

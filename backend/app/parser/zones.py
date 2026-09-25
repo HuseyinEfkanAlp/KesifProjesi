@@ -118,13 +118,39 @@ def stair_zones(drawing: Drawing, covered=None) -> list[dict]:
     return out
 
 
-def scan_zones(drawing: Drawing) -> list[dict]:
+def scan_zones(drawing: Drawing, spaces: list[dict] | None = None) -> list[dict]:
     """Bölgeler: alan katmanlarındaki kapalı çokgenler (türleriyle) + alan çizgisinin kapsamadığı merdiven evleri.
-    [{"kind", "area", "points", "why", "layer", "source": "alan_cizgisi" | "merdiven"}]."""
+    Alan çizgisi yoksa sınırı ölçülmüş, adı yazılı mahaller bölgedir ("DÜKKAN 3", "KORİDOR") — aynı sınıflandırıcı.
+    [{"kind", "area", "points", "why", "layer", "source": "alan_cizgisi" | "mahal" | "merdiven"}]."""
     from shapely.ops import unary_union
-    out = _area_zones(drawing)
+    out = _area_zones(drawing) or _space_zones(spaces or [])
     covered = unary_union([Polygon(z["points"]).buffer(0) for z in out]) if out else None
     return out + stair_zones(drawing, covered)
+
+
+def _space_zones(spaces: list[dict]) -> list[dict]:
+    """Ölçülen mahallerden bölgeler (altın bina 3: alan çizgisi yok, DÜKKAN 1–4 ve KORİDOR planda ölçülmüş; bölge
+    olmayınca kaba teslim katta ortak alan "çizimde yok" sanılıp iç duvarlar tahminle 1 yüz sayılıyordu)."""
+    out = []
+    for sp in spaces:
+        pts = sp.get("points") or []
+        if sp.get("kind") not in ("mahal", "grup") or sp.get("area_source") != "drawing" or len(pts) < 3 or not sp.get("name"):
+            continue
+        try:
+            p = Polygon(pts).buffer(0)
+        except Exception:
+            continue
+        if p.is_empty or p.geom_type != "Polygon" or p.area < MIN_ZONE_AREA:
+            continue
+        kind, why = classify(p, [sp["name"]])
+        if why and not why.startswith("içinde"):
+            # biçimden tahmin (uzun şerit, büyük adsız bölge) alan çizgisi içindir; adı yazılı mahalde ad belirler:
+            # "KAZAN DAİRESİ" 64 m² diye dükkân sayılmaz
+            kind, why = "belirsiz", f"“{sp['name']}” ortak alan / dükkân adı değil"
+        alan = float(sp.get("label_area") or 0.0) or p.area          # yazıdaki alan (şaft boşluğu düşülmüş)
+        out.append({"kind": kind, "area": round(alan, 2), "why": why, "layer": "(mahal)", "source": "mahal",
+                    "points": [[round(x, 3), round(y, 3)] for x, y in p.exterior.coords]})
+    return out
 
 
 def _area_zones(drawing: Drawing) -> list[dict]:
