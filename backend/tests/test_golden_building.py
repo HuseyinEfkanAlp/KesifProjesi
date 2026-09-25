@@ -93,3 +93,37 @@ def test_mahaller_bulunur_ve_ince_isler_mahalden(golden):
 def test_geri_dolgu_temel_betonunu_duser(golden):
     q = golden["qty"]
     assert q("geri_dolgu") == pytest.approx(q("kazi") - q("beton", "foundation:raft") - q("grobeton"), rel=0.01)
+
+
+def test_kiris_kolonlarda_acikliklara_bolunur(golden):
+    """Kolonun iki yanındaki kiriş çizgileri aynı hizada birleşir; kiriş ama açıklıktır. Bölünmezse K101 / K102
+    tek kiriş olur, ikinci etiket "bağlanamadı" kalır (25 Eyl: kat başına 12 yerine 6 kiriş)."""
+    q, t = golden["qty"], golden["truth"]
+    kalip = [d for d in golden["drawings"] if d["plan_type"] == "sta_kat_kalip"]
+    assert len(kalip) == 2
+    for d in kalip:
+        assert d["found"].startswith("12 kiriş"), d["found"]
+        assert not any("kiriş etiketi" in w for w in d["warnings"]), d["warnings"]
+    assert q("beton", "beam") == pytest.approx(t["kiris_beton"], rel=0.002)
+
+
+def test_kesit_paftasi_ayri_pafta_ve_kotu_plana_karismaz(golden):
+    """Kendi çerçevesindeki "A-A KESİTİ" paftanın adıdır; ad alamayınca komşu 1. kat planına yapışıyor ve
+    temel altı / çatı kotları o plana karışıyordu."""
+    by = {d["label"]: d for d in golden["drawings"]}
+    assert by["A-A KESİTİ"]["plan_type"] == "mim_kesit"
+    assert by["1. KAT PLANI"]["levels"] == [3.0]
+
+
+def test_perde_duvar_orgu_degil_sivasi_sayilir():
+    """Mimari planın perde katmanı ("brn_perde duvar") betonarmedir: örgü metrajına girmez, yüzü sıvanır."""
+    from app.quantity.boq import architectural_items
+    duvar = {"etype": "wall", "b": 0.2, "length": 10.0, "subtype": "ytong", "count": 1, "id": 1,
+             "points": [(0, 0), (10, 0), (10, 0.2), (0, 0.2)]}
+    perde = {"etype": "wall", "b": 0.25, "length": 4.0, "subtype": "perde", "count": 1, "id": 2, "meta": {"perde": True},
+             "points": [(0, 5), (4, 5), (4, 5.25), (0, 5.25)]}
+    items = {i.key: i.quantity for i in architectural_items(
+        [{"label": "Z", "storey_count": 1, "storey_height": 3.0, "slab_thickness": 0.15, "elements": [duvar, perde]}], {})}
+    assert items["duvar:ytong:20"] == pytest.approx(10 * 2.85)
+    assert not any(k.startswith("duvar:perde") for k in items)
+    assert items["siva:*"] == pytest.approx((10 + 4) * 2.85 * 2)     # dış hat yok: iki yüz

@@ -46,13 +46,26 @@ def detect_beams(drawing: Drawing, layers: list[str], labels: LabelIndex, params
     pairs = find_parallel_pairs(segs, params.beam_width_range, params.min_beam_length)
     runs = merge_collinear_pairs(pairs, gap_max=params.beam_merge_gap)
     for run in runs:
-        for piece, lab in _split_run_by_labels(run, labels, params):
+        spans = _split_run_by_supports(run, support_union, params.min_beam_length)
+        found = [(sp, piece, lab) for sp in spans for piece, lab in _split_run_by_labels(sp, labels, params)]
+        # sürekli kiriş çoğu zaman tek etiketle yazılır: etiketsiz açıklık aynı hattın en yakın etiketli açıklığını alır
+        etiketli = [(piece, lab) for _sp, piece, lab in found if lab is not None]
+        for _sp, piece, lab in found:
+            inherited = False
+            if lab is None and etiketli:
+                mid = ((piece.center_a[0] + piece.center_b[0]) / 2, (piece.center_a[1] + piece.center_b[1]) / 2)
+                lab = min(etiketli, key=lambda pl: math.dist(mid, ((pl[0].center_a[0] + pl[0].center_b[0]) / 2,
+                                                                    (pl[0].center_a[1] + pl[0].center_b[1]) / 2)))[1]
+                inherited = True
             el = DetectedElement(etype="beam", layer=piece.layer, points=piece.rect,
                                  area=piece.width * piece.length, perimeter=2 * (piece.width + piece.length),
                                  b=piece.width, length=piece.length, source="PARALLEL_LINES",
                                  handle=piece.handles[0], confidence=0.55)
             if lab is not None:
                 _use_label(el, lab)
+                if inherited:
+                    el.warnings.append("Etiket aynı kiriş hattının komşu açıklığından alındı (sürekli kiriş tek etiketli)")
+                    el.confidence = min(el.confidence, 0.7)
             else:
                 el.warnings.append("Etiket bulunamadı; kiriş yüksekliği girilmeli")
                 el.confidence = min(el.confidence, 0.5)
@@ -102,6 +115,31 @@ def _deduct_intersections(elements: list[DetectedElement]) -> None:
             continue
         e.length = max(e.length - dl, 0.0)
         e.warnings.append(f"Kesişen kirişlerle ortak {dl:.2f} m düşüldü (beton çift sayılmasın)")
+
+
+def _split_run_by_supports(run: ParallelPair, support_union, min_length: float) -> list[ParallelPair]:
+    """Birleşik kiriş hattını mesnetlerde (kolon / perde) açıklıklara böler.
+
+    Kolonda kesilen çizgiler aynı hizadaysa birleştirilir (merge_collinear_pairs); kiriş ama iki kolon arasındaki
+    açıklıktır. Hat bölünmezse K101 ve K102 tek kiriş olur: etiket kirişe çok yakın değilse yalnız biri alınır,
+    öbürü "bağlanamadı" diye kalır ve açıklıkların kesiti farklıysa ikinciye yanlış kesit yazılır (altın bina)."""
+    if support_union is None or support_union.is_empty:
+        return [run]
+    line = LineString([run.center_a, run.center_b])
+    if not line.intersects(support_union):
+        return [run]
+    rest = line.difference(support_union)
+    parts = [g for g in getattr(rest, "geoms", [rest]) if g.geom_type == "LineString" and g.length >= min_length]
+    if len(parts) <= 1:
+        return [run]                      # mesnet yalnız uçta: tek açıklık (net boy aşağıda düşülür)
+    from .base import _rect_from_centerline
+    out = []
+    for g in parts:
+        ca, cb = g.coords[0], g.coords[-1]
+        if math.dist(ca, run.center_a) > math.dist(cb, run.center_a):
+            ca, cb = cb, ca                 # hattın yönü korunur
+        out.append(ParallelPair(ca, cb, run.width, run.layer, _rect_from_centerline(ca, cb, run.width), run.handles))
+    return out
 
 
 def _split_run_by_labels(run: ParallelPair, labels: LabelIndex, params: DetectParams):

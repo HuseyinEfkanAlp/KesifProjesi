@@ -42,7 +42,7 @@ CODEPAGES = {"ANSI_1254": "cp1254", "ANSI_1252": "cp1252", "ANSI_1250": "cp1250"
 BIG_FILE_BYTES = 40 * 1024 * 1024
 # Pafta tespiti değiştikçe artar: eski .sheets.json önbellekleri yok sayılır (yoksa kullanıcı eski, bozuk
 # pafta listesini görmeye devam eder).
-SCAN_VERSION = 4
+SCAN_VERSION = 5
 MIN_SHEET_ENTITIES = 5
 # "Boş çerçeve": başlığı olduğu için listeye giren ama ölçülecek hiçbir şey taşımayan kutu — ruhsat antedinin
 # çerçevesi, şablondan kalmış boş pafta ("VAZİYET PLANI" yazan 11 nesnelik kutu). Eşik **göreli**: aynı
@@ -961,6 +961,11 @@ def _build_sheets(boxes: list[tuple[Bbox, str]], xs: np.ndarray, ys: np.ndarray,
             # Kutudaki tek aday bir kesit işaretiyse ("A-A KESITI") pafta adsız sayılır: adı antet bloğundan
             # gelsin (kiriş detay paftalarında ad blok içinde "KİRİŞ DETAYLARI" olarak duruyor).
             titled = not SECTION_RE.match(inside[0][3])
+            # Ama kendi çerçevesinde başka başlık yokken bir-iki kesit adı varsa ("A-A KESİTİ", "B-B KESİTİ") o yazı
+            # paftanın adıdır: mimari kesit paftası. Detay paftasında kesit işaretleri onlarcadır, orada ad sayılmaz.
+            # Kesit paftası ad alamazsa komşu plana yapışıyor, kotları (temel altı, çatı) o plana karışıyordu.
+            if not titled and source == "frame" and len({t[3] for t in inside}) <= 2:
+                titled = True
             title = inside[0][3] if titled else ""
             for t in (inside[1:] if titled else inside):
                 if t[3] not in alts and t[3] != title:
