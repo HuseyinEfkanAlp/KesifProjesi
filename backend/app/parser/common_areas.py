@@ -24,7 +24,9 @@ import math
 import re
 from collections import Counter
 
-from shapely.geometry import LineString
+from shapely import STRtree
+from shapely.affinity import affine_transform
+from shapely.geometry import LineString, MultiLineString
 from shapely.ops import unary_union
 
 from .sheets import _clean_text, _iter_entities, _open_dxf_text, _read_block_defs
@@ -39,6 +41,9 @@ ETIKET_YAKIN = 45.0        # m — blok yazısına bu kadar yakın öbek "yerind
 BICIM_TOL = 0.3            # m — iki lobi biçimi (en, boy) bu kadar yakınsa aynı lobidir
 BLOK_ETIKET_MIN_H = 0.5    # m — "A1" blok yazısı en az bu yükseklikte (plan içi küçük yazılar değil)
 MAX_DEPTH = 4
+# Bundan çok çizgili blokta tampon birleşimi dakikalar sürer (C1: 138.893 çizgilik plan bloğu yarım saat) — ızgara
+# öbeklemesi. A Bloklar ışıklığı 65.199 çizgi, kesin yolda ~25 sn.
+KESIN_CIZGI = 100000
 
 
 def kind_of(name: str) -> str:
@@ -138,6 +143,63 @@ def scan_common_areas(src: str, unit_scale: float = 0.01, sheets: list | None = 
                     out += named(e["2"], depth + 1)
         return out
 
+    def hulls(g: list) -> list:
+        """Öbeklerin dış kabukları. Birbirine ~2·OBEK_BOSLUK'tan yakın çizgiler aynı öbektir (OBEK_BOSLUK tamponları
+        değer). Tampon birleştirmek büyük bloklarda (C1: 138.893 çizgi) yarım saati aşıyordu; bunun yerine çizgiler
+        OBEK_BOSLUK'luk ızgaraya düşürülür, 2 hücre içindeki dolu hücreler aynı öbektir."""
+        import numpy as np
+        if not g:
+            return []
+        if len(g) <= KESIN_CIZGI:
+            # olağan lobi / ışıklık bloğu: tamponların birleşimi (kesin)
+            u = unary_union([x.buffer(OBEK_BOSLUK) for x in g])
+            tree = STRtree(g)
+            out = []
+            for p in (list(u.geoms) if hasattr(u, "geoms") else [u]):
+                h = MultiLineString([g[int(i)] for i in tree.query(p, predicate="intersects")]).convex_hull
+                if h.area >= MIN_ALAN:
+                    out.append(h)
+            return out
+        c = OBEK_BOSLUK
+        hucre_of: list[tuple[int, int]] = []
+        dolu: set[tuple[int, int]] = set()
+        for ln in g:
+            xy = np.asarray(ln.coords)[:, :2]
+            pts = [xy[0]]
+            for a, b in zip(xy[:-1], xy[1:]):
+                n = max(1, int(np.ceil(np.hypot(*(b - a)) / (c / 2))))
+                pts.append(a + (b - a) * (np.arange(1, n + 1)[:, None] / n))
+            cells = np.floor(np.vstack(pts) / c).astype(np.int64)
+            hs = {(int(x), int(y)) for x, y in cells}
+            dolu |= hs
+            hucre_of.append(next(iter(hs)))
+        obek: dict[tuple[int, int], int] = {}
+        komsu = [(dx, dy) for dx in range(-2, 3) for dy in range(-2, 3) if dx or dy]
+        for h0 in dolu:
+            if h0 in obek:
+                continue
+            k_ = h0                                  # öbek kimliği: ilk hücresi
+            obek[h0] = k_
+            yigin = [h0]
+            while yigin:
+                x, y = yigin.pop()
+                for dx, dy in komsu:
+                    q = (x + dx, y + dy)
+                    if q in dolu and q not in obek:
+                        obek[q] = k_
+                        yigin.append(q)
+        gruplar: dict = {}
+        for ln, h in zip(g, hucre_of):
+            gruplar.setdefault(obek[h], []).append(ln)
+        out = []
+        for lns in gruplar.values():
+            h = MultiLineString(lns).convex_hull
+            if h.area >= MIN_ALAN:
+                out.append(h)
+        return out
+
+    # aynı blok planda defalarca yerleşir: öbekler blok koordinatında bir kez çıkarılır, yerleşime taşınır
+    yerel: dict[str, list] = {}
     obekler = []      # (ad, alan, uzun, kısa, cx, cy, kat)
     for ins in inserts:
         ins_kat = pafta_kati(ins["xs"][0], ins["ys"][0])
@@ -146,17 +208,17 @@ def scan_common_areas(src: str, unit_scale: float = 0.01, sheets: list | None = 
             a = math.radians(float(ins.get("50", 0) or 0))
             X, Y = ins["xs"][0], ins["ys"][0]
             # iç içe blokta ad alt bloktadır; basitlik için dış yerleşim kullanılır (alt blok ofseti içeride dönüşür)
-            kaynak = ins["2"] if ad == ins["2"] else ad
-            g = lines(kaynak if ad == ins["2"] else ins["2"],
-                      lambda x, y, sx=sx, sy=sy, a=a, X=X, Y=Y: ((X + x * sx * math.cos(a) - y * sy * math.sin(a)) * k,
-                                                                  (Y + x * sx * math.sin(a) + y * sy * math.cos(a)) * k))
-            if not g:
-                continue
-            u = unary_union([x.buffer(OBEK_BOSLUK) for x in g])
-            for p in (list(u.geoms) if hasattr(u, "geoms") else [u]):
-                h = unary_union([x for x in g if p.intersects(x)]).convex_hull
-                if h.area < MIN_ALAN:
-                    continue
+            kaynak = ins["2"]
+            if abs(sx - 1.0) < 1e-9 and abs(sy - 1.0) < 1e-9:
+                if kaynak not in yerel:
+                    yerel[kaynak] = hulls(lines(kaynak, lambda x, y: (x * k, y * k)))
+                ca, sa = math.cos(a), math.sin(a)
+                hs = [affine_transform(h, [ca, -sa, sa, ca, X * k, Y * k]) for h in yerel[kaynak]]
+            else:
+                hs = hulls(lines(kaynak, lambda x, y, sx=sx, sy=sy, a=a, X=X, Y=Y:
+                                 ((X + x * sx * math.cos(a) - y * sy * math.sin(a)) * k,
+                                  (Y + x * sx * math.sin(a) + y * sy * math.cos(a)) * k)))
+            for h in hs:
                 x0, y0, x1, y1 = h.bounds
                 kat = floor_of(ad)
                 obekler.append((ad, h.area, max(x1 - x0, y1 - y0), min(x1 - x0, y1 - y0), h.centroid.x, h.centroid.y,
