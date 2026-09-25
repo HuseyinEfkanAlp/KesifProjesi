@@ -108,7 +108,23 @@ def storey_counts(project: Project, drawings: list[Drawing]) -> dict:
         if yakin is not None and abs(yakin - lvl) <= MIN_STOREY / 2:
             sahipli.add(yakin)
             kot_of[d.id] = yakin
-    sahipsiz = [f for f in katlar if f not in sahipli]
+    # Çatı kat değildir. En üst seviye, üstünde yaşanan bir kat yoksa çatı döşemesidir: kalıp planının kotu
+    # (döşeme üstü) ve kesit onu gösterir ama o seviyeden başlayan bir kat yoktur. Katı başlatan kanıt mimari kat
+    # planıdır (çatı planı değil; "çatı katı" planı en üstün bir altına oturur). Mimari plan hiç yoksa (yalnız
+    # statik) en üst kalıp planı gerçek bir katın döşemesidir, çıkarılmaz. Altın bina: 0 / 3 / 6 → 2 kat, C1 ve
+    # A blokları 5 → 4 kat.
+    cati = None
+    mimari = [d for d in drawings if (getattr(d, "plan_type", "") or "") == "mim_kat_plani"]
+    if mimari and len(katlar) >= 2:
+        mim_seviye = set()
+        for d in mimari:
+            sira = floor_rank(_label(d))
+            lvl = float(d.kot) if d.kot is not None else (level_for_rank(katlar, sira, datum) if sira is not None else None)
+            if lvl is not None:
+                mim_seviye.add(min(katlar, key=lambda f: abs(f - lvl)))
+        if mim_seviye and katlar[-1] not in mim_seviye:
+            cati = katlar[-1]
+    sahipsiz = [f for f in katlar if f not in sahipli and f != cati]
 
     # Sahipsiz seviyeler tip kat planlarına bölüştürülür: her seviye en yakın tip kat planına gider.
     tipler = [d for d in kalan if is_typical_floor(_label(d)) and d.discipline in PLAN_DISCIPLINES]
@@ -124,7 +140,7 @@ def storey_counts(project: Project, drawings: list[Drawing]) -> dict:
             # Tip kat planının kendi kotu varsa o kat da sayılır; yoksa yalnız üstlendiği sahipsiz seviyeler.
             n = len(ek) + (1 if d.id in kot_of else 0)
             per[d.id] = {"value": n, "kind": "drawing", "conf": 0.7,
-                         "source": (f"kotlarda {len(katlar)} kat var, {len(sahipli)} katın ayrı paftası yüklenmiş; "
+                         "source": (f"kotlarda {len(katlar) - (cati is not None)} kat var, {len(sahipli - {cati})} katın ayrı paftası yüklenmiş; "
                                     f"bu tip kat planı {n} katı temsil ediyor")}
             continue
         if d.id in kot_of:
@@ -138,19 +154,20 @@ def storey_counts(project: Project, drawings: list[Drawing]) -> dict:
     # ama çizimin kendi kotları daha fazla kat olduğunu söylüyorsa metraj mertebe olarak eksiktir — blocking.
     if sahipsiz and not tipler:
         uyarilar.append({"code": "storey_missing_plans", "severity": "blocking",
-                         "message": f"Kotlarda {len(katlar)} kat seviyesi var ama {len(sahipsiz)} katın planı "
+                         "message": f"Kotlarda {len(katlar) - (cati is not None)} kat seviyesi var ama {len(sahipsiz)} katın planı "
                                     "yüklenmedi ve bunları temsil edecek bir tip kat planı da yok — bu katların "
                                     "metrajı hesaba girmedi."})
     bilinmeyen = [d for d in drawings if per[d.id]["kind"] == "default" and d.discipline in PLAN_DISCIPLINES]
     if bilinmeyen:
         uyarilar.append({"code": "storey_count_default",
-                         "severity": "blocking" if len(katlar) > 1 else "review",
+                         "severity": "blocking" if len(katlar) - (cati is not None) > 1 else "review",
                          "message": f"{len(bilinmeyen)} paftanın kat sayısı çizimden çıkarılamadı; 1 kat kabul edildi. "
                                     "Bina çok katlıysa beton, kalıp, demir ve duvar miktarları kat sayısı kadar eksiktir."})
 
     # Binanın kat sayısı yalnız kot dizisinden bilinir. Kot yoksa **bilinmiyor** (None) — disiplinlerin
     # pafta sayısını toplamak aynı katı birkaç kez sayar ve savunulamaz bir rakam üretir.
-    toplam = len(katlar) or None
+    kat_seviyeleri = [f for f in katlar if f != cati]
+    toplam = len(kat_seviyeleri) or None
     antet = ((project.titleblock or {}).get("storey_count") if getattr(project, "titleblock", None) else None)
     if antet and toplam and int(antet) != toplam:
         uyarilar.append({"code": "storey_count_titleblock", "severity": "review",
@@ -158,8 +175,9 @@ def storey_counts(project: Project, drawings: list[Drawing]) -> dict:
                                     "paftalardan biri eksik ya da antet başka bloğu anlatıyor olabilir."})
 
     gecerli = [v for v in per.values() if v["kind"] != "default"]
-    return {"per_drawing": per, "levels": katlar, "total": toplam, "unowned": sahipsiz,
-            "effective": 1, "source": f"{toplam} kat seviyesi" if katlar else "kot bulunamadı",
+    return {"per_drawing": per, "levels": kat_seviyeleri, "total": toplam, "unowned": sahipsiz, "roof": cati,
+            "effective": 1, "source": (f"{toplam} kat" + (f" (çatı döşemesi {cati:+.2f} kat sayılmadı)" if cati is not None else "")
+                                       if katlar else "kot bulunamadı"),
             "kind": "drawing" if gecerli else "default",
             "conf": min((v["conf"] for v in per.values()), default=0.3), "warnings": uyarilar}
 

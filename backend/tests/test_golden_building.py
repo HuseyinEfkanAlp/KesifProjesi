@@ -44,7 +44,8 @@ def _yukle(client, tmp_path_factory) -> dict:
     def qty(kind, group=None):
         return sum(i["quantity"] for i in items if i["kind"] == kind and (group is None or i["group"] == group))
 
-    return {"qty": qty, "drawings": client.get(f"/api/projects/{pid}/drawings").json(), "truth": golden_truth()}
+    return {"qty": qty, "drawings": client.get(f"/api/projects/{pid}/drawings").json(), "truth": golden_truth(),
+            "quality": q["quality"]}
 
 
 def test_betonarme(golden):
@@ -127,3 +128,9 @@ def test_perde_duvar_orgu_degil_sivasi_sayilir():
     assert items["duvar:ytong:20"] == pytest.approx(10 * 2.85)
     assert not any(k.startswith("duvar:perde") for k in items)
     assert items["siva:*"] == pytest.approx((10 + 4) * 2.85 * 2)     # dış hat yok: iki yüz
+
+
+def test_cati_kat_sayilmaz(golden):
+    """Kotlar 0,00 / +3,00 / +6,00: +6,00 çatı döşemesidir (üstünde mimari kat planı yok), bina 2 katlıdır."""
+    sc = golden["quality"]["storey_count"]
+    assert sc["total"] == 2 and sc["levels"] == [0.0, 3.0] and sc["unowned"] == []
