@@ -144,7 +144,10 @@ def default_poz(kind: str, group: str) -> tuple[str, str] | None:
 #
 # Katalog kalemlerinin reçetesi CatalogItem.recipe içindedir. Sezgisel (katalog dışı) türler için reçete burada:
 # tür -> [{"code", "factor", "spec", "times"}]. Miktar = kalem miktarı × factor (× H, times == "H" ise).
-# Değerler yaygın uygulama varsayılanıdır; kalem notunda "reçete varsayılanı" yazar, katalogdan düzenlenir.
+# İşçilik saatleri SAHA GERÇEKÇİ adam-saattir (25 Eyl 2026, kullanıcı kararı): ÇŞB birim fiyat analizleri gerçek
+# şantiye verimini çoğu kalemde iki kat fazla gösterir (ör. pompalı beton ÇŞB 0,45 / sahada 0,11 sa/m³).
+# Saha ölçümü: Alboğa & Tantekin Çelik 2020, “Betonarme Bina İnşaatlarında Verimlilik Analizi”, Uludağ Üniv. Müh. Fak. Derg. 25(1), DOI 10.17482/uumfd.649299 — 10 katlı konut şantiyesinde iş ölçümü.
+# Ölçümü olmayan kalemde uluslararası tahmin normu (Methvin) ya da ÇŞB × ~0,5 kullanıldı; katalogdan düzenlenir.
 def _r(code, factor=1.0, spec="", times=""):
     return {"code": code, "factor": factor, "spec": spec, "times": times}
 
@@ -152,11 +155,11 @@ def _r(code, factor=1.0, spec="", times=""):
 RECIPES_BY_KIND: dict[str, list[dict]] = {
     # "kalip" reçetede yok: işçiliği eleman tipine / malzemeye göre hesaplanır (quantity/recipes.py: _formwork_recipe).
     # Kalıp iskelesi de reçetede değil: döşeme alanı × (H − d) (boq.structural_items)
-    "beton": [_r("BETON_ISCILIK", 1.0), _r("VIBRATOR", 0.3), _r("BETON_KUR", 1.0), _r("BETON_POMPAJ", 1.0)],
+    "beton": [_r("BETON_ISCILIK", 0.12), _r("VIBRATOR", 0.05), _r("BETON_KUR", 1.0), _r("BETON_POMPAJ", 1.0)],   # sahada 0,11 sa/m³ (ÇŞB 0,45)
     "demir": [_r("DEMIR_ISCILIK", 0.02)],                                         # 20 saat / ton = 0,02 saat / kg
-    "duvar": [_r("DUVAR_ISCILIK", 0.8), _r("DUVAR_TUTKAL", 4.0)],                # saat / m²; kg / m² (gazbeton tutkalı)
-    "siva": [_r("SIVA_ISCILIK", 0.7), _r("KOSE_PROFILI", 0.2)],
-    "boya": [_r("BOYA_ISCILIK", 0.3)],
+    "duvar": [_r("DUVAR_ISCILIK", 0.6), _r("DUVAR_TUTKAL", 4.0)],                # saat / m² (sahada gazbeton 0,60); kg / m² tutkal
+    "siva": [_r("SIVA_ISCILIK", 0.42), _r("KOSE_PROFILI", 0.2)],                 # sahada kaba + ince 0,42 (ÇŞB 1,45)
+    "boya": [_r("BOYA_ISCILIK", 0.2)],                                            # hazırlık + 2 kat (Methvin 0,20)
     "cam": [_r("CAM_MONTAJ", 0.5)],
     "tava": [_r("TAVA_MONTAJ", 0.4), _r("TAVA_ASKI", 0.6), _r("TAVA_EK", 0.35)],
     "kablo": [_r("KABLO_CEKME", 0.05)],
@@ -183,14 +186,16 @@ RECIPE_MAX_DEPTH = 4
 #   montaj   : yerine yerleştirme, aralık ayarı, bağlama, sehpa / pas payı
 #
 # Çift kat (alt + üst) donatıda montaj artar: üst hasır sehpa üstünde, havada bağlanır ve üstünde yürünür.
-# Değerler yaygın uygulama varsayılanıdır (ÇŞB analizinden doğrulanmadı) — projeye göre katalogdan düzenlenir.
+# Değerler saha gerçekçidir (bkz. reçeteler başlığındaki kaynak) — projeye göre katalogdan düzenlenir.
 REBAR_LABOR_HOURS_PER_TON: list[tuple[int, int, dict[str, float]]] = [
     #  min  max   hazırlık  taşıma  montaj      (saat / ton)
-    (6,  10, {"hazirlik": 12.0, "tasima": 6.0, "montaj": 24.0}),   # ince: çok çubuk, çok bağ noktası
-    (11, 12, {"hazirlik":  9.0, "tasima": 5.0, "montaj": 17.0}),
-    (13, 16, {"hazirlik":  8.0, "tasima": 4.0, "montaj": 13.0}),
-    (17, 22, {"hazirlik":  7.0, "tasima": 4.0, "montaj": 10.0}),
-    (23, 40, {"hazirlik":  6.0, "tasima": 4.0, "montaj":  8.0}),   # kalın: az çubuk ama ağır, vinç / iki kişi
+    # Sahada Ø8–28 karışık 18,6 sa/t ölçüldü (ÇŞB 22,5). Bantlar tipik çap dağılımında (%30 ≤Ø12, %50 Ø14–16,
+    # %20 ≥Ø18) bu ortalamayı verir; çap oranları Methvin döşeme / kiriş normlarıyla (Ø12 16–22, Ø20 9–12) uyumlu.
+    (6,  10, {"hazirlik": 8.0, "tasima": 4.0, "montaj": 15.0}),   # ince: çok çubuk, çok bağ noktası
+    (11, 12, {"hazirlik": 6.0, "tasima": 3.0, "montaj": 11.0}),
+    (13, 16, {"hazirlik": 5.0, "tasima": 3.0, "montaj":  8.0}),
+    (17, 22, {"hazirlik": 4.5, "tasima": 2.5, "montaj":  6.5}),
+    (23, 40, {"hazirlik": 4.0, "tasima": 2.5, "montaj":  5.0}),   # kalın: az çubuk ama ağır, vinç / iki kişi
 ]
 REBAR_LABOR_DEFAULT_DIA = 14        # çapı okunamayan demir kaleminde varsayılan bant
 MIN_REBAR_DIA, MAX_REBAR_DIA = 6, 40
@@ -243,7 +248,8 @@ def rebar_labor_norms(dia_mm: int, layers: str = "", prefab_pct: float = 0.0) ->
 #   söküm  : söküm, temizleme, yağlama, bir sonraki kata taşıma
 #
 # Hazır panolu sistemler (çelik pano, tünel kalıp) imalatı ortadan kaldırır, kurma ve sökümü hızlandırır.
-# Değerler yaygın uygulama varsayılanıdır (ÇŞB analizinden doğrulanmadı) — katalogdan / parametreden düzenlenir.
+# Plywood döşemede toplam ~0,90 sa/m² (5 kullanım) — sahada plywood kalıp 0,94 ölçüldü (ÇŞB 1,85–2,95).
+# Eleman tipleri arası oran yaygın uygulamadır; katalogdan / parametreden düzenlenir.
 FORMWORK_LABOR_HOURS_PER_M2: dict[str, dict[str, float]] = {
     #                    imalat  kurma  söküm      (saat / m², plywood, tek kullanım)
     "column":     {"imalat": 0.35, "kurma": 0.75, "sokum": 0.35},

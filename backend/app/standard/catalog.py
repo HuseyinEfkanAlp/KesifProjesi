@@ -489,27 +489,28 @@ AUX_ITEMS: list[CatalogItem] = [
 ]
 DEFAULT_ITEMS.extend(AUX_ITEMS)
 
-# Kalem -> reçete (bileşen kodu, çarpan, özellik). Çarpanlar yaygın uygulama / ÇŞB analiz varsayılanıdır; kullanıcı düzenler.
-# Birim başına adam-saat: beton 1,0 / m³, demir 20 / t, kalıp 1,2 / m² (kurma + söküm), duvar 0,8 / m², sıva 0,7, boya 0,3,
-# seramik 1,0, kablo 0,05 / m, PPRC 0,25 / m, çelik boru 0,5 / m, kanal 0,6 / m, sprinkler 1,2 / adet, vitrifiye 2 / adet.
+# Kalem -> reçete (bileşen kodu, çarpan, özellik); kullanıcı düzenler. İnşaat işçilikleri SAHA GERÇEKÇİ adam-saattir
+# (standard.rules reçeteler başlığındaki kaynak: Alboğa & Tantekin Çelik 2020 şantiye ölçümü; ÇŞB analizi gerçeğin ~2 katı):
+# beton 0,12 / m³, demir ~18 / t, kalıp ~0,9 / m², gazbeton / tuğla 0,6 / m², sıva 0,42, boya 0,2, seramik 0,55–0,6,
+# laminat 0,25. Tesisat: kablo 0,05 / m, PPRC 0,25 / m, çelik boru 0,5 / m, kanal 0,6 / m, sprinkler 1,2 / adet, vitrifiye 2 / adet.
 DEFAULT_RECIPES: dict[str, list[tuple]] = {
     # STA
-    "BETON": [("BETON_ISCILIK", 1.0), ("VIBRATOR", 0.3), ("BETON_KUR", 1.0), ("BETON_POMPAJ", 1.0)],
-    "GROBETON": [("BETON_ISCILIK", 0.8), ("BETON_POMPAJ", 1.0)],
+    "BETON": [("BETON_ISCILIK", 0.12), ("VIBRATOR", 0.05), ("BETON_KUR", 1.0), ("BETON_POMPAJ", 1.0)],
+    "GROBETON": [("BETON_ISCILIK", 0.12), ("BETON_POMPAJ", 1.0)],
     "DOLGU": [("SIKISTIRMA", 0.3), ("KAMYON", 0.08)],
     "KAZI": [("KAZI_MAKINE", 0.05), ("KAMYON", 0.1)],
     # KALIP reçetesi koda gömülü değildir: eleman tipine / malzemeye göre hesaplanır (quantity/recipes.py: _formwork_recipe)
     "CELIK_PROFIL": [("KAYNAK", 0.5), ("ANTIPAS", 0.3), ("CELIK_BOYA", 0.3), ("CELIK_MONTAJ", 0.4), ("ANKRAJ_BULONU", 0.2, "M20")],
     "HASIR_CELIK": [("DEMIR_ISCILIK", 0.05)],
     # DEMIR reçetesi koda gömülü değildir: çapa / kata göre hesaplanır (quantity/recipes.py: _rebar_recipe).
-    "SEHPA_DEMIRI": [("DEMIR_HAZIRLIK", 0.012), ("DEMIR_MONTAJ", 0.020)],   # saat/kg; sehpa bükümlü, yerine tek tek konur
+    "SEHPA_DEMIRI": [("DEMIR_HAZIRLIK", 0.008), ("DEMIR_MONTAJ", 0.015)],   # saat/kg (Ø8–10 saha bandı); sehpa bükümlü, tek tek konur
     # lento: yerinde döküm varsayımı (adet başına 0,03 m³ beton, 3 kg demir, 0,3 m² kalıp); prefabrik ise katalogdan sıfırlayın
     "LENTO": [("BETON", 0.03, "25"), ("DEMIR", 3.0, "12"), ("KALIP", 0.3)],
-    "SAHA_BETONU": [("BETON_ISCILIK", 0.8), ("BETON_KUR", 1.0), ("BETON_POMPAJ", 1.0)],
+    "SAHA_BETONU": [("BETON_ISCILIK", 0.25), ("BETON_KUR", 1.0), ("BETON_POMPAJ", 1.0)],
     # MIM
-    "DUVAR_YTONG": [("DUVAR_ISCILIK", 0.8), ("DUVAR_TUTKAL", 4.0)],
-    "DUVAR_TUGLA": [("DUVAR_ISCILIK", 1.0), ("HARC", 25.0)],
-    "DUVAR_BIMS": [("DUVAR_ISCILIK", 0.9), ("HARC", 20.0)],
+    "DUVAR_YTONG": [("DUVAR_ISCILIK", 0.6), ("DUVAR_TUTKAL", 4.0)],
+    "DUVAR_TUGLA": [("DUVAR_ISCILIK", 0.6), ("HARC", 25.0)],
+    "DUVAR_BIMS": [("DUVAR_ISCILIK", 0.6), ("HARC", 20.0)],
     "DUVAR_ALCIPAN": [("DUVAR_ISCILIK", 0.9), ("ALCIPAN_PROFIL", 3.0), ("ALCIPAN_VIDA", 30.0), ("DERZ_BANDI", 2.0), ("TASYUNU", 1.0, "5")],
     "CAM": [("CAM_MONTAJ", 0.5)],   # fitil / silikon pencere ve doğrama reçetesinde (boşluk çevresinden); cam m² ile çift yazılmaz
     # pencere: körkasa + sabitleme + cam izolasyonu (çevre) + denizlik (genişlik)
@@ -526,17 +527,17 @@ DEFAULT_RECIPES: dict[str, list[tuple]] = {
                 ("KILIT", 1.0, "", "", "door"), ("KAPI_KOLU", 1.0, "", "", "door"), ("STOPER", 1.0, "", "", "door"), ("ESIK", 1.0, "", "WID", "door")],
     "KOREKUYU": [("KOREKUYU_MONTAJ", 0.8), ("ANKRAJ_BULONU", 2.0, "M10")],
     # INC
-    "SIVA": [("SIVA_ISCILIK", 0.7), ("KOSE_PROFILI", 0.2)],
-    "BOYA": [("BOYA_ISCILIK", 0.3)],
-    "ASTAR": [("BOYA_ISCILIK", 0.1)],
-    "SERAMIK_ZEMIN": [("KAPLAMA_ISCILIK", 1.0), ("SERAMIK_YAPISTIRICI", 5.0), ("DERZ_DOLGU", 0.5)],
-    "SERAMIK_DUVAR": [("KAPLAMA_ISCILIK", 1.2), ("SERAMIK_YAPISTIRICI", 5.0), ("DERZ_DOLGU", 0.5)],
-    "LAMINAT": [("KAPLAMA_ISCILIK", 0.4), ("SILTE", 1.05)],
+    "SIVA": [("SIVA_ISCILIK", 0.42), ("KOSE_PROFILI", 0.2)],
+    "BOYA": [("BOYA_ISCILIK", 0.2)],
+    "ASTAR": [("BOYA_ISCILIK", 0.05)],
+    "SERAMIK_ZEMIN": [("KAPLAMA_ISCILIK", 0.55), ("SERAMIK_YAPISTIRICI", 5.0), ("DERZ_DOLGU", 0.5)],
+    "SERAMIK_DUVAR": [("KAPLAMA_ISCILIK", 0.56), ("SERAMIK_YAPISTIRICI", 5.0), ("DERZ_DOLGU", 0.5)],
+    "LAMINAT": [("KAPLAMA_ISCILIK", 0.25), ("SILTE", 1.05)],
     "ASMA_TAVAN": [("KAPLAMA_ISCILIK", 0.6), ("ASKI_TELI", 2.0), ("TAVAN_PROFILI", 3.0)],
     "SUPURGELIK": [("KAPLAMA_ISCILIK", 0.15)],
     "SAP": [("SAP_ISCILIK", 8.0)],
-    "DOSEME_KAPLAMA": [("KAPLAMA_ISCILIK", 1.0), ("SERAMIK_YAPISTIRICI", 5.0)],
-    "TAVAN_SIVA_BOYA": [("SIVA_ISCILIK", 0.7), ("BOYA_ISCILIK", 0.4)],
+    "DOSEME_KAPLAMA": [("KAPLAMA_ISCILIK", 0.55), ("SERAMIK_YAPISTIRICI", 5.0)],
+    "TAVAN_SIVA_BOYA": [("SIVA_ISCILIK", 0.5), ("BOYA_ISCILIK", 0.25)],   # tavan: baş üstü, duvardan yavaş
     # IZO
     "XPS": [("YALITIM_ISCILIK", 0.2)], "EPS": [("YALITIM_ISCILIK", 0.2)], "TASYUNU": [("YALITIM_ISCILIK", 0.2)],
     "SU_YALITIM_MEMBRAN": [("YALITIM_ISCILIK", 0.3), ("BITUM_ASTAR", 0.4)],
@@ -560,7 +561,7 @@ DEFAULT_RECIPES: dict[str, list[tuple]] = {
     "KENET_KAPLAMA": [("CATI_ISCILIK", 0.8), ("KENET_KLIPS", 6.0)],
     "AYIRICI_KECE": [("CATI_ISCILIK", 0.05)], "OSB": [("CATI_ISCILIK", 0.3)], "CATI_TAHTASI": [("CATI_ISCILIK", 0.4)],
     "MERTEK": [("CATI_ISCILIK", 0.2)], "ASIK": [("CATI_ISCILIK", 0.15)], "CATI_LATA": [("CATI_ISCILIK", 0.1)],
-    "EGIM_BETONU": [("BETON_ISCILIK", 0.5)], "CATI_CAKIL": [("CATI_ISCILIK", 0.1)], "KORUMA_BETONU": [("BETON_ISCILIK", 0.5)],
+    "EGIM_BETONU": [("BETON_ISCILIK", 0.3)], "CATI_CAKIL": [("CATI_ISCILIK", 0.1)], "KORUMA_BETONU": [("BETON_ISCILIK", 0.3)],
     # ELK
     "KABLO": [("KABLO_CEKME", 0.05)],
     "TAVA": [("TAVA_MONTAJ", 0.4), ("TAVA_ASKI", 0.6), ("TAVA_EK", 0.35)],

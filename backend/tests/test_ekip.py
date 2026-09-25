@@ -36,8 +36,9 @@ def test_ekip_sayisi_sureyi_boler(client, storey_dxf):
     iki = client.get(f"/api/projects/{pid}/cost").json()["cost"]["duration"]
 
     assert iki["total_hours"] == pytest.approx(bir["total_hours"])      # iş miktarı değişmez
-    assert iki["parallel_days"] == pytest.approx(bir["parallel_days"] / 2, rel=0.02)
-    assert iki["implied_headcount"] == pytest.approx(bir["implied_headcount"] * 2, rel=0.02)
+    # gün 0,1 adımla yuvarlanır: küçük işte yuvarlama oranı bozar
+    assert iki["parallel_days"] == pytest.approx(bir["parallel_days"] / 2, abs=0.1)
+    assert iki["implied_headcount"] == pytest.approx(bir["implied_headcount"] * 2, rel=0.05)
 
 
 def test_gereken_kisi_sayisi_sureden_turer(client, storey_dxf):

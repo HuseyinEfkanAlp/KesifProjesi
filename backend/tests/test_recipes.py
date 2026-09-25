@@ -203,8 +203,8 @@ def test_rebar_labor_depends_on_diameter():
     cat = Catalog()
     thin = {i.kind: i.quantity for i in expand_recipes([_rebar("o8", 1000.0)], cat)}
     thick = {i.kind: i.quantity for i in expand_recipes([_rebar("o26", 1000.0)], cat)}
-    assert thin["demir_montaj"] == pytest.approx(24.0)    # 1 ton Ø8  -> 24 saat montaj
-    assert thick["demir_montaj"] == pytest.approx(8.0)    # 1 ton Ø26 ->  8 saat
+    assert thin["demir_montaj"] == pytest.approx(15.0)    # 1 ton Ø8  -> 15 saat montaj (saha)
+    assert thick["demir_montaj"] == pytest.approx(5.0)    # 1 ton Ø26 ->  5 saat
     assert thin["demir_hazirlik"] > thick["demir_hazirlik"]
     # eski tek kalem artık yazılmaz
     assert "demir_iscilik" not in thin
@@ -215,8 +215,8 @@ def test_rebar_double_layer_adds_chairs_and_hours():
     cat = Catalog()
     tek = {i.kind: i.quantity for i in expand_recipes([_rebar("o20", 1000.0, "tek")], cat)}
     cift = {i.kind: i.quantity for i in expand_recipes([_rebar("o20", 1000.0, "cift")], cat)}
-    # montaj = demirin kendisi × 1,15 + sehpa demirinin yerine konması (25 kg × 0,020 sa/kg)
-    assert cift["demir_montaj"] == pytest.approx(tek["demir_montaj"] * 1.15 + 25 * 0.020)
+    # montaj = demirin kendisi × 1,15 (0,01 saate yuvarlanır) + sehpa demirinin yerine konması (25 kg × 0,015 sa/kg)
+    assert cift["demir_montaj"] == pytest.approx(tek["demir_montaj"] * 1.15 + 25 * 0.015, abs=0.01)
     assert cift["demir_tasima"] == pytest.approx(tek["demir_tasima"])      # taşıma kattan etkilenmez
     assert "sehpa_demiri" not in tek
     assert cift["sehpa_demiri"] == pytest.approx(25.0)                     # 25 kg / ton
@@ -230,13 +230,13 @@ def test_rebar_prefab_removes_site_preparation():
     site = {i.kind: i.quantity for i in expand_recipes([_rebar("o14", 1000.0)], cat, params={})}
     ready = {i.kind: i.quantity for i in expand_recipes([_rebar("o14", 1000.0)], cat,
                                                         params={"rebar_prefab_pct": 100.0})}
-    assert site["demir_hazirlik"] == pytest.approx(8.0)
+    assert site["demir_hazirlik"] == pytest.approx(5.0)
     assert "demir_hazirlik" not in ready                                   # tamamen ortadan kalkar
     assert ready["demir_montaj"] == pytest.approx(site["demir_montaj"])     # montaj ve taşıma değişmez
     assert ready["demir_tasima"] == pytest.approx(site["demir_tasima"])
     half = {i.kind: i.quantity for i in expand_recipes([_rebar("o14", 1000.0)], cat,
                                                        params={"rebar_prefab_pct": 50.0})}
-    assert half["demir_hazirlik"] == pytest.approx(4.0)
+    assert half["demir_hazirlik"] == pytest.approx(2.5)
 
 
 def test_rebar_layer_verdict_from_real_drawing_texts():

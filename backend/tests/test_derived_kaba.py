@@ -17,10 +17,10 @@ def test_lento_recipe_chain():
     k = {i.key: i for i in items}
     assert k["lento:*"].quantity == 10
     assert k["beton:25"].quantity == pytest.approx(0.3) and k["demir:12"].quantity == pytest.approx(30) and k["kalip:*"].quantity == pytest.approx(3.0)
-    # demir işçiliği çapa göre: Ø12 bandı 9 + 5 + 17 saat/ton (rules.REBAR_LABOR_HOURS_PER_TON)
-    assert k["demir_hazirlik:*"].quantity == pytest.approx(30 * 0.009)
-    assert k["demir_tasima:*"].quantity == pytest.approx(30 * 0.005)
-    assert k["demir_montaj:*"].quantity == pytest.approx(30 * 0.017)
+    # demir işçiliği çapa göre: Ø12 bandı 6 + 3 + 11 saat/ton (saha) (rules.REBAR_LABOR_HOURS_PER_TON)
+    assert k["demir_hazirlik:*"].quantity == pytest.approx(30 * 0.006)
+    assert k["demir_tasima:*"].quantity == pytest.approx(30 * 0.003)
+    assert k["demir_montaj:*"].quantity == pytest.approx(30 * 0.011)
     # lento kalıbı eleman tipi taşımaz: genel bant (0,30 imalat / 5 kullanım + 0,60 kurma + 0,30 söküm)
     assert k["kalip_kurma:*"].quantity == pytest.approx(3.0 * 0.60)
     assert k["kalip_sokum:*"].quantity == pytest.approx(3.0 * 0.30)
