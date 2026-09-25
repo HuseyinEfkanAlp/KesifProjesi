@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import re
 import statistics
 from collections import Counter
 from dataclasses import dataclass, field
@@ -21,7 +22,7 @@ from .detectors.openings import detect_openings, detect_poz_openings, poz_catalo
 from .detectors.shear_walls import detect_shear_walls
 from .detectors.slabs import detect_slabs
 from .detectors.standard import assign_roof_zones, detect_mapped, detect_standard, standard_layers
-from .detectors.walls import detect_walls
+from .detectors.walls import detect_walls, mark_walls_on_axes
 from .merge import merge_area_elements
 from .geometry import polygon_area
 from shapely.geometry import Point as SPoint, Polygon
@@ -35,7 +36,7 @@ from .rebar_mix import scan_drawing as scan_rebar_mix
 from .rebar_mix import scan_drawing_layers as scan_rebar_layers
 from .materials import finish_of, scan_materials
 from .schedules import RoomRow, parse_room_area, parse_schedule
-from .spaces import detect_spaces, has_space_labels
+from .spaces import _labels as _space_labels, detect_spaces, has_space_labels
 from ..standard.catalog import Catalog, parse_layer
 
 
@@ -200,10 +201,36 @@ def _structural(drawing: Drawing, layers_by_type: dict[str, list[str]], params: 
                                    f"(miktar sayıldı, ad eşleşmedi): " + _names(renamed) + " — kesitleri Elemanlar ekranından doğrulayın")
     if slabs:
         gap, renamed = _unclaimed_labels(labels, slabs, "slab")
+        # Etiket ölçülmüş bir döşemenin içindeyse alanı sayılmıştır: mühendis döşemeyi tek çokgenle çizip içine birden
+        # çok marka yazmış (D1…D4). "Elle ekleyin" demek kullanıcıya aynı alanı ikinci kez girdirmek olur.
+        covered = _labels_inside(labels, slabs, "slab", set(gap))
+        if covered:
+            gap = [g for g in gap if g not in covered]
+            result.warnings.append(f"{len(covered)} döşeme markası ({_names(sorted(covered))}) ayrı bir hücreye bölünmemiş ama "
+                                   "ölçülen döşeme çokgeninin içinde: alanı o döşemede sayıldı, döşeme kalınlıkları aynıysa eksik yok.")
         if gap:
             result.warnings.append(f"{len(gap)} döşeme etiketi kapalı bir hücreye düşmedi (kiriş / perde çizgileri hücreyi kapatmıyor): "
                                    + _names(gap) + " — bu döşemeleri elle ekleyin")
     return columns + walls + beams + slabs + founds + parapets
+
+
+def _labels_inside(labels: LabelIndex, elements: list[DetectedElement], type_hint: str, names: set[str]) -> set[str]:
+    """names içinden, konumu ölçülmüş bir elemanın çokgeni içinde kalan etiket adları."""
+    polys = []
+    for e in elements:
+        if len(e.points or []) >= 3:
+            try:
+                polys.append(Polygon(e.points).buffer(0))
+            except Exception:
+                continue
+    out: set[str] = set()
+    for ent, lab in labels.items:
+        if lab.type_hint != type_hint or lab.name not in names or not getattr(ent, "points", None):
+            continue
+        p = SPoint(ent.points[0][0], ent.points[0][1])
+        if any(pl.contains(p) for pl in polys):
+            out.add(lab.name)
+    return out
 
 
 def _names(names: list[str], limit: int = 12) -> str:
@@ -249,6 +276,9 @@ def _section_measured_near(pt, lab, elements: list[DetectedElement], radius: flo
             continue
     return False
 
+
+# mimari duvar katmanı adında perde geçiyorsa betonarme perdedir (örgü değil)
+PERDE_LAYER = re.compile(r"PERDE|SHEAR", re.IGNORECASE)
 
 MIN_PLAN_GEOMETRY = 60   # bu kadar az çizgi / çokgen olan mimari paftada plan çizilmemiştir (yalnız yazı / xref izi)
 
@@ -463,7 +493,9 @@ def scan_spaces(drawing: Drawing, profile, catalog: Catalog | None) -> tuple[lis
     layers = space_layers(drawing, profile, catalog)
     if not layers:
         return [], []
-    sps, warns = detect_spaces(drawing, layers)
+    op_layers = [n for n in drawing.layers
+                 if profile is not None and profile.classify(n, "architectural") in ("door", "window")]
+    sps, warns = detect_spaces(drawing, layers, opening_layers=op_layers)
     return [x.to_dict() for x in sps], warns
 
 
@@ -486,12 +518,19 @@ def room_rows(drawing: Drawing) -> list[dict]:
         f = finish_of(e.text)
         if f:
             notes.append((f, pt))
+    # Ad ve alan ayrı yazılmışsa ("SALON" + "27,19 m²") ad komşu yazıdan gelir (spaces._labels aynı birleştirmeyi
+    # yapar); yoksa dört ayrı oda "MAHAL 27,19" diye tek satıra inerdi.
+    named = {(round(l.pt.x, 3), round(l.pt.y, 3)): l.name for l in _space_labels(drawing) if l.area > 0 and l.name}
     rows: list[dict] = []
     seen: set[tuple[str, float]] = set()
     pts: list[tuple[float, float] | None] = []
     for r, pt in rooms:
+        if r.name == "MAHAL" and pt is not None:
+            nm = named.get((round(pt[0], 3), round(pt[1], 3)))
+            if nm:
+                r = RoomRow(nm, r.area_m2, f"{nm} {r.raw}"[:60])
         key = (r.name, round(r.area_m2, 2))
-        if key in seen:
+        if r.name != "MAHAL" and key in seen:
             continue
         seen.add(key)
         row = r.to_dict()
@@ -717,6 +756,25 @@ def analyze_drawing(drawing: Drawing, profile: LayerProfile | None = None,
     result.elements = []
     for d in discs:
         result.elements += DISCIPLINE_RUNNERS[d](drawing, layers_by_disc[d], params, result)
+    walls = [e for e in result.elements if e.etype == "wall"]
+    if walls:
+        # mimari plandaki kolon izleri (statik katman adıyla çizilir, burada sayılmaz): duvarın kolon içindeki boyu
+        # düşülür, kolondan kolona uzanan duvar kiriş hattında işaretlenir (duvar yüksekliği kiriş altına kadar)
+        # "brn_perde duvar": mimari planın duvar katmanındaki betonarme perde. Örgü değildir (betonu statikte
+        # sayılır) ama yüzü sıvanır / boyanır: eleman kalır, örgü metrajına girmez (quantity/boq). Perdenin
+        # altında kalan başka duvar çizgisi (brn_wall_constr) perdenin kendisidir, kolon gibi düşülür.
+        for w in walls:
+            if PERDE_LAYER.search(w.layer or ""):
+                w.meta["perde"] = True
+                w.subtype = "perde"
+        # duvarın kendi katmanı kolon / perde deseni de taşıyabilir: duvar kendi çizgisiyle kesilmez
+        col_layers = {n for n in drawing.layers if profile.classify(n, "structural") in ("column", "shear_wall")}             - {w.layer for w in walls}
+        cols = [e.points for e in drawing.entities if e.layer in col_layers and e.is_closed_polygon]
+        cols += [w.points for w in walls if w.meta.get("perde") and len(w.points or []) >= 3]
+        n_axis = mark_walls_on_axes([w for w in walls if not w.meta.get("perde")], cols)
+        if n_axis:
+            result.warnings.append(f"{n_axis} duvar kolon aksında (kiriş altında): yüksekliği kiriş altına kadar alınır; "
+                                   "kolonun içinden geçen boy duvardan düşüldü.")
     if ksf_dims:
         # KSF kiriş / perde katmanı tek eksen çizgisiyle çizilmişse (çift çizgi / çokgen yok): çizgiler kesiti katman adından alan elemanlar
         found_layers = {e.layer for e in result.elements}

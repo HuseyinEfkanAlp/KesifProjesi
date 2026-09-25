@@ -18,6 +18,48 @@ from .base import DetectParams, DetectedElement
 DEFAULT_HEIGHT = {"door": 2.10, "window": 1.40}
 DEFAULT_WIDTH = {"door": 0.90, "window": 1.20}
 
+# Kırpılmış paftada blok yerleşimi yalnız bir işaretçidir (boş blok tanımı + ekleme noktası); bloğun çizgileri aynı
+# katmana patlatılmış olarak yazılır (sheets._write_insert_marker). Kutusu olmayan boşluk duvarın neresinde
+# durduğunu bilemez: ekleme noktası kasanın köşesindeyse kesilmiş duvarın ucuna değer ve açıklık iki kez düşülür.
+# Kutu, ekleme noktasına değen (ya da bu kadar yakın) çizgilerden başlayıp birbirine değenlerle büyütülerek kurulur.
+MARKER_SEED = 0.25          # m — ekleme noktasına bu kadar yakın çizgi bloğun parçasıdır
+MARKER_TOUCH = 0.01         # m — birbirine değen çizgiler aynı bloktandır
+MARKER_MAX = 4.0            # m — bundan büyük öbek tek bir doğrama değildir (komşu blokları yutmasın)
+
+
+def _marker_extent(drawing: Drawing, ins: Entity, cache: dict) -> list | None:
+    """Kutusuz blok işaretçisinin kutusu: aynı katmandaki patlatılmış çizgilerden. Bulunamazsa None."""
+    from shapely.geometry import LineString
+    if ins.layer not in cache:
+        geoms = []
+        for e in drawing.by_layer(ins.layer):
+            if e.kind in ("text", "insert") or len(e.points) < 2:
+                continue
+            geoms.append(LineString(e.points))
+        cache[ins.layer] = (geoms, STRtree(geoms) if geoms else None)
+    geoms, tree = cache[ins.layer]
+    if tree is None:
+        return None
+    p = SPoint(ins.points[0])
+    comp = {int(i) for i in tree.query(p.buffer(MARKER_SEED)) if geoms[int(i)].distance(p) <= MARKER_SEED}
+    frontier = list(comp)
+    while frontier:
+        g = geoms[frontier.pop()]
+        for j in tree.query(g.buffer(MARKER_TOUCH)):
+            j = int(j)
+            if j not in comp and geoms[j].distance(g) <= MARKER_TOUCH:
+                comp.add(j)
+                frontier.append(j)
+        if len(comp) > 60:
+            return None
+    if not comp:
+        return None
+    xs = [c[0] for i in comp for c in geoms[i].coords]
+    ys = [c[1] for i in comp for c in geoms[i].coords]
+    if max(xs) - min(xs) > MARKER_MAX or max(ys) - min(ys) > MARKER_MAX:
+        return None
+    return [(min(xs), min(ys)), (max(xs), min(ys)), (max(xs), max(ys)), (min(xs), max(ys))]
+
 
 def detect_openings(drawing: Drawing, layers_by_type: dict[str, list[str]], params: DetectParams) -> list[DetectedElement]:
     """layers_by_type: {"door": [...], "window": [...]}"""
@@ -30,6 +72,7 @@ def detect_openings(drawing: Drawing, layers_by_type: dict[str, list[str]], para
     tree = STRtree(pts) if pts else None
     claimed: set[int] = set()
     elements: list[DetectedElement] = []
+    extent_cache: dict = {}
 
     def nearest_label(poly_pts, etype: str, radius: float) -> OpeningLabel | None:
         if tree is None or not poly_pts:
@@ -60,10 +103,13 @@ def detect_openings(drawing: Drawing, layers_by_type: dict[str, list[str]], para
             kind = opening_type_from_name(ins.block) or etype
             if kind != etype and layers_by_type.get(kind):
                 continue  # kapı katmanına konmuş pencere bloğu kendi turunda sayılır
-            el = DetectedElement(etype=etype, layer=ins.layer, points=list(ins.points), source="INSERT",
+            box = list(ins.points)
+            if len(box) == 1:
+                box = _marker_extent(drawing, ins, extent_cache) or box
+            el = DetectedElement(etype=etype, layer=ins.layer, points=box, source="INSERT",
                                  handle=ins.handle, confidence=0.75, name=None, subtype=ins.block)
             width, height = None, None
-            lab = nearest_label(ins.points, etype, params.label_search_radius)
+            lab = nearest_label(box, etype, params.label_search_radius)
             if lab:
                 el.label_raw = lab.raw
                 el.name = lab.name
@@ -75,8 +121,8 @@ def detect_openings(drawing: Drawing, layers_by_type: dict[str, list[str]], para
                 if bw:
                     width, height = bw, bh
                     el.confidence = max(el.confidence, 0.8)
-            if width is None and len(ins.points) >= 3:
-                long_side, short_side, _ = min_area_rect(ins.points)
+            if width is None and len(box) >= 3:
+                long_side, short_side, _ = min_area_rect(box)
                 if 0.4 <= long_side <= 6.0:
                     width = long_side
                     el.warnings.append("Genişlik blok kutusundan alındı; etiket yok")

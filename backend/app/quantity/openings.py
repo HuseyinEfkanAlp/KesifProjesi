@@ -64,6 +64,42 @@ def _host_tolerance(wall) -> float:
     return max(b, 0.0) / 2.0 + HOST_MARGIN
 
 
+# Kutusu bilinen boşluk ancak duvar boyunca genişliğinin bu kadarı duvar parçasının İÇİNDEyse duvarın üstündedir.
+# Kasanın köşesi kesilmiş duvarın ucuna değer (mesafe 0) ama boşluk duvarın dışında, açıklıkta durur: o alan
+# zaten duvar değildir. Mesafe tek başına bunu ayıramaz (altın bina: 13 pencere iki kez düşülüyordu).
+ON_WALL_OVERLAP = 0.5
+
+
+def _axis_overlap(opening_shape, wall_shape) -> float | None:
+    """Boşluğun duvar doğrultusundaki izdüşümünün duvar parçasıyla örtüşen payı (0–1). Kutu yoksa None."""
+    if opening_shape is None or wall_shape is None or opening_shape.geom_type == "Point":
+        return None
+    try:
+        rect = wall_shape.minimum_rotated_rectangle
+        cs = list(rect.exterior.coords)[:4] if rect.geom_type == "Polygon" else list(rect.coords)
+    except (GEOSException, AttributeError):
+        return None
+    if len(cs) < 2:
+        return None
+    # duvar ekseni: dikdörtgenin uzun kenarı
+    edges = [(cs[i], cs[(i + 1) % len(cs)]) for i in range(len(cs) if len(cs) > 2 else 1)]
+    (x0, y0), (x1, y1) = max(edges, key=lambda e: (e[1][0] - e[0][0]) ** 2 + (e[1][1] - e[0][1]) ** 2)
+    L = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** .5
+    if L < 1e-9:
+        return None
+    ux, uy = (x1 - x0) / L, (y1 - y0) / L
+
+    def span(g):
+        pts = list(g.exterior.coords) if g.geom_type == "Polygon" else list(g.coords)
+        ts = [(p[0] - x0) * ux + (p[1] - y0) * uy for p in pts]
+        return min(ts), max(ts)
+    a, b = span(opening_shape)
+    c, d = span(rect if rect.geom_type == "Polygon" else wall_shape)
+    if b - a < 1e-6:
+        return None
+    return max(0.0, min(b, d) - max(a, c)) / (b - a)
+
+
 def allocate_openings(walls, openings, deductible, tolerance=None):
     """walls: [{element, gross}], openings: [{element, width, height, count}].
 
@@ -75,6 +111,7 @@ def allocate_openings(walls, openings, deductible, tolerance=None):
     tols = [_host_tolerance(w) if tolerance is None else tolerance for w in walls]
     issues = []
     already_net = {'count': 0, 'area_m2': 0.0}
+    gap_fill = {'count': 0, 'len': 0.0}
     for opening in openings:
         e = opening['element']
         width, height, count = opening['width'], opening['height'], opening['count']
@@ -88,16 +125,45 @@ def allocate_openings(walls, openings, deductible, tolerance=None):
         chosen = None
         method = 'geometry'
         nearest = None
+        on_wall = []
         if shape is not None:
             candidates = sorted((shape.distance(s), i) for i, s in enumerate(shapes) if s is not None)
             nearest = candidates[0] if candidates else None
-            # duvarın üstünde mi: her duvarın kendi yarı kalınlığı kadar tolerans
-            on_wall = [(d, i) for d, i in candidates if d <= tols[i]]
-            if on_wall and (len(on_wall) == 1 or on_wall[1][0] - on_wall[0][0] > .05):
+            # duvarın üstünde mi: her duvarın kendi yarı kalınlığı kadar tolerans + (kutu biliniyorsa) boşluğun
+            # duvar doğrultusunda en az yarısı duvar parçasının içinde
+            for d, i in candidates:
+                if d > tols[i]:
+                    continue
+                ov = _axis_overlap(shape, shapes[i])
+                if ov is None or ov >= ON_WALL_OVERLAP:
+                    on_wall.append((d, i, ov))
+            boxed = [w for w in on_wall if w[2] is not None]
+            if boxed:
+                # köşedeki kapı iki duvara da değer: boşluğu en çok içine alan duvar taşır, eşitse en yakını
+                chosen = max(boxed, key=lambda w: (round(w[2], 2), -w[0]))[1]
+            elif on_wall and (len(on_wall) == 1 or on_wall[1][0] - on_wall[0][0] > .05):
                 chosen = on_wall[0][1]
         # Koordinatsız elle girişte tek duvar varsa malzeme tektir; konum kanıtı yoktur.
         if chosen is None and len(walls) == 1 and (shape is None or shapes[0] is None):
             chosen, method = 0, 'single_wall_assumption'
+        if chosen is None and not on_wall and nearest is not None and nearest[0] <= NEAR_WALL and 'h' in walls[nearest[1]]:
+            # Duvar boşlukta kesilerek çizilmiş: planda açıklık var ama duvar boşluğun altında (denizlik / parapet)
+            # ve üstünde (lento) sürer. Açıklığın genişliği duvara eklenir, boşluk alanı düşülür — kesilmiş çizimde
+            # "alan zaten net" demek pencere başına ~1,5 m² duvarı kaybetmektir (altın bina: gazbeton %12 eksikti).
+            w = walls[nearest[1]]
+            w['gross'] += width * count * w['h']
+            if 'h_orgu' in w:
+                w['gross_orgu'] += width * count * w['h_orgu']
+            a = allocations[nearest[1]]
+            a['all'] += area
+            if deductible(width * height):
+                a['deducted'] += area
+            a['gap_len'] = a.get('gap_len', 0.0) + width * count
+            a['matches'].append({**record, 'wall_id': value(w['element'], 'id'), 'method': 'gap',
+                                 'distance_m': round(nearest[0], 3)})
+            gap_fill['count'] += 1
+            gap_fill['len'] += width * count
+            continue
         if chosen is None:
             if nearest is not None and nearest[0] <= NEAR_WALL:
                 # Duvar boşlukta kesilerek çizilmiş: açıklık zaten duvar alanına girmemiş. Tekrar düşülmez.
@@ -121,6 +187,10 @@ def allocate_openings(walls, openings, deductible, tolerance=None):
         if allocation['all'] > wall['gross'] + 1e-6:
             issues.append({'opening': '', 'area_m2': allocation['all'], 'reason': 'exceeds_wall',
                            'message': 'Eşleştirilen boşluk alanı duvar brüt alanını aşıyor; ölçü, adet ve duvar ilişkisi kontrol edilmeli.'})
+    if gap_fill['count']:
+        issues.append({'opening': '', 'area_m2': 0.0, 'reason': 'gap',
+                       'message': f"{gap_fill['count']} boşluk duvar parçaları arasındaki açıklıkta: açıklık genişliği "
+                                  f"({gap_fill['len']:.1f} m) duvara eklendi (lento / denizlik altı duvar), boşluk alanı düşüldü."})
     if already_net['count']:
         issues.append({'opening': '', 'area_m2': round(already_net['area_m2'], 2), 'reason': 'already_net',
                        'message': f"{already_net['count']} boşluk ({already_net['area_m2']:.1f} m²) duvar parçaları arasındaki "

@@ -785,10 +785,12 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     sc = storey_counts(project, all_drawings)
     riskli = {d.id for d in drawings
               if (sc["per_drawing"].get(d.id, {}).get("kind") == "default" and (sc["total"] or 1) > 1)}
+    # kiriş hattındaki duvar kiriş altına kadar örülür: kiriş yüksekliği statik paftalardaki baskın kiriş
+    beam_depth = dominant_beam_depth([e for d in drawings for e in els_by_id.get(d.id, []) if e.etype == "beam"])
     for d in drawings:
         elements = els_by_id[d.id]
         entry = {"id": d.id, "label": d.label or d.filename, "storey_count": d.storey_count,
-                 "storey_height": storey_height_of(project, d, sh),
+                 "storey_height": storey_height_of(project, d, sh), "beam_depth": beam_depth,
                  "slab_thickness": st["per_drawing"].get(d.id, {}).get("value") or project.slab_thickness,
                  "height_source": sh["per_drawing"].get(d.id, {}).get("source", sh["source"]),
                  "storey_risk": d.id in riskli,
@@ -1837,10 +1839,14 @@ def finish_area(project: Project, drawings: list[Drawing], params: dict | None =
                    by_screed=[{"cm": cm, "area": a, "rooms": [], "source": src, "detail": det}] if cm > 0 else [])
         return out
     total = 0.0
+    wet_screed = 0.0
     groups: dict[tuple[str, str], dict] = {}
     screeds: dict[float, dict] = {}
     for d in drawings:
         mult = max(1, d.storey_count or 1)
+        # Konut / ofis / otel katı tam teslimdir: salon, oda, mutfak… hepsinin şapı ve kaplaması yapılır. Tür listesi
+        # (lobi, koridor…) yalnız dükkân katları ve kullanımı belirsiz katlar içindir (kiracı işi ayrımı).
+        full = d.discipline == "architectural" and bool(d.usage) and not shell_floor(d)
         for r in (d.rooms or []):
             name = str(r.get("name") or "")
             name_n = normalize_title(name)
@@ -1850,12 +1856,14 @@ def finish_area(project: Project, drawings: list[Drawing], params: dict | None =
             # ayrı kuralla (seramik + sürme izolasyon) gelir: çift saymamak için yalnız açıkça istenirse girer.
             by_note = bool(note) or bool(r.get("screed_cm"))
             by_kw = any(k and k in name_n for k in kws_n)
-            hit = by_kw or (by_note and not wet)
+            hit = by_kw or ((by_note or full) and not wet)
             area = float(r.get("area_m2") or 0.0) * mult
             row = {"drawing": d.label or d.filename, "name": r.get("name"), "area_m2": r.get("area_m2", 0.0), "included": hit,
                    "finish": note.get("code", ""), "finish_spec": note.get("spec", ""), "finish_text": note.get("text", ""),
                    "screed_cm": r.get("screed_cm") or 0.0}
             out["rooms"].append(row)
+            if wet and full:
+                wet_screed += area          # ıslak hacim: kaplaması seramik kuralında, şapı burada (seramik şap üstüne döşenir)
             if not hit:
                 out["excluded"].append(f"{name} {r.get('area_m2', 0):,.0f} m²" + (" (ıslak hacim)" if wet else ""))
                 out["excluded_area"] += area
@@ -1885,8 +1893,8 @@ def finish_area(project: Project, drawings: list[Drawing], params: dict | None =
         out.update(area=round(total, 2), source="rooms", detail=det)
     out["by_finish"] = sorted(groups.values(), key=lambda g: -g["area"])
     # kalınlığı yazmayan mahaller: çizimin genel notu, yoksa kullanıcı parametresi, yoksa program varsayılanı
-    rest = round(total - sum(s["area"] for s in screeds.values()), 2)
-    if total > 0 and (rest > 0.01 or not screeds):
+    rest = round(total + wet_screed - sum(s["area"] for s in screeds.values()), 2)
+    if total + wet_screed > 0 and (rest > 0.01 or not screeds):
         cm, src, det = _screed_fallback(project, drawings, params)
         if cm > 0:
             sc = screeds.setdefault(cm, {"cm": cm, "area": 0.0, "rooms": [], "source": src, "detail": det})
@@ -1966,7 +1974,7 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
         group = slug(spec) if spec else "*"
         # Kanıt kademesi kaynağına bakar: mahal notundan / kesit kotundan okunan ölçü bir türetmedir
         # ("turetildi"); parametre varsayılanı ya da "çevre = 4·√alan" gibi geometrik kabul tahmindir.
-        kademe = TAHMIN if (rule == "islak" or source in ("param", "default", "")) else TURETILDI
+        kademe = TAHMIN if ((rule == "islak" and source != "rooms") or source in ("param", "default", "")) else TURETILDI
         detail = ({"derived": True, "rule": rule, "evidence": {kademe: round(q, 3)}} | ({"param_source": source} if source else {})
                   | ({"plan_params": plan_params} if plan_params else {}))
         out.append(BoqItem(key=f"{it.code.lower()}:{group}", kind=it.code.lower(), group=group,
@@ -2046,6 +2054,21 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
         ask("kiraci_kaba_teslim", f"Çizimde dükkân / mağaza katları var ({', '.join(dk[:4])}{'…' if len(dk) > 4 else ''}): "
                                   "dükkânlar kaba teslim mi? (Öyleyse dükkân içi sıva, boya, tavan ve döşeme kiracı işidir "
                                   "ve keşiften çıkar; konut / ofis katları etkilenmez.) Proje ayarlarından seçin.")
+    # Tam teslim katların mahalleri ölçüldüyse tavan mahal alanlarının toplamıdır: kat oturumu duvar kalınlıklarını
+    # da içerir (altın bina: 127 m² oturum, 109 m² mahal — tavan %16 fazla çıkıyordu).
+    if floor > 0 and "tavan_siva_boya" not in kinds:
+        oda_alan, oda_kat = 0.0, 0
+        for d in drawings:
+            if d.discipline != "architectural" or not d.rooms or not d.usage or shell_floor(d):
+                continue
+            k = max(1, d.storey_count or 1)
+            oda_alan += sum(float(r.get("area_m2") or 0.0) for r in d.rooms) * k
+            oda_kat += k
+        kat_sayisi = sum(max(1, fp["storey_count"]) for fp in fps_u if not fp["basement"])
+        if oda_alan > 0 and oda_kat >= kat_sayisi:
+            add("TAVAN_SIVA_BOYA", "", oda_alan, f"mahal alanlarının toplamı ({oda_kat} kat, planda ölçülen mahaller)",
+                "tavan", "rooms")
+            floor = 0.0
     if floor > 0 and "tavan_siva_boya" not in kinds:
         above = [f for f in fps_u if not f["basement"]]
         src = ", ".join(f"{fp['drawing']} {fp['area']:,.0f} m²" for fp in above[:4]) + ("…" if len(above) > 4 else "")
@@ -2057,21 +2080,30 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
     wet_rooms = []
     for d in drawings:
         mult = max(1, d.storey_count or 1)
+        olcum = {(str(sp.get("name") or ""), round(float(sp.get("label_area") or 0.0), 2)): float(sp.get("perimeter") or 0.0)
+                 for sp in (d.spaces or []) if sp.get("area_source") == "drawing" and sp.get("perimeter")}
         for r in (d.rooms or []):
             name = str(r.get("name") or "")
             if WET_ROOM.search(name):
-                wet_rooms.append((name, float(r.get("area_m2") or 0.0), mult))
-    wet_area = sum(a * m for _, a, m in wet_rooms)
+                a = float(r.get("area_m2") or 0.0)
+                wet_rooms.append((name, a, mult, olcum.get((name, round(a, 2)))))
+    wet_area = sum(a * m for _, a, m, _p in wet_rooms)
     if wet_area > 0:
         wet_h = float(params.get("wet_wall_h") or 2.2)
-        # çevre çizimde yok: kare mahal varsayımı 4·√alan (not düşülür); kapı boşluğu 0,9 × 2,1 düşülür
-        wall = sum((4 * (a ** 0.5) * wet_h - 0.9 * min(wet_h, 2.1)) * m for _, a, m in wet_rooms)
+        # çevre planda ölçülen mahal sınırından; ölçülemeyen mahalde kare varsayımı 4·√alan. Kapı 0,9 × 2,1 düşülür.
+        cevre = lambda a, p: p if p else 4 * (a ** 0.5)          # noqa: E731
+        wall = sum((cevre(a, p) * wet_h - 0.9 * min(wet_h, 2.1)) * m for _, a, m, p in wet_rooms)
+        n_olcu = sum(1 for *_x, p in wet_rooms if p)
+        cevre_notu = ("çevre planda ölçülen mahal sınırından" if n_olcu == len(wet_rooms) else
+                      f"çevre {n_olcu} mahalde ölçüldü, {len(wet_rooms) - n_olcu} mahalde 4·√alan varsayımı")
         if "seramik_zemin" not in kinds:
-            add("SERAMIK_ZEMIN", "", wet_area, f"ıslak hacim mahal alanları ({len(wet_rooms)} mahal)", "islak")
+            add("SERAMIK_ZEMIN", "", wet_area, f"ıslak hacim mahal alanları ({len(wet_rooms)} mahal)", "islak",
+                "rooms" if n_olcu == len(wet_rooms) else "")
         if "seramik_duvar" not in kinds:
-            add("SERAMIK_DUVAR", "", max(wall, 0.0), f"ıslak hacim çevresi × {wet_h:g} m − kapı boşluğu (çevre 4·√alan varsayımı)", "islak")
+            # yükseklik (seramik kotu) çizimde yok, varsayılan: kalem tahmin kalır
+            add("SERAMIK_DUVAR", "", max(wall, 0.0), f"ıslak hacim çevresi × {wet_h:g} m − kapı boşluğu ({cevre_notu})", "islak")
         if "surme_izolasyon" not in kinds:
-            add("SURME_IZOLASYON", "", wet_area + sum(4 * (a ** 0.5) * 0.3 * m for _, a, m in wet_rooms),
+            add("SURME_IZOLASYON", "", wet_area + sum(cevre(a, p) * 0.3 * m for _, a, m, p in wet_rooms),
                 "ıslak hacim zemini + 30 cm etek", "islak")
     fin = finish_area(project, drawings, params)
     if fin["area"] > 0:
@@ -2150,7 +2182,7 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                 ask("kazi_sev", f"Kazı {depth:g} m derin ama çizimde şev / iksa bilgisi yok: hacim dik kazı olarak hesaplandı "
                                 f"({DIK_KAZI_SINIRI:g} m'den derin kazı şevsiz / iksasız yapılamaz). Kesitte şev (ör. “ŞEV 1:1”) "
                                 "ya da iksa varsa o paftayı yükleyin.", "optional")
-            found_conc = sum(it.quantity for it in items if it.kind == "beton" and it.group == "foundation")
+            found_conc = sum(it.quantity for it in items if it.kind == "beton" and (it.group == "foundation" or str(it.group).startswith("foundation:")))
             lean = float(params.get("lean_concrete_cm") or 0.0) / 100.0 * found_area
             # bodrumlu yapıda çukuru bodrum yapısı doldurur: geri dolgu yalnız çevre şeridi
             basement_vol = sum(fp["area"] * max(1, fp["storey_count"]) * float(fp.get("storey_height") or 0.0)

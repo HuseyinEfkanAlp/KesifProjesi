@@ -375,7 +375,14 @@ def _opening_audit(item, drawing, allocations, issues, multiplier):
                 "ikinci kez düşülmedi.")
         if note not in item.notes:
             item.notes.append(note)
-    review = [i for i in issues if i.get("reason") != "already_net"]
+    gap_len = sum(a.get("gap_len", 0.0) for a in allocations) * multiplier
+    if gap_len > 0:
+        item.detail["openings_gap_m"] = round(item.detail.get("openings_gap_m", 0.0) + gap_len, 2)
+        note = ("Duvar kapı / pencere yerinde kesilerek çizilmiş: açıklığın genişliği duvara eklendi (lento ve "
+                "denizlik altındaki duvar), boşluk alanı düşüldü.")
+        if note not in item.notes:
+            item.notes.append(note)
+    review = [i for i in issues if i.get("reason") not in ("already_net", "gap")]
     if review:
         item.detail["openings_review_required"] = True
         note = "Boşluk-duvar eşleşmesi kontrol edilmeli; eşleşmeyen boşluklar düşülmedi, ilgili alan brüt kalabilir."
@@ -400,7 +407,8 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
         src = str(d.get("height_source") or "")
         h_note = None if params.get("wall_height") or src in ("", "parametre", "çizime girildi") else f"Kat yüksekliği {d.get('storey_height'):g} m: {src}"
         elements = [e for e in d["elements"] if _g(e, "etype") in ("wall", "door", "window")]
-        wall_groups: dict[str, float] = {}      # anahtar -> brüt alan (tek kat)
+        wall_groups: dict[str, float] = {}      # anahtar -> brüt örgü alanı (tek kat)
+        beam_line_walls = 0
         wall_labels: dict[str, str] = {}
         walls = []
         openings = []
@@ -410,12 +418,20 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
             b = _g(e, "b") or 0.2
             length = _g(e, "length") or 0.0
             h = _g(e, "h") or wall_h                 # duvar elemanına özel yükseklik girilmişse o
+            # Örgü kiriş hattında kiriş altına kadar yapılır; sıva / boya ise tavana (döşeme altına) kadar gider —
+            # kirişin yanağı da sıvanır. Bu yüzden örgü ve yüzey yükseklikleri ayrıdır.
+            h_orgu = h
+            if not _g(e, "h") and not params.get("wall_height") and d.get("beam_depth")                     and (_g(e, "meta") or {}).get("beam_line"):
+                h_orgu = max((d.get("storey_height") or 3.0) - float(d["beam_depth"]), 0.0)
+                beam_line_walls += 1
             mat = _g(e, "subtype") or "duvar"
             key = f"{slug(mat)}:{_fmt_cm(b)}"
             mat_label = WALL_MATERIALS.get(mat, (mat.capitalize(),))[0] if mat != "duvar" else "Duvar (malzeme belirsiz)"
-            wall_groups[key] = wall_groups.get(key, 0.0) + length * h * (_g(e, "count") or 1)
+            n = _g(e, "count") or 1
+            wall_groups[key] = wall_groups.get(key, 0.0) + length * h_orgu * n
             wall_labels[key] = f"{mat_label} {_fmt_cm(b)} cm"
-            walls.append({"element": e, "key": key, "gross": length * h * (_g(e, "count") or 1)})
+            walls.append({"element": e, "key": key, "gross": length * h * n, "gross_orgu": length * h_orgu * n,
+                          "h": h, "h_orgu": h_orgu})
         opening_area = 0.0        # duvardan düşülen boşluk (0,10 m² ve üstü; ÇŞB 15.225)
         opening_all = 0.0         # sıva / boyadan düşülen boşluk (tümü; ÇŞB 15.280 / 15.540)
         small_openings = 0
@@ -445,11 +461,17 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
                 acc.add("cam", slug(size), f"Cam {_fmt_cm(b)}×{_fmt_cm(h)} cm ({name})", area * mult, count=n * mult,
                         note="Pencere genişlik × yükseklik; doğrama payı düşülmedi", size=size,
                         ev=worse(_tier(d, e), TURETILDI))
-        gross = sum(wall_groups.values())
         allocations, issues = allocate_openings(walls, openings, deductible_opening)
+        # açıklıkta kesilmiş duvarın boşluk genişliği allocate_openings içinde brüte eklendi: gruplar yeniden toplanır
+        wall_groups = {}
+        for w in walls:
+            if (_g(w["element"], "meta") or {}).get("perde"):
+                continue                  # betonarme perde: örgü değil (sıva / boyası aşağıda sayılır)
+            wall_groups[w["key"]] = wall_groups.get(w["key"], 0.0) + w["gross_orgu"]
+        gross = sum(wall_groups.values())
         group_deductions = {}
         for wall, allocation in zip(walls, allocations):
-            group_deductions[wall['key']] = group_deductions.get(wall['key'], 0.0) + min(wall['gross'], allocation['deducted'])
+            group_deductions[wall['key']] = group_deductions.get(wall['key'], 0.0) + min(wall['gross_orgu'], allocation['deducted'])
         net_total = 0.0
         for key, area in wall_groups.items():
             share = group_deductions.get(key, 0.0)
@@ -463,6 +485,11 @@ def architectural_items(drawings: list[dict], params: dict[str, Any], schedule_p
                 {"drawing": d.get("label", ""), "gross_m2": round(area * mult, 2), "openings_m2": round(share * mult, 2), "net_m2": round(net, 2)})
             if h_note and h_note not in it.notes:
                 it.notes.append(h_note)
+            if beam_line_walls:
+                bn = (f"Kolon aksındaki duvarlar kiriş altına kadar: {max((d.get('storey_height') or 3.0) - float(d['beam_depth']), 0):g} m "
+                      f"(kat {d.get('storey_height') or 3.0:g} − kiriş {float(d['beam_depth']):g} m)")
+                if bn not in it.notes:
+                    it.notes.append(bn)
             rule = RULES["wall_opening"].text
             if rule not in it.notes:
                 it.notes.append(rule)
@@ -669,7 +696,7 @@ def standard_items(drawings: list[dict], params: dict[str, Any], catalog: Catalo
                 rec["tier"] = worse(rec["tier"], _tier(d, e))
                 continue
             if measure == "wall_area":
-                pending_walls.append({"element": e, "kind": kind, "group": group, "label": label, "gross": qty, "n": n, "note": note,
+                pending_walls.append({"element": e, "kind": kind, "group": group, "label": label, "gross": qty, "n": n, "note": note, "h": h,
                                       "meta": (kname, unit, disc_key, catalog.discipline_name(p.discipline)), "poz": (item.poz if item else ""),
                                       "extra": extra, "plaster": "ALCIPAN" not in kind.upper()})
                 continue

@@ -104,3 +104,72 @@ def detect_walls(drawing: Drawing, layers: list[str], params: DetectParams) -> l
         if el.subtype is None:
             el.warnings.append("Duvar malzemesi bilinmiyor (katman/etiket); 'duvar' olarak listelendi")
     return dedupe_elements(elements, tol=0.6)
+
+
+# ---------------------------------------------------------------- kolon aksındaki duvarlar
+#
+# Mimari planda kolonlar da çizilir. Duvar çizgisi kolonda kesilir ama dedektör aynı hizadaki parçaları birleştirir;
+# birleşen duvar kolonun içinden geçer ve kolon genişliği kadar fazla ölçülür (altın bina: kat başına 2,4 m).
+# Ayrıca iki kolonu birleştiren hat bir kiriş hattıdır: o duvar döşeme altına değil KİRİŞ altına kadar örülür
+# (duvar yüksekliği = kat yüksekliği − kiriş yüksekliği). Kiriş yüksekliği statik paftadan gelir
+# (quantity/boq.architectural_items); burada yalnız duvarın kiriş hattında olduğu işaretlenir.
+AXIS_REACH = 15.0           # m — duvar doğrultusunda kolon arama uzaklığı (en geniş kiriş açıklığı)
+
+
+def mark_walls_on_axes(walls: list[DetectedElement], columns: list[list]) -> int:
+    """Duvarları kolon izlerine göre düzeltir: kolonun içinden geçen boy düşülür, iki yanında da doğrultusunda
+    kolon olan duvar `meta["beam_line"] = True` olur. Döndürür: kiriş hattında bulunan duvar sayısı."""
+    import math
+    from shapely import STRtree
+    from shapely.geometry import LineString
+    polys = []
+    for pts in columns:
+        try:
+            p = Polygon(pts).buffer(0)
+        except Exception:
+            continue
+        if not p.is_empty and p.area > 0.01:
+            polys.append(p)
+    if not polys or not walls:
+        return 0
+    # aynı kolon hem çokgen hem tarama olarak çizilir: birleştirilmezse kolon içindeki boy iki kez düşülür
+    from shapely.ops import unary_union
+    u = unary_union(polys)
+    polys = list(u.geoms) if hasattr(u, "geoms") else [u]
+    tree = STRtree(polys)
+    n_axis = 0
+    for w in walls:
+        if len(w.points or []) < 3 or not w.length or not w.b:
+            continue
+        try:
+            wp = Polygon(w.points).buffer(0)
+        except Exception:
+            continue
+        near = [polys[int(i)] for i in tree.query(wp)]
+        inside = sum(wp.intersection(c).area for c in near)
+        if inside > 1e-4:
+            cut = inside / w.b
+            if cut < w.length:
+                w.length -= cut
+                w.area = max((w.area or 0.0) - inside, 0.0)
+                w.meta["column_cut_m"] = round(cut, 3)
+        # eksen: en küçük dikdörtgenin uzun kenarı doğrultusunda, merkezden geçen doğru
+        rect = wp.minimum_rotated_rectangle
+        cs = list(rect.exterior.coords)[:4]
+        e1 = (cs[0], cs[1]) if math.dist(cs[0], cs[1]) >= math.dist(cs[1], cs[2]) else (cs[1], cs[2])
+        L = math.dist(*e1)
+        if L < 1e-6:
+            continue
+        ux, uy = (e1[1][0] - e1[0][0]) / L, (e1[1][1] - e1[0][1]) / L
+        cx, cy = rect.centroid.x, rect.centroid.y
+        half = L / 2
+        hits = 0
+        for sgn in (1, -1):
+            ray = LineString([(cx + sgn * ux * (half - 0.05), cy + sgn * uy * (half - 0.05)),
+                              (cx + sgn * ux * (half + AXIS_REACH), cy + sgn * uy * (half + AXIS_REACH))])
+            if any(polys[int(i)].intersects(ray) for i in tree.query(ray)):
+                hits += 1
+        if hits == 2:
+            w.meta["beam_line"] = True
+            n_axis += 1
+    return n_axis

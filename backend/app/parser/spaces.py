@@ -89,7 +89,53 @@ def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").replace("\\P", " ")).strip(" -:·")
 
 
-def _faces(drawing: Drawing, layers: list[str], snap_tol: float) -> list[Polygon]:
+# Doğrama boşluğu köprüsü: aynı doğrultudaki iki duvar çizgisi arasındaki açıklıkta kapı / pencere çizimi varsa
+# açıklık duvar yüzü hizasında kapatılır. Sarkan uç köprüsü (_bridge_gaps) bunu yapamaz: gerçek çizimde duvar
+# açıklıkta kapatma çizgisiyle biter (uç sarkmaz) ve pencere çoğu zaman 1,2 m'den geniştir — mahal kapanmaz.
+OPENING_GAP_MAX = 4.0       # m — bundan geniş açıklık tek doğrama değildir
+COLLINEAR_TOL = 0.01        # m — iki çizgi aynı doğru üstünde sayılır
+
+
+def _opening_bridges(segs: list[LineString], openings: list) -> list[LineString]:
+    """Doğrama çizimi bulunan eş doğrultulu açıklıkları kapatan köprüler."""
+    import math
+    from shapely import STRtree
+    if not segs or not openings:
+        return []
+    otree = STRtree(openings)
+    ends: dict[tuple, list[tuple[float, int]]] = {}
+    out: list[LineString] = []
+    # her çizgi kendi doğrusunun anahtarıyla gruplanır: yön + doğruya olan dik uzaklık
+    for i, s in enumerate(segs):
+        (x0, y0), (x1, y1) = s.coords[0], s.coords[-1]
+        L = math.hypot(x1 - x0, y1 - y0)
+        if L < 0.05:
+            continue
+        ux, uy = (x1 - x0) / L, (y1 - y0) / L
+        if ux < -1e-9 or (abs(ux) <= 1e-9 and uy < 0):
+            ux, uy = -ux, -uy
+        ang = round(math.degrees(math.atan2(uy, ux)) % 180.0, 1)
+        off = round((-uy * x0 + ux * y0) / COLLINEAR_TOL)
+        t0, t1 = sorted((x0 * ux + y0 * uy, x1 * ux + y1 * uy))
+        ends.setdefault((ang, off, ux, uy), []).append((t0, t1))
+    for (ang, off, ux, uy), spans in ends.items():
+        spans.sort()
+        c = off * COLLINEAR_TOL
+        cur_end = spans[0][1]
+        for t0, t1 in spans[1:]:
+            gap = t0 - cur_end
+            if 0.3 <= gap <= OPENING_GAP_MAX:
+                a = (cur_end * ux - c * uy, cur_end * uy + c * ux)
+                b = (t0 * ux - c * uy, t0 * uy + c * ux)
+                bridge = LineString([a, b])
+                mid = bridge.interpolate(0.5, normalized=True)
+                if any(openings[int(j)].distance(mid) <= 0.35 for j in otree.query(mid.buffer(0.35))):
+                    out.append(bridge)
+            cur_end = max(cur_end, t1)
+    return out
+
+
+def _faces(drawing: Drawing, layers: list[str], snap_tol: float, opening_layers: list[str] | None = None) -> list[Polygon]:
     """Duvar ağından kapalı yüzler + çizimde zaten kapalı çizilmiş çokgenler."""
     segs: list[LineString] = []
     closed: list[Polygon] = []
@@ -110,7 +156,14 @@ def _faces(drawing: Drawing, layers: list[str], snap_tol: float) -> list[Polygon
                     segs.append(LineString([pts[i], pts[i + 1]]))
     out: list[Polygon] = []
     if segs and len(segs) < 20000:
+        ops = []
+        for lay in opening_layers or []:
+            for e in drawing.by_layer(lay):
+                if e.kind == "text" or not e.points:
+                    continue
+                ops.append(LineString(e.points) if len(e.points) >= 2 else SPoint(e.points[0]))
         try:
+            segs = segs + _opening_bridges(segs, ops)
             merged = shapely.set_precision(unary_union(segs + _bridge_gaps(segs, snap_tol)), 0.001)
             for poly in polygonize(merged):
                 if poly.area < MIN_SPACE_AREA or poly.area / max(poly.length, 1e-9) < MIN_WIDTH / 2:
@@ -270,7 +323,8 @@ def area_boundary_faces(drawing: Drawing, labels: list[Label]) -> tuple[list[Pol
     return moved, f"{len(moved)} mahal sınırı alan çizgilerinden alındı ({nerede}; alanlar mahal yazısıyla tutuyor)"
 
 
-def detect_spaces(drawing: Drawing, layers: list[str], snap_tol: float = DOOR_GAP) -> tuple[list[Space], list[str]]:
+def detect_spaces(drawing: Drawing, layers: list[str], snap_tol: float = DOOR_GAP,
+                  opening_layers: list[str] | None = None) -> tuple[list[Space], list[str]]:
     """Mahalleri ve aralarındaki daire / mahal hiyerarşisini çıkarır. Döner: mahaller, uyarılar."""
     warnings: list[str] = []
     labels = _labels(drawing)
@@ -278,12 +332,11 @@ def detect_spaces(drawing: Drawing, layers: list[str], snap_tol: float = DOOR_GA
     faces, note = area_boundary_faces(drawing, labels)
     if note:
         warnings.append(note)
-    # 2) yoksa duvar ağından kapalı yüzler (kapı boşlukları köprülenir)
-    wall_faces = _faces(drawing, layers, snap_tol)
+    # 2) yoksa duvar ağından kapalı yüzler (kapı / pencere boşlukları köprülenir)
+    wall_faces = _faces(drawing, layers, snap_tol, opening_layers)
     known = [f.centroid for f in faces]
     faces += [f for f in wall_faces if not any(f.contains(c) for c in known)]
-    if not faces:
-        return [], []
+    # yüz bulunamasa da mahal yazıları mahaldir (alanı yazıdan): aşağıdaki "çokgensiz etiket" adımı onları ekler
     faces.sort(key=lambda p: -p.area)
     spaces = [Space(index=i, name="", kind="mahal", points=[(x, y) for x, y in p.exterior.coords[:-1]],
                     area=p.area, perimeter=p.exterior.length)
@@ -360,12 +413,24 @@ def detect_spaces(drawing: Drawing, layers: list[str], snap_tol: float = DOOR_GA
                             points=[], area=lab.area, label_area=lab.area, evidence=lab.raw, code=lab.code,
                             area_source="label"))
         nxt += 1
-    seen_named: list[tuple[str, float, str]] = []
+    def apart(s1: Space, s2: Space) -> bool:
+        """İkisinin de sınırı çizimden ölçülmüş ve çokgenleri örtüşmüyorsa ayrı mahallerdir: aynı katta iki eş daire
+        aynı adlı, aynı alanlı yatak odası taşır ve ikisi de sayılmalıdır."""
+        if s1.area_source != "drawing" or s2.area_source != "drawing" or len(s1.points) < 3 or len(s2.points) < 3:
+            return False
+        try:
+            p1, p2 = Polygon(s1.points), Polygon(s2.points)
+            return p1.intersection(p2).area < 0.1 * min(p1.area, p2.area)
+        except Exception:
+            return False
+
+    seen_named: list[Space] = []
     for sp in sorted([x for x in spaces if x.name], key=lambda x: (not x.code, x.area_source != "drawing", -x.area)):
-        if sp.label_area > 0 and any(dup(n, a, c, sp.name, sp.label_area, sp.code) for n, a, c in seen_named):
+        if sp.label_area > 0 and any(dup(o.name, o.label_area, o.code, sp.name, sp.label_area, sp.code)
+                                     and not apart(o, sp) for o in seen_named):
             sp.name = ""                      # aynı mahalin ikinci yazısı: tek satır kalsın
             continue
-        seen_named.append((sp.name, sp.label_area, sp.code))
+        seen_named.append(sp)
     named = [s for s in spaces if s.name]
     if not named:
         return [], [f"Mahal sınırı bulundu ({len(spaces)} kapalı alan) ama hiçbirinin içinde mahal adı yazmıyor: "
