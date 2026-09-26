@@ -12,6 +12,8 @@ Sınadığı:
   - tuzaklar: mahya kirişi dikdörtgen + aynı katmanda iki kenar çizgisi ve eksen çizgisi (ikinci kez sayılmaz);
     gizli (kesikli) katmanda çizgi; markasız kısa yardımcı çizgi
   - kot=False, egim_yazisi=False: aynı çatı kot / eğim yazısız → izdüşümden, kullanıcıya sorulur
+  - kesit=True (kot / eğim yazısı yok): üçüncü pafta "ÇELİK ÇATI A-A KESİTİ" — makas C-Makas katmanında eğik, kot
+    yazıları +4.00 / +6.00; makaslar kesitin eğimiyle uzar, çapraz (kesitte yok) izdüşümde kalır, soru çıkmaz
 kg/m bağımsız yazılır (EN 10365 anma; boru / kutu kesitten, 7850 kg/m³).
 """
 import math
@@ -63,7 +65,7 @@ def kolonlar(ox):
             txt("Kolon-HEB160", tx, ty)
 
 
-def make_golden_steel2(path: str | Path, kot: bool = True, egim_yazisi: bool = False) -> Path:
+def make_golden_steel2(path: str | Path, kot: bool = True, egim_yazisi: bool = False, kesit: bool = False) -> Path:
     global _msp
     doc = ezdxf.new("R2010")
     doc.header["$INSUNITS"] = 5
@@ -111,6 +113,23 @@ def make_golden_steel2(path: str | Path, kot: bool = True, egim_yazisi: bool = F
         # eğim oku yazısı: eğim doğrultusunda (y), iki çatı yüzünde
         txt("%50", ox + 1000, 150, 10, "G-Egim", rot=90)
         txt("%50", ox + 1000, 550, 10, "G-Egim", rot=90)
+    if kesit:
+        # A-A kesiti (y doğrultusunda, 1:1; çizimin düşeyi kot × 100 cm): iki makas eğik dikdörtgen, mahyada birleşir
+        kx = 2 * SHEET_DX
+        sheet(2, "ÇELİK ÇATI A-A KESİTİ")
+        for (y0, z0), (y1, z1) in (((0, 400), (400, 600)), ((800, 400), (400, 600))):
+            L = math.hypot(y1 - y0, z1 - z0)
+            nx, ny = -(z1 - z0) / L * 8, (y1 - y0) / L * 8
+            _msp.add_lwpolyline([(kx + y0 + nx, z0 + ny), (kx + y1 + nx, z1 + ny), (kx + y1 - nx, z1 - ny),
+                                 (kx + y0 - nx, z0 - ny)], close=True, dxfattribs={"layer": "C-Makas"})
+        for y in ASIK_Y:                                        # aşık kesitleri (küçük kareler)
+            z = 400 + (y if y <= 400 else 800 - y) * 0.5
+            _msp.add_lwpolyline(rect(kx + y - 4, z + 8, 8, 4), close=True, dxfattribs={"layer": "C-Asik"})
+        line(kx, (0, 400), (800, 400), "C-Kiris")               # saçak hizası (yatay)
+        txt("+4.00", kx - 60, 405, 8, "G-Kot")
+        txt("+4.00", kx + 820, 405, 8, "G-Kot")
+        txt("+6.00", kx + 410, 605, 8, "G-Kot")
+        txt("±0.00", kx - 60, 5, 8, "G-Kot")
     # tuzaklar
     line(ox, (0, 830), (1200, 830), "C-Kiris-Kesikli")         # gizli çizgi
     line(ox, (600, 440), (600, 470), "C-Asik")                 # markasız kısa yardımcı çizgi
@@ -119,15 +138,18 @@ def make_golden_steel2(path: str | Path, kot: bool = True, egim_yazisi: bool = F
     return path
 
 
-def golden_truth_steel2(egim_bilgisi: bool = True) -> dict:
-    """egim_bilgisi: çizimde kot ya da eğim yazısı var (ikisi de aynı eğimi verir: 2 m / 4 m = %50)."""
+def golden_truth_steel2(egim_bilgisi: bool = True, capraz_egimli: bool | None = None) -> dict:
+    """egim_bilgisi: çizimde kot ya da eğim yazısı var (ikisi de aynı eğimi verir: 2 m / 4 m = %50).
+    capraz_egimli: köşegen çapraz da eğimle uzar mı (kesit senaryosunda hayır: kesitte çapraz yok)."""
+    if capraz_egimli is None:
+        capraz_egimli = egim_bilgisi
     rise = KOT_MAHYA - KOT_SACAK
     boy = {
         "HEB160": 2 * len(XS) * H_KOLON,
         "IPE200": 2 * 11.84 + 11.84,                                   # iki saçak (çift çizgi) + mahya (dikdörtgen)
         "HEA160": len(MAKAS_X) * 2 * (math.hypot(4.0, rise) if egim_bilgisi else 4.0),
         "80x40x3": len(ASIK_Y) * 12.0,
-        "Ø48.3x3": len(CAPRAZ) * (math.sqrt(4.0 ** 2 + 4.0 ** 2 + rise ** 2) if egim_bilgisi else math.hypot(4.0, 4.0)),
+        "Ø48.3x3": len(CAPRAZ) * (math.sqrt(4.0 ** 2 + 4.0 ** 2 + rise ** 2) if capraz_egimli else math.hypot(4.0, 4.0)),
     }
     kg = {p: boy[p] * KG[p] for p in boy}
     return {"boy": boy, "kg": kg, "toplam": sum(kg.values()), "kolon_adet": 2 * len(XS),

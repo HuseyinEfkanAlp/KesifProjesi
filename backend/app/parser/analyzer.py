@@ -691,6 +691,14 @@ def analyze_mapped(drawing: Drawing, profile: LayerProfile, catalog: Catalog, pa
     result.elements = elements + sched
     result.warnings.extend(sw)
     result.materials = materials
+    if getattr(params, "plan_type", "") == "sta_celik_gorunus":
+        # çelik kesiti: eğik makas / kiriş çizgileri ve kotları — eğimli çatı paftasının eğimi (services.steel_section_slopes)
+        from .detectors.steel import section_slopes
+        kl = [l for l in drawing.layers if profile.classify(l, "steel") == "steel_member"]
+        egim = section_slopes(drawing, kl)
+        if egim:
+            materials["CELIK_KESIT_EGIM"] = {"evidence": [f"{r['layer']} %{r['egim'] * 100:.0f} ({r['zlo']:+.2f}…{r['zhi']:+.2f})"
+                                                          for r in egim][:5], "spec": "", "egimler": egim}
     result.rebar_mix = scan_rebar_mix(drawing)
     result.rebar_layers = scan_rebar_layers(drawing)
     result.blocks_seen, result.own_block = scan_blocks(drawing), own_block_of_drawing(drawing)

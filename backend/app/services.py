@@ -236,6 +236,56 @@ def steel_fasteners(drawings: list[Drawing]) -> dict[str, list[str]]:
     return out
 
 
+def steel_section_slopes(drawings: list[Drawing]) -> dict[int, dict[str, tuple[float, str]]]:
+    """Eğimli çelik çatı paftası (başlıkta iki kot) → {katman: (eğim, not)}: aynı dosyanın kesit paftasında o katman
+    eğik çizilmişse ve eğik çizginin kotları paftanın kot aralığına düşüyorsa.
+
+    Her kesit çizgisi kot aralığı EN İYİ örtüşen tek paftaya gider (aralıkların kesişim / birleşim oranı): Yat Kulübü
+    çatılarında %38'lik makaslar (+16.98…+18.49) hem "+18.90/+15.20" hem "+18.65/+16.85" aralığına düşüyor; ikincisine
+    aittir, birincisi %61'liktir. Bir paftada aynı katmanın birden çok eğimi varsa boyca ağırlıklı ortanca."""
+    kesitler: dict[str, list[dict]] = {}
+    for d in drawings:
+        ev = ((d.materials or {}).get("CELIK_KESIT_EGIM") or {}).get("egimler") or []
+        if ev:
+            kesitler.setdefault((d.filename or "").split(" › ")[0], []).extend(ev)
+    out: dict[int, dict[str, tuple[float, str]]] = {}
+    if not kesitler:
+        return out
+    planlar: dict[str, list[tuple[int, float, float]]] = {}
+    for d in drawings:
+        if (d.plan_type or "") != "sta_celik":
+            continue
+        kotlar = [float(x.replace(",", ".").replace("±", "")) for x in _KOT_RE.findall(d.label or "")]
+        if len(kotlar) >= 2 and max(kotlar) - min(kotlar) >= 0.05:
+            planlar.setdefault((d.filename or "").split(" › ")[0], []).append((d.id, min(kotlar), max(kotlar)))
+    eslesen: dict[int, dict[str, list[tuple[float, float]]]] = {}
+    araliklar = {pid: (lo, hi) for ps in planlar.values() for pid, lo, hi in ps}
+    for dosya, ks in kesitler.items():
+        for r in ks:
+            span = max(r["zhi"] - r["zlo"], 0.01)
+            en_iyi, skor = None, 0.0
+            for pid, lo, hi in planlar.get(dosya, []):
+                ort = min(r["zhi"], hi + 0.3) - max(r["zlo"], lo - 0.3)
+                if ort < 0.6 * span:
+                    continue
+                oran = ort / (max(r["zhi"], hi) - min(r["zlo"], lo))
+                if oran > skor:
+                    en_iyi, skor = pid, oran
+            if en_iyi is not None:
+                eslesen.setdefault(en_iyi, {}).setdefault(r["layer"], []).append((float(r["egim"]), float(r["boy"])))
+    for pid, katman in eslesen.items():
+        lo, hi = araliklar[pid]
+        for lay, ls in katman.items():
+            ls.sort()
+            yari, top = sum(b for _, b in ls) / 2, 0.0
+            for eg, b in ls:
+                top += b
+                if top >= yari:
+                    break
+            out.setdefault(pid, {})[lay] = (eg, f"kesitten %{eg * 100:.0f} ({lay}, {lo:+.2f}…{hi:+.2f})")
+    return out
+
+
 def steel_column_heights(drawings: list[Drawing], kolon_profilleri: dict[int, set[str]] | None = None) -> dict[int, dict]:
     """Çelik kolon boyu pafta başına: {pafta: {"H", "source", "note", "skip"}}; skip = bu paftada sayılmayacak kolon profilleri.
 
@@ -989,6 +1039,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
 
     arch, elec, std, steel = [], [], [], []
     celik_bag = steel_fasteners(all_drawings)
+    celik_egim = steel_section_slopes(all_drawings)
     kolon_boy = steel_column_heights(drawings, {d.id: {(e.meta or {}).get("profile") for e in els_by_id.get(d.id, [])
                                                       if e.etype == "steel_member" and (e.meta or {}).get("column")}
                                                 for d in drawings})
@@ -1053,7 +1104,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
                           "steel_column_height": kb.get("H"), "steel_column_height_source": kb.get("source", ""),
                           "steel_column_height_note": kb.get("note", ""), "steel_column_skip": kb.get("skip") or set(),
                           "steel_column_on_concrete": kb.get("concrete_base", True), "steel_fasteners": celik_bag,
-                          "steel_range": kb.get("range")})
+                          "steel_range": kb.get("range"), "steel_section_slopes": celik_egim.get(d.id) or {}})
         # katalog kodlu elemanlar: poz listesi (meta.ksf_code) ve sezgisel paftadaki KSF-… katmanları (her disiplinde standart kuralla ölçülür)
         ksf = [ksf_entry(e) for e in elements if (e.meta or {}).get("ksf_code") or parse_layer(e.layer or "", catalog)]
         if ksf:

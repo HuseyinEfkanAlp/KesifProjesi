@@ -576,6 +576,39 @@ def electrical_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqIt
     return list(acc.items.values())
 
 
+def _kesit_egim_yonleri(d: dict) -> dict[str, tuple[float, float, str]]:
+    """Kesitte eğik görünen katman → (plandaki doğrultu, eğim, not). Katmanın çubukları plan boyunun en az %85'iyle tek
+    doğrultudaysa (makaslar paralel dizilir) o doğrultuya uygulanır; iki doğrultuda çizilmiş katmanda (kırma çatı,
+    aşık + makas aynı katmanda) hangisinin eğimli olduğu bilinmez: uygulanmaz."""
+    from ..parser.detectors.steel import member_axis_angle
+    kesit = d.get("steel_section_slopes") or {}
+    if not kesit:
+        return {}
+    kutu: dict[str, dict[int, float]] = {}
+    for e in d["elements"]:
+        m = _g(e, "meta") or {}
+        lay = _g(e, "layer") or ""
+        if _g(e, "etype") != "steel_member" or m.get("column") or m.get("rise") or lay not in kesit:
+            continue
+        a = member_axis_angle(_g(e, "points") or [], m.get("drawn_as") == "tek_cizgi")
+        if a is None:
+            continue
+        b = int(round(a / 15.0)) % 12
+        kutu.setdefault(lay, {})[b] = kutu.get(lay, {}).get(b, 0.0) + float(_g(e, "length") or 0.0)
+    out = {}
+    for lay, kb in kutu.items():
+        top = sum(kb.values())
+        b, v = max(kb.items(), key=lambda kv: kv[1])
+        if top > 0 and v >= 0.85 * top:
+            out[lay] = (b * 15.0, kesit[lay][0], kesit[lay][1])
+    return out
+
+
+def _aci_farki(x: float, y: float) -> float:
+    d = abs(x - y) % 180.0
+    return min(d, 180.0 - d)
+
+
 def _cap_sec(caplar: list[str] | None, sinif: str) -> str:
     """Detayda yazan çaplar küçükten büyüğe: hafif profile en küçüğü, ağıra en büyüğü, ortaya ortancası."""
     if not caplar:
@@ -599,6 +632,8 @@ def steel_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqItem]:
     bulon (I / H kiriş ucu), guse + bulon (boru çapraz), kaynak (kesit çevresi). Ankraj / cıvata çapı detay
     paftasındaki yazıdan ("M16x175 ankraj"), yoksa profil boyundan."""
     from ..confidence import TAHMIN, TURETILDI, worse
+    import math
+    from ..parser.detectors.steel import member_axis_angle
     from ..standard.steel import VINC_PER_MONTAJ, connection, labor_norm, parse_profile
     acc = _Acc()
     bag = {"levha": 0.0, "kaynak": 0.0, "bulon": {}, "ankraj": {}, "not": {}}
@@ -610,6 +645,8 @@ def steel_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqItem]:
         atla = d.get("steel_column_skip") or set()
         betona = bool(d.get("steel_column_on_concrete", True))
         fas = d.get("steel_fasteners") or {}
+        kesit_yon = _kesit_egim_yonleri(d)
+        egimli_boy = toplam_boy = 0.0
         for e in d["elements"]:
             if _g(e, "etype") != "steel_member":
                 continue
@@ -631,6 +668,19 @@ def steel_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqItem]:
             else:
                 L = float(_g(e, "length") or 0.0)
                 note = "Boy plandaki izdüşüm: eğimli çapraz / makas elemanında gerçek boy daha uzundur"
+                toplam_boy += L
+                if m.get("rise"):
+                    egimli_boy += L
+                    note = f"Eğimli eleman, gerçek boy ({m.get('slope_source') or 'plandan'})"
+                else:
+                    kg_ = kesit_yon.get(_g(e, "layer") or "")
+                    yon = member_axis_angle(_g(e, "points") or [], m.get("drawn_as") == "tek_cizgi") if kg_ else None
+                    if kg_ and yon is not None and _aci_farki(yon, kg_[0]) <= 15.0:
+                        # kesitte bu katman eğik çizilmiş: plandaki boy yatay izdüşümdür, gerçek boy √(1 + eğim²) katı
+                        L = L * math.sqrt(1.0 + kg_[1] ** 2)
+                        egimli_boy += L
+                        ev = worse(ev, TURETILDI)
+                        note = f"Eğimli eleman, gerçek boy: {kg_[2]}"
             if not (prof and kgm):
                 acc.add("celik_profilsiz", "*", "Çelik eleman — profili okunamadı", L * mult, count=mult,
                         meta=("Çelik eleman (profil yok)", "m", "structural", STEEL_META[3]), info=True, ev=TAHMIN)
@@ -658,7 +708,9 @@ def steel_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqItem]:
         lo, hi = d.get("steel_range") or (None, None)
         cubuk = [e for e in d["elements"] if _g(e, "etype") == "steel_member" and not (_g(e, "meta") or {}).get("column")]
         egimli_pafta = lo is not None and hi is not None and hi - lo > 0.01
-        if egimli_pafta and cubuk and not any((_g(e, "meta") or {}).get("rise") for e in cubuk):
+        # eğim uygulanan boy paftanın çubuk boyunun %5'inden azsa eğim bilgisi yok sayılır (kesitteki katman plandaki
+        # asıl makas katmanı değil: Yat Kulübü +18.65/+16.85 — kesitte C-Makas eğik, planda C-Makas yalnız 1,2 m)
+        if egimli_pafta and cubuk and egimli_boy < 0.05 * max(toplam_boy, 1e-9):
             acc.add("celik_egim_yok", slug(str(d.get("id"))), f"Eğim bilgisi yok: {d.get('label') or ''}",
                     sum(float(_g(e, "length") or 0.0) for e in cubuk) * mult,
                     meta=("Çelik — eğim bekleniyor", "m", "structural", STEEL_META[3]), info=True, ev=TAHMIN)

@@ -362,3 +362,85 @@ def detect_steel(drawing: Drawing, layers: list[str], params: DetectParams,
         el.warnings.extend(uyari)
         out.append(el)
     return out
+
+
+# ---------------------------------------------------------------- kesit paftasından eğim
+
+KESIT_KOT_R = (25.0, 12.0)    # m — eğik çizginin kotlarını veren kot yazıları bu kadar yatay / düşey yakında
+
+
+def section_slopes(drawing: Drawing, layers: list[str]) -> list[dict]:
+    """Çelik kesit / görünüş paftasındaki eğik elemanlar: [{"layer", "zlo", "zhi", "egim", "boy"}].
+
+    Kesitte makas / kiriş eğik çizilir; çizimin düşey ekseni kottur. Kotu, çizginin yakınındaki kot yazılarından
+    (+13.20, +15.00…) doğrusal eşlemeyle bulunur (z = a·y + b; kesit başka ölçekte çizilse de eğim açısı değişmez).
+    Böylece her eğik çizginin hangi kot aralığında durduğu, yani hangi eğimli çatı paftasına ait olduğu bilinir
+    (services.steel_section_slopes). Gizli (kesikli) katmanlar ve 3°'den az / 60°'den çok eğik çizgiler alınmaz."""
+    kat = {l for l in layers if not GIZLI.search(l or "")}
+    if not kat:
+        return []
+    kotlar = [(e.points[0][0], e.points[0][1], float(m.group(1).replace(",", ".").replace("±", "")))
+              for e in drawing.texts() for m in [KOT_RE.match(e.text or "")] if m]
+    if len(kotlar) < 2:
+        return []
+
+    def _esle(x: float, y: float):
+        """Çizginin kotu için z = a·y + b. Yakındaki kot yazılarından birbiriyle tutarlı en büyük grup alınır: aynı paftada
+        alt alta duran başka bir kesitin kotları (Yat Kulübü A-A'nın hemen üstünde B-B) eşlemeyi bozmasın."""
+        yakin = sorted(((math.hypot(kx - x, ky - y), ky, kz) for kx, ky, kz in kotlar
+                        if abs(kx - x) <= KESIT_KOT_R[0] and abs(ky - y) <= KESIT_KOT_R[1]))[:12]
+        if len({kz for _, _, kz in yakin}) < 2:
+            return None
+        # önce 1:1 (model uzayında kesit gerçek ölçüde çizilir): z − y farkı aynı olan en büyük grup
+        farklar = [kz - ky for _, ky, kz in yakin]
+        en_iyi = max(({i for i, f in enumerate(farklar) if abs(f - g) <= 0.35} for g in farklar), key=len)
+        grup = [yakin[i] for i in sorted(en_iyi)]
+        if len(grup) >= 2 and len({kz for _, _, kz in grup}) >= 2:
+            return 1.0, sorted(farklar[i] for i in en_iyi)[len(en_iyi) // 2]
+        # başka ölçekte çizilmiş kesit: en yakın dört yazıyla doğrusal eşleme
+        grup = yakin[:4]
+        n = len(grup)
+        my, mz = sum(p[1] for p in grup) / n, sum(p[2] for p in grup) / n
+        sxx = sum((p[1] - my) ** 2 for p in grup)
+        if sxx < 1e-9:
+            return None
+        a = sum((p[1] - my) * (p[2] - mz) for p in grup) / sxx
+        b = mz - a * my
+        # yazılar kot çizgisinin hemen üstündedir: artık hatası yazı boyu kadardır; çok dağınıksa bu bir kesit değildir
+        if not (0.2 <= a <= 5.0) or max(abs(a * p[1] + b - p[2]) for p in grup) > 0.5:
+            return None
+        return a, b
+
+    out: dict[tuple, dict] = {}
+    for e in drawing.entities:
+        if e.layer not in kat or e.kind not in ("line", "polyline", "polygon") or len(e.points) < 2:
+            continue
+        pts = list(e.points) + ([e.points[0]] if e.kind == "polygon" else [])
+        for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+            L = math.hypot(x2 - x1, y2 - y1)
+            if L < 0.5:
+                continue
+            t = _aci_farki(_aci((x1, y1), (x2, y2)), 0.0)
+            if not (3.0 <= t <= 60.0):
+                continue
+            ab = _esle((x1 + x2) / 2, (y1 + y2) / 2)
+            if ab is None:
+                continue
+            a, b = ab
+            z1, z2 = sorted((a * y1 + b, a * y2 + b))
+            egim = round(math.tan(math.radians(t)), 3)
+            k = (e.layer, round(z1, 1), round(z2, 1), egim)
+            r = out.setdefault(k, {"layer": e.layer, "zlo": round(z1, 2), "zhi": round(z2, 2), "egim": egim, "boy": 0.0})
+            r["boy"] = round(r["boy"] + L, 2)
+    return sorted(out.values(), key=lambda r: (r["layer"], r["zlo"]))
+
+
+def member_axis_angle(points: list, tek_cizgi: bool) -> float | None:
+    """Eleman ekseninin plan doğrultusu (derece, [0, 180))."""
+    try:
+        if tek_cizgi:
+            return _aci(points[0], points[-1])
+        c = list(_eksen(Polygon(points)).coords)
+        return _aci(c[0], c[-1])
+    except Exception:
+        return None

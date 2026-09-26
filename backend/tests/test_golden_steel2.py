@@ -39,6 +39,11 @@ def yazili(client, tmp_path_factory):
 
 
 @pytest.fixture
+def kesitli(client, tmp_path_factory):
+    return _yukle(client, tmp_path_factory, "celik2_kesit", kot=False, egim_yazisi=False, kesit=True)
+
+
+@pytest.fixture
 def egimsiz(client, tmp_path_factory):
     return _yukle(client, tmp_path_factory, "celik2_yok", kot=False, egim_yazisi=False)
 
@@ -74,3 +79,12 @@ def test_egim_bilgisi_yoksa_izdusum_ve_soru(egimsiz):
     _dogrula(egimsiz, golden_truth_steel2(egim_bilgisi=False))
     soru = [c for c in egimsiz["checklist"] if c["code"] == "celik_egim"]
     assert soru and soru[0]["level"] == "required"
+
+
+def test_egim_kesit_paftasindan(kesitli):
+    """Planda eğim bilgisi yok; aynı dosyadaki kesitte makas katmanı eğik ve kotlu: makaslar kesitin eğimiyle uzar,
+    kesitte görünmeyen çapraz izdüşümde kalır; eğim bulunduğu için soru çıkmaz."""
+    _dogrula(kesitli, golden_truth_steel2(egim_bilgisi=True, capraz_egimli=False))
+    makas = _satir(kesitli)["HEA160"]
+    assert any("kesitten" in n for n in makas["notes"]), makas["notes"]
+    assert not [c for c in kesitli["checklist"] if c["code"] == "celik_egim"]
