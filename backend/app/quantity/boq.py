@@ -576,6 +576,55 @@ def electrical_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqIt
     return list(acc.items.values())
 
 
+STEEL_META = ("Çelik konstrüksiyon (imalat + montaj)", "kg", "structural", DISCIPLINES.get("steel", "Çelik konstrüksiyon"))
+
+
+def steel_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqItem]:
+    """Çelik plan elemanları → profil başına kg (kind = katalog kodu CELIK_KONSTRUKSIYON: reçetesi kaynak, boya, montaj…).
+
+    Kiriş / aşık / çapraz: plandaki boy × kg/m. Kolon planda kesittir: boyu paftanın `steel_column_height`'ı
+    (services: kotlardan) — yoksa kolon kg'a girmez, adedi bilgi satırında durur ve kontrol listesinde sorulur.
+    Profil yazısı bulunamayan elemanın boyu ayrı bilgi satırındadır (ağırlığı hesaplanamaz)."""
+    from ..confidence import TAHMIN, TURETILDI, worse
+    acc = _Acc()
+    for d in drawings:
+        mult = int(d.get("storey_count") or 1)
+        acc.risk = ""
+        acc.drawing = (d.get("id"), d.get("label") or "")
+        H = d.get("steel_column_height")
+        atla = d.get("steel_column_skip") or set()
+        for e in d["elements"]:
+            if _g(e, "etype") != "steel_member":
+                continue
+            m = _g(e, "meta") or {}
+            prof, kgm = m.get("profile"), m.get("kg_m")
+            kolon = bool(m.get("column"))
+            ev = worse(_tier(d, e), TAHMIN if m.get("profile_guess") else None)
+            if kolon:
+                if not (prof and kgm) or prof in atla:
+                    continue          # atla: aynı kolon üst ucundaki paftada sayıldı
+                if not H:
+                    acc.add("celik_kolon_boysuz", slug(prof), f"Çelik kolon {prof} (boyu bilinmiyor)", mult, count=mult,
+                            meta=("Çelik kolon — boy bekleniyor", "adet", "structural", STEEL_META[3]), info=True,
+                            ev=TAHMIN)
+                    continue
+                L = float(H)
+                ev = worse(ev, TURETILDI if d.get("steel_column_height_source") == "kot" else TAHMIN)
+                note = f"Kolon boyu {L:.2f} m ({d.get('steel_column_height_note') or 'kotlardan'})"
+            else:
+                L = float(_g(e, "length") or 0.0)
+                note = "Boy plandaki izdüşüm: eğimli çapraz / makas elemanında gerçek boy daha uzundur"
+            if not (prof and kgm):
+                acc.add("celik_profilsiz", "*", "Çelik eleman — profili okunamadı", L * mult, count=mult,
+                        meta=("Çelik eleman (profil yok)", "m", "structural", STEEL_META[3]), info=True, ev=TAHMIN)
+                continue
+            it = acc.add("celik_konstruksiyon", slug(prof), f"Çelik {prof}", L * float(kgm) * mult, count=mult,
+                         note=note, meta=STEEL_META, ev=ev, length_m=L * mult)
+            it.detail["kg_m"] = float(kgm)
+            it.detail["profile"] = prof
+    return list(acc.items.values())
+
+
 def wall_faces(params: dict[str, Any], key: str, exterior: bool) -> float:
     """Bir duvarın sıva ("plaster_sides") / boya ("paint_sides") yüz sayısı.
 

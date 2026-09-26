@@ -23,6 +23,7 @@ from .detectors.shear_walls import detect_shear_walls
 from .detectors.slabs import detect_slabs
 from .detectors.standard import assign_roof_zones, detect_mapped, detect_standard, standard_layers
 from .detectors.stairs import detect_stairs
+from .detectors.steel import detect_steel
 from .detectors.walls import deduct_wall_crossings, detect_walls, mark_walls_on_axes
 from .merge import merge_area_elements
 from .geometry import polygon_area
@@ -344,7 +345,21 @@ def _mechanical(drawing: Drawing, layers_by_type: dict[str, list[str]], params: 
     return els
 
 
-DISCIPLINE_RUNNERS = {"structural": _structural, "architectural": _architectural, "electrical": _electrical, "mechanical": _mechanical}
+def _steel(drawing: Drawing, layers_by_type: dict[str, list[str]], params: DetectParams,
+           result: AnalysisResult) -> list[DetectedElement]:
+    tanınan = {l for ls in layers_by_type.values() for l in ls}
+    diger = sorted({e.layer for e in drawing.entities if e.layer and e.layer not in tanınan})
+    els = detect_steel(drawing, layers_by_type.get("steel_member", []), params, extra_layers=diger)
+    if els:
+        say = Counter(e.meta.get("profile") or "profil yok" for e in els)
+        result.warnings.append("Çelik elemanlar: " + ", ".join(f"{k} {v}" for k, v in say.most_common(10))
+                               + (" …" if len(say) > 10 else "")
+                               + " (boy plandaki izdüşüm; eğimli çaprazda gerçek boy daha uzundur)")
+    return els
+
+
+DISCIPLINE_RUNNERS = {"structural": _structural, "architectural": _architectural, "electrical": _electrical,
+                      "mechanical": _mechanical, "steel": _steel}
 HEURISTIC_DISCIPLINES = tuple(DISCIPLINE_RUNNERS)
 MIN_HINT_OBJECTS = 8    # başka bir disiplinin katmanlarında en az bu kadar geometrik nesne varsa "ek disiplin" önerilir
 

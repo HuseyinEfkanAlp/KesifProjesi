@@ -20,6 +20,7 @@ DISCIPLINES: dict[str, str] = {
     "standard": "KSF standart çizim (tüm disiplinler)",
     "rebar": "Donatı planı (demir metraj tablosu)",
     "mapped": "Katman eşlemeli (cephe / çatı / peyzaj / diğer)",
+    "steel": "Çelik konstrüksiyon",
 }
 STANDARD_DISCIPLINE = "standard"
 REBAR_DISCIPLINE = "rebar"
@@ -47,6 +48,9 @@ ELECTRICAL_TYPES: dict[str, str] = {
     "conduit": "Boru",
     "fixture": "Armatür / priz / anahtar",
 }
+STEEL_TYPES: dict[str, str] = {
+    "steel_member": "Çelik eleman (kolon / kiriş / aşık / çapraz)",
+}
 MECHANICAL_TYPES: dict[str, str] = {
     "pipe": "Boru (mekanik / sıhhi / yangın)",
     "duct": "Hava kanalı",
@@ -57,6 +61,7 @@ TYPES_BY_DISCIPLINE: dict[str, dict[str, str]] = {
     "architectural": ARCHITECTURAL_TYPES,
     "electrical": ELECTRICAL_TYPES,
     "mechanical": MECHANICAL_TYPES,
+    "steel": STEEL_TYPES,
 }
 # Geriye uyumluluk: ELEMENT_TYPES statik tipler (metraj motoru, özet); ALL_ELEMENT_TYPES tüm disiplinler
 ELEMENT_TYPES = STRUCTURAL_TYPES
@@ -106,7 +111,7 @@ def types_for(discipline: str) -> dict[str, str]:
 MATCH_ORDER = ("hole", "stair", "parapet", "foundation", "shear_wall", "column", "beam", "slab",
                "window", "door", "wall",
                "tray", "conduit", "fixture", "cable",
-               "pipe", "duct", "mech_fixture")
+               "pipe", "duct", "mech_fixture", "steel_member")
 
 DEFAULT_PROFILE: dict[str, list[str]] = {
     # statik
@@ -115,7 +120,11 @@ DEFAULT_PROFILE: dict[str, list[str]] = {
     "parapet": [r"PARAPET"],
     # betonarme merdiven (kalıp planı). Mimaride ve tesisatta merdiven katmanı eleman değildir (yok sayılır);
     # "MERDİVEN BOŞLUĞU" döşeme boşluğudur (hole önce denenir)
-    "stair": [r"MERD[İI]VEN", r"STAIR"],   # "VM Parapet Tarama" da parapet (tarama yok-sayması bu tip için geçerli değil)
+    "stair": [r"MERD[İI]VEN", r"STAIR"],
+    # çelik planında taşıyıcı eleman katmanları (C-Kiris, C-TaliKiris, C-Capraz, C-Asik-Kusak, G-Kolon…); bağlantı /
+    # plaka / marka katmanları eleman değildir
+    "steel_member": [r"KOLON", r"K[İI]R[İI][SŞ]", r"[CÇ]APRAZ", r"A[SŞ]IK", r"KU[SŞ]AK", r"MAKAS", r"D[İI]KME",
+                     r"STAB[İI]L[İI]TE", r"GERG[İI]", r"\bCOL", r"BEAM", r"BRAC", r"PURLIN", r"TRUSS", r"GIRT"],   # "VM Parapet Tarama" da parapet (tarama yok-sayması bu tip için geçerli değil)
     "beam": [r"KIRI[SŞ]", r"KİRİ[SŞ]", r"\bBEAM\b", r"S[-_]?BEAM", r"STR[-_]BEAM"],
     "slab": [r"DO[SŞ]EME", r"DÖ[SŞ]EME", r"\bSLAB", r"S[-_]?SLAB", r"STR[-_]SLAB"],
     "foundation": [r"TEMEL", r"RADYE", r"FOUND", r"FOOTING", r"RAFT", r"S[-_]?FND"],

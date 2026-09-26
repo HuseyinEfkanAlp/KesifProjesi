@@ -211,8 +211,7 @@ export default function ProjectDetail() {
             Dükkânlar kaba teslim (dükkân içi sıva / boya / tavan kiracı işi)
           </label>
           {project.usage && project.usage.floors.length > 0 && (
-            <div className="muted hint" title={project.usage.floors.map((f) => `${f.label}: ${f.usage_label}${f.reason ? ` — ${f.reason}` : ''}`).join('
-')}>
+            <div className="muted hint" title={project.usage.floors.map((f) => `${f.label}: ${f.usage_label}${f.reason ? ` — ${f.reason}` : ''}`).join('\n')}>
               Kullanım (plandaki yazılardan): {project.usage.summary || 'belirlenemedi'}
               {project.usage.mixed && ' · karma yapı: kaba teslim yalnız dükkân katlarına uygulanır, konut / ofis katları tam teslim'}
               {project.usage.floors.some((f) => !f.usage) && ` · ${project.usage.floors.filter((f) => !f.usage).length} katta işaret yok (dükkân katı sayılır)`}

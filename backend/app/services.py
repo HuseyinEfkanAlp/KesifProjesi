@@ -25,7 +25,8 @@ from .parser.blocks import covered_by as block_parts
 from .parser.rebar_mix import layer_verdict as rebar_layer_verdict
 from .parser.rebar_mix import scan_texts as scan_rebar_texts
 from .quantity.boq import (KIND_ORDER, BoqItem, architectural_items, boq_summary, effective_params, electrical_items,
-                           expand_systems, merge_duplicates, slug, sort_items, standard_items, structural_items)
+                           expand_systems, merge_duplicates, slug, sort_items, standard_items, steel_items,
+                           structural_items)
 from .standard.catalog import Catalog, parse_layer
 from .quantity.engine import ElementData, QuantityLine, QuantityParams, compute_all
 from .quantity.recipes import expand_recipes
@@ -209,6 +210,62 @@ VARIABLE_HEIGHT_SPREAD = 0.30
 
 # Kotu katın tavan döşemesi olan pafta tipleri (kalıp planı ve döşeme donatısı döşemeyi gösterir)
 SLAB_TOP_TYPES = {"sta_kat_kalip", "sta_doseme_donati"}
+
+
+_KOT_RE = re.compile(r"(?<![\d.,])([+\-±]\d{1,3}[.,]\d{2,3})(?![\d])")
+
+
+def steel_column_heights(drawings: list[Drawing], kolon_profilleri: dict[int, set[str]] | None = None) -> dict[int, dict]:
+    """Çelik kolon boyu pafta başına: {pafta: {"H", "source", "note", "skip"}}; skip = bu paftada sayılmayacak kolon profilleri.
+
+    Çelik kolon planda kesittir; iki paftada görünür: alt ucu "Kolon Yerleşim / Aplikasyon Planı"nda (ya da altındaki
+    çatı planında: üst konstrüksiyon dikmeleri), üst ucu taşıdığı kiriş / çatı planında. Kolon üst ucundaki paftada sayılır,
+    boyu = o paftanın kotu − aynı dosyadaki bir alt çelik paftasının kotu. "+18.65/+16.85 Arası Çatı Planı" eğimli
+    çatıdır: üst kot iki değerin ortalaması (tahmin). Alt paftada aynı profilli kolonlar sayılmaz (çift sayım): Yat
+    Kulübü çatılarında 120x80x4 dikmeler hem +15.00/+13.20 planında hem üst konstrüksiyon planında görünüyor.
+    Taban paftasında üst paftada karşılığı olmayan kolonların boyu bilinmez (kullanıcıya sorulur)."""
+    from .planset import normalize_title
+    kolon_profilleri = kolon_profilleri or {}
+    rows = []
+    for d in drawings:
+        if (d.plan_type or "") != "sta_celik":
+            continue
+        ad = normalize_title(d.label or "")
+        kotlar = [float(x.replace(",", ".").replace("±", "")) for x in _KOT_RE.findall(d.label or "")]
+        if not kotlar and d.kot is not None:
+            kotlar = [float(d.kot)]
+        taban = bool(re.search(r"KOLON", ad) and re.search(r"YERLES|APLIKASYON", ad) and not re.search(r"KIRIS|CATI", ad))
+        rows.append({"d": d, "file": (d.filename or "").split(" › ")[0], "lo": min(kotlar) if kotlar else None,
+                     "hi": max(kotlar) if kotlar else None, "taban": taban})
+    out: dict[int, dict] = {r["d"].id: {"H": None, "source": "", "note": "", "skip": set()} for r in rows}
+    for r in rows:
+        o = out[r["d"].id]
+        if r["lo"] is None:
+            o["note"] = "paftanın kotu okunamadı"
+            continue
+        if r["taban"]:
+            o["note"] = "kolon taban paftası: üstünde bu kolonun çelik paftası yok"
+            continue
+        ayni = [x for x in rows if x is not r and x["file"] == r["file"] and x["lo"] is not None
+                and x["lo"] <= r["lo"] and x["hi"] <= r["hi"] and not (x["lo"] == r["lo"] and x["hi"] == r["hi"])]
+        # alt paftanın bu paftaya bakan kotu: tamamen altındaysa üst kotu, bu paftanın alt kotuna kadar uzanıyorsa alt kotu
+        adaylar = [((x["hi"] if x["hi"] <= r["lo"] else x["lo"]), x) for x in ayni]
+        adaylar = [(v, x) for v, x in adaylar if v <= r["lo"]]
+        if not adaylar:
+            o["note"] = "altında kot bilinen çelik paftası yok"
+            continue
+        taban_kot, alt = max(adaylar, key=lambda a: (a[0], a[1]["taban"]))
+        ust_kot = (r["lo"] + r["hi"]) / 2.0
+        H = round(ust_kot - taban_kot, 3)
+        if H <= 0.05:
+            o["note"] = "kotlardan boy çıkmadı"
+            continue
+        egimli = r["hi"] - r["lo"] > 0.01
+        o["H"], o["source"] = H, ("tahmin" if egimli else "kot")
+        o["note"] = f"{taban_kot:+.2f} → {ust_kot:+.2f}" + (" (eğimli çatı: iki kotun ortalaması)" if egimli else "")
+        # aynı kolonların alt ucu alt paftada da kesit olarak görünür: orada sayılmaz
+        out[alt["d"].id]["skip"] |= set(kolon_profilleri.get(r["d"].id) or ())
+    return out
 
 
 def storey_heights(project: Project, drawings: list[Drawing]) -> dict:
@@ -905,7 +962,10 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
                 "meta": {**(e.meta or {}), "opening_kind": kind,
                          "glazed": kind == "window" or (e.subtype or "") in poz_glazed}}
 
-    arch, elec, std = [], [], []
+    arch, elec, std, steel = [], [], [], []
+    kolon_boy = steel_column_heights(drawings, {d.id: {(e.meta or {}).get("profile") for e in els_by_id.get(d.id, [])
+                                                      if e.etype == "steel_member" and (e.meta or {}).get("column")}
+                                                for d in drawings})
     # Döşeme kalınlığı da sorulmaz: kullanıcı açıkça girmediyse her pafta kendi planında ölçülen baskın
     # kalınlığı kullanır. Duvar yüksekliği (kat yüksekliği − d) buna bağlıdır ve tek bir proje sayısı
     # bodrum perdesiyle çatı döşemesini aynı sayar.
@@ -960,6 +1020,12 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
             continue
         if d.discipline == REBAR_DISCIPLINE:
             continue
+        if any(e.etype == "steel_member" for e in elements):
+            kb = kolon_boy.get(d.id) or {}
+            # çelik planı bir kat planı değildir (çatı / tonoz taşıyıcısı): kat sayısı belirsizliği onu düşürmez
+            steel.append({**entry, "storey_risk": False, "elements": [e for e in elements if e.etype == "steel_member"],
+                          "steel_column_height": kb.get("H"), "steel_column_height_source": kb.get("source", ""),
+                          "steel_column_height_note": kb.get("note", ""), "steel_column_skip": kb.get("skip") or set()})
         # katalog kodlu elemanlar: poz listesi (meta.ksf_code) ve sezgisel paftadaki KSF-… katmanları (her disiplinde standart kuralla ölçülür)
         ksf = [ksf_entry(e) for e in elements if (e.meta or {}).get("ksf_code") or parse_layer(e.layer or "", catalog)]
         if ksf:
@@ -971,7 +1037,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
     mix = project_rebar_mix(project, session, all_drawings)
     layers = project_rebar_layers(project, all_drawings)
     items = (structural_items(summary, params, rebar_mix=mix, rebar_layers=layers) + architectural_items(arch, params, schedule_poz=sched_poz)
-             + electrical_items(elec, params))
+             + electrical_items(elec, params) + steel_items(steel, params))
     if std:
         items += standard_items(std, params, catalog)
     if measured_only:
@@ -2445,6 +2511,25 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                 f"{si.name} ({alan:,.0f} {si.unit}): çizimde katmanları yazmıyor — " + ", ".join(adlar[:8])
                 + ("…" if len(adlar) > 8 else "") + ". Bunlar önerilen tipik katmanlardır; projenizdeki katmanları ve "
                 "kalınlıkları onaylayın ya da değiştirin. Onaylanana kadar bu katmanların malzemesi ve işçiliği keşifte yok.")
+    # 4b) çelik konstrüksiyon: planda okunamayanlar sorulur, tahmin edilen kolon boyu doğrulatılır
+    celik = [it for it in items if it.kind == "celik_konstruksiyon"]
+    boysuz = [it for it in items if it.kind == "celik_kolon_boysuz"]
+    profilsiz = sum(it.quantity for it in items if it.kind == "celik_profilsiz")
+    if boysuz:
+        ask("celik_kolon_boyu", f"{sum(it.quantity for it in boysuz):,.0f} çelik kolonun ("
+            + ", ".join(sorted({it.group.upper() for it in boysuz})) + ") boyu çizimden çıkmadı: kolonun altındaki ve "
+            "üstündeki paftanın kotu yok. Kolon boyunu girin; girilene kadar bu kolonların ağırlığı keşifte yok.")
+    egimli = [n for it in celik for n in it.notes if "eğimli çatı" in n]
+    if egimli:
+        ask("celik_kolon_egimli", "Eğimli çatıda çelik kolon boyu iki kotun ortalamasıyla tahmin edildi ("
+            + "; ".join(sorted(set(egimli))[:3]) + "). Kolon boyları farklıysa düzeltin.", "optional")
+    if profilsiz > 0:
+        ask("celik_profilsiz", f"{profilsiz:,.1f} m çelik elemanın profil yazısı bulunamadı; ağırlığı keşifte yok. "
+            "Elemanlar sayfasından profilini seçin.")
+    if celik:
+        ask("celik_kapsam", "Çelik ağırlığı plandaki eleman boyundan: eğimli çapraz / makas elemanında gerçek boy daha "
+            "uzundur; bağlantı levhası, taban plakası ve bulon planda ölçülmez (reçetedeki paylarla eklenir). "
+            "İmalatçı metrajı ya da statik tonajı varsa karşılaştırın.", "optional")
     # 5) cephe
     fa = facade_area(project, session, items, drawings, params)
     facade_kinds = {"mantolama_sistem", "kompozit_panel", "giydirme_cephe", "cephe_tasi", "cephe_boya", "prekast_panel", "cephe_brut", "mantolama"}

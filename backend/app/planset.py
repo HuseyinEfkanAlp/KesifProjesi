@@ -68,6 +68,13 @@ PLAN_TYPES: list[PlanType] = [
              pattern=r"PREKAST|PRECAST", hint="Panel kodları etiket sayımıyla (PREKAST_PANEL) sayılır."),
     PlanType("mim_dograma", "MIM", "Doğrama listesi / detayları", "mapped", level=OPTIONAL,
              pattern=r"DOGRAMA", hint="Poz listesi (Poz / Adet) otomatik okunur."),
+    # --- Çelik konstrüksiyon (statik KALIP / KOLON kurallarından önce: "Çelik Kolon Aplikasyon Planı" donatı paftası değildir)
+    PlanType("sta_celik_gorunus", "STA", "Çelik görünüş / detay / 3B model", "mapped", level=OPTIONAL, analyze=False,
+             pattern=r"CELIK.*(GORUNUS|DETAY|BIRLESIM|MODEL|SAP2000|KESIT)|(GORUNUS|DETAY|BIRLESIM|MODEL|SAP2000).*CELIK",
+             hint="Planların tekrarı ya da bağlantı detayı: ölçülmez (çift sayım olmasın)."),
+    PlanType("sta_celik", "STA", "Çelik konstrüksiyon planı", "steel", level=OPTIONAL,
+             owns=("steel_member",), pattern=r"CELIK",
+             hint="Çelik kolon / kiriş / aşık / çapraz: profil bazında boy ve kg."),
     # --- Statik
     PlanType("sta_temel_donati", "STA", "Temel donatı planı", "rebar",
              pattern=r"(TEMEL|RADYE).*DONATI|DONATI.*(TEMEL|RADYE)", hint="Temel demir metraj tablosu buradan okunur."),

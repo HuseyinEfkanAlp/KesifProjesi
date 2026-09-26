@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from array import array
 from collections import defaultdict
@@ -37,12 +38,15 @@ TITLE_RE = re.compile(r"PLAN|KES[İI]T|DETAY|APL[İI]KASYON|G[ÖO]R[ÜU]N[ÜU]Ş
 # "A-A KESİTİ", "K1-K1 KESITI": paftanın **içindeki** kesit işareti; pafta başlığı değildir. Kiriş detay
 # paftalarında bir paftada onlarca tanesi olur, bunlara bölünürse tek pafta yüzlerce parçaya ayrılır.
 SECTION_RE = re.compile(r"^\s*[A-ZÇĞİÖŞÜ0-9]{1,3}\s*[-–]\s*[A-ZÇĞİÖŞÜ0-9]{1,3}\s+KES[İI]T", re.IGNORECASE)
+# Görünüşün üstündeki kesit işareti ("KESİT-2", "KESIT 3"): pafta adı değildir. Başlık sayılınca A1 görünüş paftası
+# işaretlerden parçalanıyor, çatı deresi görünüşten eksik ölçülüyordu.
+SECTION_MARK_RE = re.compile(r"^\s*KES[İI]T\s*[-–]?\s*\d{1,2}\s*$", re.IGNORECASE)
 CODEPAGES = {"ANSI_1254": "cp1254", "ANSI_1252": "cp1252", "ANSI_1250": "cp1250", "ANSI_1251": "cp1251"}
 # Bu boyutun üstündeki dosyalar ezdxf ile hiç açılmaz; pafta seçimi zorunludur
 BIG_FILE_BYTES = 40 * 1024 * 1024
 # Pafta tespiti değiştikçe artar: eski .sheets.json önbellekleri yok sayılır (yoksa kullanıcı eski, bozuk
 # pafta listesini görmeye devam eder).
-SCAN_VERSION = 6
+SCAN_VERSION = 7
 MIN_SHEET_ENTITIES = 5
 # "Boş çerçeve": başlığı olduğu için listeye giren ama ölçülecek hiçbir şey taşımayan kutu — ruhsat antedinin
 # çerçevesi, şablondan kalmış boş pafta ("VAZİYET PLANI" yazan 11 nesnelik kutu). Eşik **göreli**: aynı
@@ -704,18 +708,35 @@ def boxes_from_titles(titles: list[tuple[float, float, float, str]], xs: np.ndar
     return out
 
 
-def _sparsest_cut(values: np.ndarray, lo: float, hi: float) -> float:
+def _sparsest_cut(values: np.ndarray, lo: float, hi: float, spans: np.ndarray | None = None) -> float:
     """[lo, hi] aralığında nesnelerin en seyrek olduğu yer: iki pafta arasındaki boşluk.
 
     İki başlığın tam ortasından kesmek yanlıştır — plan kendi başlığının üstünde ya da altında durur, orta
-    nokta çoğu kez planın içine düşer. Paftalar arasında her zaman boşluk vardır; kesim oraya konur."""
+    nokta çoğu kez planın içine düşer. Paftalar arasında her zaman boşluk vardır; kesim oraya konur.
+
+    spans: bu eksendeki çizgi aralıkları (a, b). Nesneler ilk noktalarıyla sayılır; planın boydan boya uzanan aks
+    çizgileri başlangıçlarından sonrasını "boş" gösteriyordu. Kesim bir çizginin içinden geçmemeli: çizginin
+    kapladığı bölmeler dolu sayılır (Yat Kulübü çelik çatıları: kolon yerleşim planı aks çizgilerinin ortasından
+    ikiye kesiliyor, iki yarısı komşu paftalara dağılıyordu)."""
     if hi <= lo:
         return (lo + hi) / 2.0
     v = values[(values > lo) & (values < hi)]
-    if len(v) == 0:
+    if len(v) == 0 and (spans is None or not len(spans)):
         return (lo + hi) / 2.0
     nb = 60
     counts = np.bincount(np.minimum(((v - lo) / (hi - lo) * nb).astype(np.int64), nb - 1), minlength=nb)
+    if spans is not None and len(spans):
+        w = (hi - lo) / nb
+        sp = spans[(spans[:, 1] - spans[:, 0] >= w) & (spans[:, 0] < hi) & (spans[:, 1] > lo)]
+        if len(sp):
+            e0 = lo + np.arange(nb) * w
+            a = np.sort(sp[:, 0]); b = np.sort(sp[:, 1])
+            # bölmeyi tamamen kaplayan çizgi sayısı = başı bölme başında ya da önce olanlar − sonu bölme sonundan önce bitenler
+            cross = np.searchsorted(a, e0, side="right") - np.searchsorted(b, e0 + w, side="left")
+            # Önce nokta sayısı (eski ölçüt), eşitlikte kesen çizgi sayısı: iki paftanın ortak aks / ölçü çizgileri
+            # gerçek boşluğu da keser (VM statik: +15.65 kalıp ve donatı planları); çizgi yalnız nokta bakımından
+            # eşit derecede boş yerler arasında seçim yapar.
+            counts = counts * (int(cross.max()) + 1) + cross
     floor = int(counts.min())
     runs: list[tuple[int, int, int]] = []
     start: int | None = None
@@ -744,14 +765,15 @@ def _title_groups(vals: list[float], span: float) -> list[list[int]]:
 
 
 def split_box_by_titles(box: Bbox, tt: list[tuple[float, float, float, str]],
-                        xs: np.ndarray, ys: np.ndarray, strict: bool = True) -> list[Bbox]:
+                        xs: np.ndarray, ys: np.ndarray, strict: bool = True,
+                        spans: np.ndarray | None = None) -> list[Bbox]:
     """Bir kutu birden çok pafta başlığı taşıyorsa paftalara böler; bölünemiyorsa boş liste döner.
 
     Ruhsat dosyalarında paftalar çoğu kez çerçevesizdir; tek bir layout dikdörtgeni ya da tek küme altı planı
     birden kapsar (C1 bloğu: çatı, zemin, bodrum, birinci kat, çatı planı ve görünüşler tek "pafta"ydı).
     Aynı boydaki başlıklar pafta sayısını verir: kutu önce başlık sütunlarına (x), sonra her sütun içinde
     satırlara (y) bölünür; kesim iki komşu başlık arasındaki en boş yerden geçer."""
-    tt = [t for t in tt if not SECTION_RE.match(t[3])]
+    tt = [t for t in tt if not SECTION_RE.match(t[3]) and not SECTION_MARK_RE.match(t[3])]
     if len(tt) < 2:
         return []
     # Pafta başlıkları aynı boydadır; bir kat planının içindeki "MERDİVEN DETAYI" alt başlığı daha küçüktür.
@@ -782,7 +804,7 @@ def split_box_by_titles(box: Bbox, tt: list[tuple[float, float, float, str]],
     if len(same) < 2:
         return []
 
-    def _cells(major_x: bool) -> list[Bbox]:
+    def _cells(major_x: bool, same: list[tuple[float, float, float, str]], split_rows: bool = True) -> list[Bbox]:
         """Önce bir eksende (major), sonra her şeridin içinde diğerinde böler."""
         ai, bi = (0, 1) if major_x else (1, 0)
         lo_a, hi_a = (x0, x1) if major_x else (y0, y1)
@@ -790,14 +812,22 @@ def split_box_by_titles(box: Bbox, tt: list[tuple[float, float, float, str]],
         va, vb = (xs, ys) if major_x else (ys, xs)
         groups = _title_groups([t[ai] for t in same], hi_a - lo_a)
         centers = [median([same[i][ai] for i in g]) for g in groups]
-        cuts = [lo_a] + [_sparsest_cut(va, centers[i], centers[i + 1]) for i in range(len(centers) - 1)] + [hi_a]
+        # çizgi aralıkları: kutunun içinde kalan çizgilerin bu eksendeki izdüşümü (x0, x1, y0, y1 dörtlüleri)
+        sa = sb = None
+        if spans is not None and len(spans):
+            ic = (spans[:, 1] >= x0) & (spans[:, 0] <= x1) & (spans[:, 3] >= y0) & (spans[:, 2] <= y1)
+            sa = spans[ic][:, [0, 1]] if major_x else spans[ic][:, [2, 3]]
+        cuts = [lo_a] + [_sparsest_cut(va, centers[i], centers[i + 1], sa) for i in range(len(centers) - 1)] + [hi_a]
         out: list[Bbox] = []
         for gi, g in enumerate(groups):
             inner = [same[i][bi] for i in g]
-            rows = _title_groups(inner, hi_b - lo_b)
+            rows = _title_groups(inner, hi_b - lo_b) if split_rows else [list(range(len(inner)))]
             rcent = [median([inner[j] for j in r]) for r in rows]
             band = vb[(va >= cuts[gi]) & (va <= cuts[gi + 1])]
-            rcuts = [lo_b] + [_sparsest_cut(band, rcent[i], rcent[i + 1]) for i in range(len(rcent) - 1)] + [hi_b]
+            # Satır kesiminde çizgi kapsamı kullanılmaz: planın altındaki görünüş / detay satırlarında düşey çizgiler
+            # (blok kapsamları) gerçek boşluğu da kesiyor, kesim detayın içine kayıyordu (A3 BLOK 05.09: zemin kat
+            # planına duvar uygulama detayı katılıyordu). Çizgi kapsamı yalnız sütunlar arasındaki kesimde işe yarıyor.
+            rcuts = [lo_b] + [_sparsest_cut(band, rcent[i], rcent[i + 1], sb) for i in range(len(rcent) - 1)] + [hi_b]
             for ri in range(len(rows)):
                 out.append((cuts[gi], rcuts[ri], cuts[gi + 1], rcuts[ri + 1]) if major_x
                            else (rcuts[ri], cuts[gi], rcuts[ri + 1], cuts[gi + 1]))
@@ -825,7 +855,30 @@ def split_box_by_titles(box: Bbox, tt: list[tuple[float, float, float, str]],
     # Paftalar hemen her zaman soldan sağa dizilir; bölme önce x'te, sonra her sütun içinde y'de yapılır.
     # İki ekseni de deneyip "daha çok pafta vereni" almak, tek paftayı ikiye kesen yanlış bölmeleri de
     # kabul ettiriyordu (C1: doğramalar paftası ikiye bölünüyordu) — bu yüzden yalnız x-major kullanılır.
-    return _accept(_cells(True))
+    # Sütunlar gerçek paftalar ama bir sütunun içindeki küçük detay başlıkları satır bölmesini cılız bırakıyorsa
+    # (Yat Kulübü çatıları: çatı planı + sağında kesitler ve üç küçük birleşim detayı) bölme tümden reddedilmez:
+    # sütunlar satıra bölünmeden kabul edilir. Yoksa plan kesitlerle tek pafta kalıyor, kesitteki çelik de ölçülüyordu.
+    def _dene(ts: list[tuple[float, float, float, str]]) -> list[Bbox]:
+        return _accept(_cells(True, ts)) or _accept(_cells(True, ts, split_rows=False))
+
+    res = _dene(same)
+    if not res:
+        # Kenardaki başlık sütunu çoğu kez antet tablosundaki pafta adıdır ("(Y-YÖNÜ) DONATI PLANI", VM statik): kendi
+        # başına cılız bir sütun açıp bütün bölmeyi reddettiriyordu. Bir kez kenar sütunu olmadan denenir.
+        groups = _title_groups([t[0] for t in same], x1 - x0)
+        sutun = _cells(True, same, split_rows=False)          # grup başına bir sütun, aynı sırada
+        if len(groups) >= 3 and len(sutun) == len(groups):
+            floor = max(float(MIN_SHEET_ENTITIES), 0.2 * total / len(sutun))
+
+            def _ciliz(c: Bbox) -> bool:
+                return int(np.count_nonzero((xs >= c[0]) & (xs <= c[2]) & (ys >= c[1]) & (ys <= c[3]))) < floor
+            # yalnız kendisi cılız kalan kenar sütun düşer: dolu bir sütunu (kesitler, detaylar) komşusuna katmamalı
+            for gi in (len(groups) - 1, 0):
+                if _ciliz(sutun[gi]):
+                    res = _dene([t for i, t in enumerate(same) if i not in groups[gi]])
+                    if res:
+                        break
+    return res
 
 
 def prune_sheets(sheets: list[Sheet]) -> tuple[list[Sheet], int]:
@@ -1010,6 +1063,7 @@ def scan_sheets(path: str | Path) -> SheetScan:
     ys = array("d")
     heights = array("d")
     lines = array("d")                    # x1,y1,x2,y2 dörtlüleri
+    spans = array("d")                    # çizgi / polyline kapsamı: x0,x1,y0,y1 (pafta kesimi çizgi içinden geçmesin)
     rects: list[Bbox] = []                # kapalı dikdörtgen polyline'lar
     inserts: list[tuple[str, float, float, float, float]] = []   # ad, x, y, sx, sy
     blocks: dict[str, Bbox] = {}
@@ -1050,6 +1104,8 @@ def scan_sheets(path: str | Path) -> SheetScan:
                 layer_names.append(lname)
             layer_ids.append(li)
             is_text.append(1 if t in TEXT_TYPES else 0)
+            if t in ("LINE", "LWPOLYLINE") and len(ent["xs"]) >= 2:
+                spans.extend((min(ent["xs"]), max(ent["xs"]), min(ent["ys"]), max(ent["ys"])))
             if t == "LINE" and len(ent["xs"]) >= 2 and len(ent["ys"]) >= 2:
                 lines.extend((ent["xs"][0], ent["ys"][0], ent["xs"][1], ent["ys"][1]))
             elif t == "LWPOLYLINE" and (ent.get("70", 0) & 1 or len(ent["xs"]) == 5):
@@ -1059,6 +1115,17 @@ def scan_sheets(path: str | Path) -> SheetScan:
             elif t == "INSERT" and ent.get("2"):
                 inserts.append((ent["2"], ent["xs"][0], ent["ys"][0],
                                 float(ent.get("41", 1.0) or 1.0), float(ent.get("42", 1.0) or 1.0)))
+                bb = blocks.get(ent["2"])
+                if bb:
+                    # blok içeriği (aks takımı, kiriş bloğu) de kesimin geçemeyeceği bir kapsamdır
+                    sx, sy = float(ent.get("41", 1.0) or 1.0), float(ent.get("42", 1.0) or 1.0)
+                    rot = math.radians(float(ent.get("50", 0.0) or 0.0))
+                    c, sn = math.cos(rot), math.sin(rot)
+                    px, py = [], []
+                    for bx_, by_ in ((bb[0], bb[1]), (bb[2], bb[1]), (bb[0], bb[3]), (bb[2], bb[3])):
+                        px.append(ent["xs"][0] + bx_ * sx * c - by_ * sy * sn)
+                        py.append(ent["ys"][0] + bx_ * sx * sn + by_ * sy * c)
+                    spans.extend((min(px), max(px), min(py), max(py)))
                 bt = block_titles.get(ent["2"])
                 if bt:
                     # antet bloğunun içindeki başlık: blok yerleşimine göre dönüştürülür; yalnız başlıksız kalan paftalara
@@ -1085,6 +1152,7 @@ def scan_sheets(path: str | Path) -> SheetScan:
     cetvel_pts = cetvel_texts
     npx = np.frombuffer(xs, dtype="d").copy() if len(xs) else np.zeros(0)
     npy = np.frombuffer(ys, dtype="d").copy() if len(ys) else np.zeros(0)
+    nps = np.frombuffer(spans, dtype="d").reshape(-1, 4).copy() if len(spans) else np.zeros((0, 4))
     if len(npx) == 0:
         return SheetScan(str(path), insunits, count, None, [])
     npl = np.frombuffer(layer_ids, dtype="i").copy() if len(layer_ids) else np.zeros(0, dtype="i")
@@ -1166,10 +1234,13 @@ def scan_sheets(path: str | Path) -> SheetScan:
         """Bir kutu kümesini paftalara çevirir: kopyaları eler, çok başlıklı kutuları böler, artıkları ayıklar."""
         bx = dedupe_boxes(bx)
         if titles and bx:
+            def _bol(bbox: Bbox) -> list[Bbox]:
+                tin = [t for t in titles if bbox[0] <= t[0] <= bbox[2] and bbox[1] <= t[1] <= bbox[3]]
+                return split_box_by_titles(bbox, tin, npx, npy, spans=nps) if len(tin) >= 2 else []
+
             refined: list[tuple[Bbox, str]] = []
             for bbox, src in bx:
-                tin = [t for t in titles if bbox[0] <= t[0] <= bbox[2] and bbox[1] <= t[1] <= bbox[3]]
-                parts = split_box_by_titles(bbox, tin, npx, npy) if len(tin) >= 2 else []
+                parts = _bol(bbox)
                 refined.extend([(pb, src + "+split") for pb in parts] if parts else [(bbox, src)])
             bx = dedupe_boxes(refined)
         if len(bx) < 2 and not allow_single:
@@ -1209,7 +1280,7 @@ def scan_sheets(path: str | Path) -> SheetScan:
     best_score = float("-inf")
     # Dördüncü aday: bütün gövdeyi doğrudan pafta başlıklarına böl. Çerçevesi olmayan, bantlara da dizilmemiş
     # (ızgara yerleşimli) dosyalarda paftaları veren tek yöntem budur.
-    grid = [(b, "title") for b in split_box_by_titles(extent_box, titles + big_other, npx, npy, strict=False)]
+    grid = [(b, "title") for b in split_box_by_titles(extent_box, titles + big_other, npx, npy, strict=False, spans=nps)]
     # Beşinci aday: çizimin tamamı TEK pafta. Tek plandan oluşan dosyada (tesisat planı gibi) bölme
     # yapmaya çalışan yöntemler çizimi yüzlerce artık kümeye parçalıyordu; bölünmemiş hal de bir adaydır
     # ve puanlama (tanınan başlık − başlıksız artık) hangisinin doğru olduğunu kendisi seçer.
