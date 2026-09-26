@@ -160,8 +160,10 @@ def _convert(entity: DXFEntity, scale: float, insert_layer: str | None, block: s
             txt = getattr(entity.dxf, "text", "")
         ins = entity.dxf.insert
         h = float(getattr(entity.dxf, "char_height", None) or getattr(entity.dxf, "height", 0.0) or 0.0)
+        # yazı açısı (derece): tek çizgiyle çizilmiş çelik elemanın markası elemana paraleldir (detectors/steel.py)
+        rot = float(getattr(entity.dxf, "rotation", 0.0) or 0.0) if entity.dxf.hasattr("rotation") else 0.0
         yield Entity("text", layer, [(ins.x * scale, ins.y * scale)], text=str(txt).strip(),
-                     height=h * scale, handle=handle, source=src, block=block)
+                     height=h * scale, handle=handle, source=src, block=block, rotation=rot)
         return
 
     if t == "HATCH":

@@ -654,6 +654,14 @@ def steel_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqItem]:
                 cap = _cap_sec(fas.get("ankraj"), sinif) or ("M20" if buyuk else "M16")
                 bag["ankraj"][cap] = bag["ankraj"].get(cap, 0) + c["ankraj"] * mult
             bag["not"][prof] = c["not"]
+        # eğimli çatı paftası (başlıkta iki kot: "+18.65/+16.85 Arası") ama hiçbir elemanda eğim bilgisi yok
+        lo, hi = d.get("steel_range") or (None, None)
+        cubuk = [e for e in d["elements"] if _g(e, "etype") == "steel_member" and not (_g(e, "meta") or {}).get("column")]
+        egimli_pafta = lo is not None and hi is not None and hi - lo > 0.01
+        if egimli_pafta and cubuk and not any((_g(e, "meta") or {}).get("rise") for e in cubuk):
+            acc.add("celik_egim_yok", slug(str(d.get("id"))), f"Eğim bilgisi yok: {d.get('label') or ''}",
+                    sum(float(_g(e, "length") or 0.0) for e in cubuk) * mult,
+                    meta=("Çelik — eğim bekleniyor", "m", "structural", STEEL_META[3]), info=True, ev=TAHMIN)
     acc.drawing = None
     notlar = "; ".join(f"{k}: {v}" for k, v in sorted(bag["not"].items()))[:600]
     tipik = "Tipik detayla sayıldı (saha başlangıç normu) — bağlantı detayınızla karşılaştırın. " + notlar

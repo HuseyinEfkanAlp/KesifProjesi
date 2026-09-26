@@ -258,8 +258,8 @@ def steel_column_heights(drawings: list[Drawing], kolon_profilleri: dict[int, se
         taban = bool(re.search(r"KOLON", ad) and re.search(r"YERLES|APLIKASYON", ad) and not re.search(r"KIRIS|CATI", ad))
         rows.append({"d": d, "file": (d.filename or "").split(" › ")[0], "lo": min(kotlar) if kotlar else None,
                      "hi": max(kotlar) if kotlar else None, "taban": taban})
-    out: dict[int, dict] = {r["d"].id: {"H": None, "source": "", "note": "", "skip": set(), "concrete_base": True}
-                            for r in rows}
+    out: dict[int, dict] = {r["d"].id: {"H": None, "source": "", "note": "", "skip": set(), "concrete_base": True,
+                                        "range": (r["lo"], r["hi"])} for r in rows}
     for r in rows:
         o = out[r["d"].id]
         if r["lo"] is None:
@@ -1052,7 +1052,8 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
             steel.append({**entry, "storey_risk": False, "elements": [e for e in elements if e.etype == "steel_member"],
                           "steel_column_height": kb.get("H"), "steel_column_height_source": kb.get("source", ""),
                           "steel_column_height_note": kb.get("note", ""), "steel_column_skip": kb.get("skip") or set(),
-                          "steel_column_on_concrete": kb.get("concrete_base", True), "steel_fasteners": celik_bag})
+                          "steel_column_on_concrete": kb.get("concrete_base", True), "steel_fasteners": celik_bag,
+                          "steel_range": kb.get("range")})
         # katalog kodlu elemanlar: poz listesi (meta.ksf_code) ve sezgisel paftadaki KSF-… katmanları (her disiplinde standart kuralla ölçülür)
         ksf = [ksf_entry(e) for e in elements if (e.meta or {}).get("ksf_code") or parse_layer(e.layer or "", catalog)]
         if ksf:
@@ -2550,6 +2551,12 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
     if egimli:
         ask("celik_kolon_egimli", "Eğimli çatıda çelik kolon boyu iki kotun ortalamasıyla tahmin edildi ("
             + "; ".join(sorted(set(egimli))[:3]) + "). Kolon boyları farklıysa düzeltin.", "optional")
+    egimsiz = [it for it in items if it.kind == "celik_egim_yok"]
+    if egimsiz:
+        ask("celik_egim", "Eğimli çelik çatı paftasında ("
+            + "; ".join(it.label.replace("Eğim bilgisi yok: ", "") for it in egimsiz[:3])
+            + ") elemanların eğimi okunamadı: uçlarında kot yazısı ya da eğim yazısı (%, °) yok. Makas / çapraz boyu "
+            "plandaki izdüşümden alındı, ağırlık eksik olabilir. Çatı eğimini girin ya da kesit paftasını yükleyin.")
     if profilsiz > 0:
         ask("celik_profilsiz", f"{profilsiz:,.1f} m çelik elemanın profil yazısı bulunamadı; ağırlığı keşifte yok. "
             "Elemanlar sayfasından profilini seçin.")
