@@ -2423,6 +2423,28 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                             "buhar kesici, ısı yalıtımı (XPS), su yalıtımı, koruma betonu; kenet / kiremit çatı ise ilgili sistemi seçin.")
     elif ra["area"] > 0 and len(ra["candidates"]) > 1 and ra["system_source"] != "manual":
         ask("cati_sistemi", f"Kesit notlarında birden çok çatı sistemi geçiyor ({', '.join(ra['candidates'])}); proje parametrelerinden seçin.")
+    # 4b) katmanlı sistemler (teras / kiremit / kenet çatı, mantolama…): katmanları çizimde yazmıyorsa kullanıcıdan
+    # alınır — sistem varsaymaz. Karar verilene kadar bu katmanlar keşifte ve işçilikte yoktur; bu açıkça sorulmalı
+    # (yoksa teknik olmayan kullanıcı eksik keşfi fark etmez).
+    kanit = merge_materials([d.materials or {} for d in drawings])
+    kararlar = project.systems or {}
+    gorulen: set[str] = set()
+    for it in items:
+        si = catalog.get(it.kind)
+        if not si or not si.is_system or si.code in gorulen:
+            continue
+        gorulen.add(si.code)
+        karar = kararlar.get(si.code) or {}
+        eksik = [c for c in si.components if not (kanit.get(c["code"]) or {}).get("evidence")
+                 and "include" not in (karar.get(c["code"]) or {})]
+        if eksik:
+            adlar = [(catalog.get(c["code"]).name if catalog.get(c["code"]) else c["code"])
+                     + (f" {c['spec']}" if c.get("spec") else "") for c in eksik]
+            alan = sum(x.quantity for x in items if x.kind == it.kind)
+            ask(f"sistem_katman_{si.code.lower()}",
+                f"{si.name} ({alan:,.0f} {si.unit}): çizimde katmanları yazmıyor — " + ", ".join(adlar[:8])
+                + ("…" if len(adlar) > 8 else "") + ". Bunlar önerilen tipik katmanlardır; projenizdeki katmanları ve "
+                "kalınlıkları onaylayın ya da değiştirin. Onaylanana kadar bu katmanların malzemesi ve işçiliği keşifte yok.")
     # 5) cephe
     fa = facade_area(project, session, items, drawings, params)
     facade_kinds = {"mantolama_sistem", "kompozit_panel", "giydirme_cephe", "cephe_tasi", "cephe_boya", "prekast_panel", "cephe_brut", "mantolama"}
@@ -2461,7 +2483,10 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
     storeys = sum(max(1, d.storey_count) for d in drawings if d.discipline in (DEFAULT_DISCIPLINE, "architectural")
                   and any(e.etype in ("column", "wall") for e in _included_elements(d, session)))
     if storeys >= 2 and "korekuyu" not in kinds:
-        ask("korkuluk", "Çok katlı bina: merdiven korkuluğu / küpeşte ve balkon-teras korkuluğu keşifte yok; ekleyin.", "optional")
+        if n_mer:
+            ask("korkuluk", "Merdiven korkuluğu merdivenlerden hesaplandı; balkon / teras korkuluğu varsa ekleyin.", "optional")
+        else:
+            ask("korkuluk", "Çok katlı bina: merdiven korkuluğu / küpeşte ve balkon-teras korkuluğu keşifte yok; ekleyin.", "optional")
     # 7) ıslak hacim
     wet = any(any(k in n for k in ("VITRIFIYE", "WC", "BANYO", "ISLAK")) for n in layer_names)
     if wet and "seramik_duvar" not in kinds:

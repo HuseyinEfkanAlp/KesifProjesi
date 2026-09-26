@@ -27,7 +27,8 @@ def bina(client, tmp_path_factory):
         run_pending()
         q = client.get(f"/api/projects/{pid}/quantities").json()
         _SONUC.update(items=[i for i in q["boq"]["items"] if not (i.get("detail") or {}).get("recipe")],
-                      quality=q["quality"], truth=golden_truth4())
+                      quality=q["quality"], truth=golden_truth4(),
+                      systems=client.get(f"/api/projects/{pid}/systems").json())
     return _SONUC
 
 
@@ -55,3 +56,13 @@ def test_merdiven_ince_isleri(bina):
 
 def test_teras_cati_parapet_ici(bina):
     assert _q(bina, "teras_cati") == pytest.approx(bina["truth"]["cati"], rel=0.005)
+
+
+def test_yazmayan_cati_katmani_kullanicidan_istenir(bina):
+    """Katmanlar çizimde yazmıyorsa sistem varsaymaz: öneri yapar, keşfe koymaz ve kullanıcıya açıkça sorar
+    (kullanıcı kararı, 26 Eyl 2026: "projede yazmıyorsa kullanıcıdan alacağız")."""
+    soru = [c for c in bina["systems"]["checklist"] if c["code"] == "sistem_katman_teras_cati"]
+    assert soru and soru[0]["level"] == "required" and "XPS" in soru[0]["text"]
+    assert _q(bina, "xps") == 0 and _q(bina, "su_yalitim_membran") == 0
+    korkuluk = [c for c in bina["systems"]["checklist"] if c["code"] == "korkuluk"]
+    assert korkuluk and "hesaplandı" in korkuluk[0]["text"]
