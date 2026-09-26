@@ -40,7 +40,28 @@ def detect_parapets(drawing: Drawing, layers: list[str], labels: LabelIndex, par
         el = DetectedElement(etype="parapet", layer=e.layer, points=pts, length=L, source=e.source, handle=e.handle, confidence=0.5)
         _label(el, labels, pts)
         out.append(el)
+    _share_label(out)
     return out
+
+
+def _share_label(els: list[DetectedElement]) -> None:
+    """Parapet kesiti çoğu zaman bir kez yazılır ("PARAPET 20/100"): etiket yalnız en yakın parçaya bağlanır, öteki
+    kenarlar varsayılan 15 cm yüksekliği alıyordu (altın bina 4: parapet betonu %61 eksik). Etiketli parçaların
+    kesiti tekse etiketsiz parçalar onu alır."""
+    etiketli = {(round(e.b or 0, 3), round(e.h or 0, 3), e.label_raw) for e in els if e.label_raw}
+    if len({(b, h) for b, h, _ in etiketli}) != 1:
+        return
+    b, h, raw = next(iter(etiketli))
+    for e in els:
+        if e.label_raw:
+            continue
+        if e.b and abs(e.b - b) > 0.05:
+            continue                               # çizilen genişlik başka: başka bir parapet
+        e.b, e.h, e.label_raw, e.name = b, h, raw, "Parapet"
+        e.warnings = [w for w in e.warnings if "etiketi yok" not in w]
+        e.warnings.append(f"Kesit aynı paftadaki parapet etiketinden alındı ({raw})")
+        e.confidence = max(e.confidence, 0.7)
+        e.area = b * e.length
 
 
 def _label(el: DetectedElement, labels: LabelIndex, pts) -> None:

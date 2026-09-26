@@ -143,6 +143,7 @@ def measure_layer(drawing: Drawing, layer: str, code: str, item, measure: str | 
             polys.append(DetectedElement(etype=etype, layer=layer, points=list(e.points), name=base_name, subtype=spec,
                                          area=a, perimeter=perimeter(e.points), source=e.source, handle=e.handle, confidence=base_conf, meta=meta))
     if polys:
+        polys = _roof_inner(polys)
         elements.extend(dedupe_elements(polys))
     if measure == "count" and not any(e.kind == "insert" for e in ents):
         n = 0
@@ -241,6 +242,41 @@ def suggest_item(layer: str, catalog: Catalog, materials: dict | None = None, ov
 # Çatı bölgeleri: çatı olarak ölçülmüş her kapalı alan kendi sistemini TAŞIR.
 # Proje genelinde tek "çatı sistemi" yerine, çatı planında bölgenin içine yazılan not ("KENET ÇATI", "KİREMİT")
 # o bölgenin sistemini belirler: "Bölge 1: 300 m² kenet · Bölge 2: 120 m² kiremit", her biri kendi reçetesiyle.
+FLAT_ROOF = {"TERAS_CATI", "CATI_MEMBRAN"}
+PARAPET_BAND_MAX = 0.6       # m — çatı dış hattı ile iç çizgisi arasındaki bu kadar ince bant parapettir
+
+
+def _roof_inner(polys: list[DetectedElement]) -> list[DetectedElement]:
+    """Çatı planında dış hat ve onun hemen içinde parapetin iç yüzü çizilir: çatı katmanları iç çizgide biter.
+    Bir çatı çokgeni, kendisinden ince bir bantla (≤ PARAPET_BAND_MAX) küçük başka bir çokgeni içeriyorsa dıştaki
+    atılır (altın bina 4: dış hat 128,96 m² sayılıyor, parapet içi 120 m²). Tekrar eleme büyük olanı tuttuğu için
+    bu ayıklama ondan önce yapılır."""
+    from shapely.geometry import Polygon as _P
+    kodlar = {((e.meta or {}).get("ksf_code") or e.etype or "").upper() for e in polys}
+    # yalnız parapetli düz çatı: kiremit / kenet çatıda dış çizgi saçaktır, kaplama saçağa kadar gider
+    # (A2 kiremit çatısı içteki çizgiyle 79 m² yerine 72 m² sayılıyordu)
+    if not kodlar & FLAT_ROOF or kodlar & (ROOF_ZONE_BASE - FLAT_ROOF):
+        return polys
+    geo = []
+    for e in polys:
+        try:
+            geo.append(_P(e.points).buffer(0))
+        except Exception:
+            geo.append(None)
+    at = set()
+    for i, gi in enumerate(geo):
+        if gi is None or gi.is_empty:
+            continue
+        for j, gj in enumerate(geo):
+            if i == j or gj is None or gj.is_empty or gj.area >= gi.area:
+                continue
+            if gi.buffer(1e-3).contains(gj) and (gi.area - gj.area) / max(gi.length, 1e-9) <= PARAPET_BAND_MAX:
+                at.add(i)
+                polys[j].warnings.append(f"Çatı alanı parapetin iç çizgisinden: dış hat {gi.area:,.1f} m², içi {gj.area:,.1f} m²")
+                break
+    return [e for k, e in enumerate(polys) if k not in at]
+
+
 ROOF_ZONE_BASE = {"CATI_KIREMIT", "KENET_CATI", "TERAS_CATI", "KIREMIT_CATI", "CELIK_CATI", "CATI_MEMBRAN"}
 
 

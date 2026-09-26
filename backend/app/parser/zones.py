@@ -125,7 +125,36 @@ def scan_zones(drawing: Drawing, spaces: list[dict] | None = None) -> list[dict]
     from shapely.ops import unary_union
     out = _area_zones(drawing) or _space_zones(spaces or [])
     covered = unary_union([Polygon(z["points"]).buffer(0) for z in out]) if out else None
-    return out + stair_zones(drawing, covered)
+    return out + stair_zones(drawing, covered) + stair_footprints(drawing)
+
+
+def stair_footprints(drawing: Drawing) -> list[dict]:
+    """Mimari plandaki merdivenin kapladığı alan (merdiven katmanındaki kapalı çokgenlerin birleşimi: kollar +
+    ara sahanlık). Merdiven holünün şap / kaplaması bu kadar eksiktir — orası basamak kaplamasıdır; üstünde kat
+    varsa tavanı da (döşemede merdiven boşluğu). Tür "merdiven_izi": ortak / dükkân ayrımına girmez."""
+    from shapely.ops import unary_union
+    polys = []
+    for e in drawing.entities:
+        if not e.is_closed_polygon or not STAIR_LAYER.search(e.layer or ""):
+            continue
+        try:
+            p = Polygon(e.points).buffer(0)
+        except Exception:
+            continue
+        if not p.is_empty and p.area >= 0.2:
+            polys.append(p)
+    if not polys:
+        return []
+    # kollar arasındaki göz (≤ 40 cm) de boşluktur: kapatma (şişir + büz) ile ize katılır
+    u = unary_union([p.buffer(0.2, join_style=2) for p in polys]).buffer(-0.2, join_style=2)
+    out = []
+    for g in (list(u.geoms) if hasattr(u, "geoms") else [u]):
+        if g.geom_type != "Polygon" or g.area < STAIR_MIN_AREA:
+            continue
+        out.append({"kind": "merdiven_izi", "area": round(g.area, 3), "source": "merdiven", "layer": "merdiven",
+                    "why": "merdiven katmanındaki kollar ve sahanlık",
+                    "points": [[round(x, 3), round(y, 3)] for x, y in g.exterior.coords]})
+    return out
 
 
 def _space_zones(spaces: list[dict]) -> list[dict]:

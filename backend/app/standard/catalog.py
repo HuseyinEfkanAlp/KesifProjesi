@@ -240,6 +240,7 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("BOYA", "INC", "Boya", "wall_area", "tip", "KSF-INC-BOYA-PLASTIK"),
     _i("SERAMIK_ZEMIN", "INC", "Zemin seramiği", "area", "ebat (60x60)", "KSF-INC-SERAMIK_ZEMIN-60x60"),
     _i("SERAMIK_DUVAR", "INC", "Duvar seramiği", "wall_area", "ebat", "KSF-INC-SERAMIK_DUVAR-30x60", poz="15.380.1056"),
+    _i("MERDIVEN_KAPLAMA", "INC", "Merdiven kaplaması (basamak + rıht + sahanlık)", "area", "tip", "KSF-INC-MERDIVEN_KAPLAMA-MERMER"),
     _i("LAMINAT", "INC", "Laminat parke", "area", "tip", "KSF-INC-LAMINAT-8MM"),
     _i("ASMA_TAVAN", "INC", "Asma tavan", "area", "tip (ALCIPAN / METAL / TASYUNU)", "KSF-INC-ASMA_TAVAN-TASYUNU"),
     _i("SUPURGELIK", "INC", "Süpürgelik", "length", "tip", "KSF-INC-SUPURGELIK-MDF"),
@@ -532,6 +533,7 @@ DEFAULT_RECIPES: dict[str, list[tuple]] = {
     "ASTAR": [("BOYA_ISCILIK", 0.05)],
     "SERAMIK_ZEMIN": [("KAPLAMA_ISCILIK", 0.55), ("SERAMIK_YAPISTIRICI", 5.0), ("DERZ_DOLGU", 0.5)],
     "SERAMIK_DUVAR": [("KAPLAMA_ISCILIK", 0.56), ("SERAMIK_YAPISTIRICI", 5.0), ("DERZ_DOLGU", 0.5)],
+    "MERDIVEN_KAPLAMA": [("KAPLAMA_ISCILIK", 0.9), ("SERAMIK_YAPISTIRICI", 5.0)],   # basamak + rıht: düz zeminden ~1,6 kat yavaş
     "LAMINAT": [("KAPLAMA_ISCILIK", 0.25), ("SILTE", 1.05)],
     "ASMA_TAVAN": [("KAPLAMA_ISCILIK", 0.6), ("ASKI_TELI", 2.0), ("TAVAN_PROFILI", 3.0)],
     "SUPURGELIK": [("KAPLAMA_ISCILIK", 0.15)],

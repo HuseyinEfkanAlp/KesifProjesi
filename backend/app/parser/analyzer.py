@@ -22,6 +22,7 @@ from .detectors.openings import detect_openings, detect_poz_openings, poz_catalo
 from .detectors.shear_walls import detect_shear_walls
 from .detectors.slabs import detect_slabs
 from .detectors.standard import assign_roof_zones, detect_mapped, detect_standard, standard_layers
+from .detectors.stairs import detect_stairs
 from .detectors.walls import deduct_wall_crossings, detect_walls, mark_walls_on_axes
 from .merge import merge_area_elements
 from .geometry import polygon_area
@@ -180,6 +181,7 @@ def _structural(drawing: Drawing, layers_by_type: dict[str, list[str]], params: 
     founds = detect_foundations(drawing, layers_by_type.get("foundation", []), labels, params, supports=supports)
     from .detectors.parapet import detect_parapets
     parapets = detect_parapets(drawing, layers_by_type.get("parapet", []), labels, params)
+    stairs = detect_stairs(drawing, layers_by_type.get("stair", []), params)
 
     # Temel paftası: üzerindeki kolon/perdeler yerleşim izidir (aynı elemanlar bodrum kalıp planında sayılır).
     # Metraj dışı bırakılır (düşük güven); kullanıcı isterse listede açabilir.
@@ -212,7 +214,7 @@ def _structural(drawing: Drawing, layers_by_type: dict[str, list[str]], params: 
         if gap:
             result.warnings.append(f"{len(gap)} döşeme etiketi kapalı bir hücreye düşmedi (kiriş / perde çizgileri hücreyi kapatmıyor): "
                                    + _names(gap) + " — bu döşemeleri elle ekleyin")
-    return columns + walls + beams + slabs + founds + parapets
+    return columns + walls + beams + slabs + founds + parapets + stairs
 
 
 def _centroids(polys: list) -> list[list[float]]:

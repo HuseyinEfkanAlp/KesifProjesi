@@ -34,6 +34,7 @@ STRUCTURAL_TYPES: dict[str, str] = {
     "slab": "Döşeme",
     "foundation": "Temel",
     "parapet": "Parapet",
+    "stair": "Merdiven",
 }
 ARCHITECTURAL_TYPES: dict[str, str] = {
     "wall": "Duvar",
@@ -102,7 +103,7 @@ def types_for(discipline: str) -> dict[str, str]:
 
 
 # Öncelik sırası: daha spesifik tipler önce (ör. "DÖŞEME ŞAFT" -> hole, "TEMEL_KIRIS" -> temel, "KABLO TAVASI" -> tava)
-MATCH_ORDER = ("hole", "parapet", "foundation", "shear_wall", "column", "beam", "slab",
+MATCH_ORDER = ("hole", "stair", "parapet", "foundation", "shear_wall", "column", "beam", "slab",
                "window", "door", "wall",
                "tray", "conduit", "fixture", "cable",
                "pipe", "duct", "mech_fixture")
@@ -111,7 +112,10 @@ DEFAULT_PROFILE: dict[str, list[str]] = {
     # statik
     "column": [r"KOLON", r"\bCOL\b", r"S[-_]?COL", r"COLUMN", r"STR[-_]COL"],
     "shear_wall": [r"PERDE", r"S[-_]?WALL", r"SHEAR", r"STR[-_]WALL"],
-    "parapet": [r"PARAPET"],   # "VM Parapet Tarama" da parapet (tarama yok-sayması bu tip için geçerli değil)
+    "parapet": [r"PARAPET"],
+    # betonarme merdiven (kalıp planı). Mimaride ve tesisatta merdiven katmanı eleman değildir (yok sayılır);
+    # "MERDİVEN BOŞLUĞU" döşeme boşluğudur (hole önce denenir)
+    "stair": [r"MERD[İI]VEN", r"STAIR"],   # "VM Parapet Tarama" da parapet (tarama yok-sayması bu tip için geçerli değil)
     "beam": [r"KIRI[SŞ]", r"KİRİ[SŞ]", r"\bBEAM\b", r"S[-_]?BEAM", r"STR[-_]BEAM"],
     "slab": [r"DO[SŞ]EME", r"DÖ[SŞ]EME", r"\bSLAB", r"S[-_]?SLAB", r"STR[-_]SLAB"],
     "foundation": [r"TEMEL", r"RADYE", r"FOUND", r"FOOTING", r"RAFT", r"S[-_]?FND"],
@@ -167,7 +171,7 @@ IGNORE_PATTERNS = [
 ]
 # Mimari paftada duvarlar çoğu zaman tarama (hatch) ile çizilir; bu desenler mimaride yok sayılmaz
 ARCH_KEEP = {r"TARAMA", r"HATCH"}
-STRUCT_KEEP_TYPES = {"parapet"}   # bu tiplerin deseni yok-sayma listesinden önce denenir (PARAPET TARAMA katmanı)
+STRUCT_KEEP_TYPES = {"parapet", "stair"}   # bu tiplerin deseni yok-sayma listesinden önce denenir (PARAPET TARAMA katmanı)
 # Elektrik paftasında "MERDIVEN TAVA" (merdiven tipi kablo tavası) elemandır; tava deseni yok-saymadan önce gelir
 ELEC_KEEP = {r"MERDIVEN", r"MERDİVEN"}
 
@@ -222,6 +226,8 @@ class LayerProfile:
             return None
         for etype in STRUCT_KEEP_TYPES:
             if etype in allowed and any(pat.search(name) for pat in self._compiled.get(etype, [])):
+                if etype == "stair" and any(q.search(name) for q in self._compiled.get("hole", [])):
+                    continue                        # "MERDİVEN BOŞLUĞU": döşeme boşluğu
                 return etype
         ignore = {"architectural": self._ignore_arch, "electrical": self._ignore_elec}.get(discipline, self._ignore)
         for pat in ignore:

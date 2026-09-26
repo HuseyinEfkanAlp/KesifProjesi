@@ -76,13 +76,15 @@ class ElementData:
     length: float = 0.0
     perimeter: float = 0.0
     count: int = 1
+    meta: dict = field(default_factory=dict)
 
     @classmethod
     def from_obj(cls, o: Any, id: Any = None) -> "ElementData":
         g = (lambda k, d=None: o.get(k, d)) if isinstance(o, dict) else (lambda k, d=None: getattr(o, k, d))
         return cls(id=id if id is not None else g("id"), etype=g("etype"), name=g("name"), subtype=g("subtype"),
                    b=g("b"), h=g("h"), thickness=g("thickness"), area=g("area", 0.0) or 0.0,
-                   length=g("length", 0.0) or 0.0, perimeter=g("perimeter", 0.0) or 0.0, count=g("count", 1) or 1)
+                   length=g("length", 0.0) or 0.0, perimeter=g("perimeter", 0.0) or 0.0, count=g("count", 1) or 1,
+                   meta=dict(g("meta") or {}))
 
 
 @dataclass
@@ -155,6 +157,18 @@ def compute_element(el: ElementData, p: QuantityParams) -> QuantityLine:
         t = el.thickness if el.thickness is not None else d
         concrete = el.area * t
         formwork = el.area
+    elif el.etype == "stair":
+        if not (el.meta or {}).get("flights"):
+            notes.append("Merdiven kolu ölçülemedi; 0 alındı")
+        else:
+            sg = stair_geometry(el.meta, H)
+            if not sg["valid"]:
+                notes.append(f"Merdiven ölçülmedi: rıht {sg['riser_h'] * 100:.0f} cm çıkıyor (12–21 cm olmalı) — planda "
+                             "merdivenin yalnız bir kısmı görünüyor ya da rıht notu yok; merdiven detay paftası yükleyin")
+            else:
+                concrete, formwork = sg["concrete"], sg["formwork"]
+                if sg["derived_riser"]:
+                    notes.append(f"Rıht yüksekliği kat yüksekliğinden: {sg['riser_h'] * 100:.2f} cm")
     elif el.etype == "parapet":
         if not (el.b and el.h):
             notes.append("Parapet kesiti (b/h) eksik; 0 alındı")
@@ -182,6 +196,44 @@ def compute_element(el: ElementData, p: QuantityParams) -> QuantityLine:
     return QuantityLine(element_id=el.id, etype=el.etype, name=el.name, subtype=el.subtype,
                         count=int(el.count or 1), multiplier=multiplier,
                         concrete_m3=concrete, formwork_m2=formwork, rebar_kg=rebar, notes=notes)
+
+
+def stair_geometry(meta: dict, storey_height: float) -> dict:
+    """Bir merdivenin (bir kat) geometrisi (detectors/stairs.py meta'sından).
+
+    beton = kollar: eğik plak (eğik boy × genişlik × kalınlık) + basamak üçgenleri (basamak × a × h / 2 × genişlik)
+            + sahanlık alanı × kalınlık
+    kalıp = eğik plak altı + sahanlık altı + rıht yüzleri (rıht × h × genişlik)
+    kaplama (basamak + rıht + sahanlık), korkuluk (kolların eğik boyu + göz), merdiven altı (plak + sahanlık altı).
+    Rıht yüksekliği nottan; yoksa kat yüksekliği / toplam rıht."""
+    import math
+    kollar = meta.get("flights") or []
+    t = float(meta.get("t") or 0.15)
+    top_riht = sum(int(k["risers"]) for k in kollar) or 1
+    h = meta.get("riser_h")
+    turetildi = not h
+    h = float(h) if h else storey_height / top_riht
+    beton = kalip = kaplama = korkuluk = alti = 0.0
+    for k in kollar:
+        w, run, n_b, n_r = float(k["w"]), float(k["run"]), int(k["treads"]), int(k["risers"])
+        a = run / n_b if n_b else 0.0
+        egik = math.hypot(run, n_r * h)
+        beton += egik * w * t + n_b * a * h / 2.0 * w
+        kalip += egik * w + n_r * h * w
+        kaplama += n_b * a * w + n_r * h * w
+        korkuluk += egik
+        alti += egik * w
+    sah = float(meta.get("landing_area") or 0.0)
+    beton += sah * t
+    kalip += sah
+    kaplama += sah
+    alti += sah
+    korkuluk += float(meta.get("goz") or 0.0)
+    # rıht 12–21 cm dışındaysa merdiven ölçülmüş sayılmaz: kesilmiş planda birkaç basamak görünür, kat yüksekliği
+    # onlara bölününce 76 cm "rıht" çıkar (B blok). Uydurmaktansa ölçmemek.
+    gecerli = 0.12 <= h <= 0.21
+    return {"concrete": beton, "formwork": kalip, "cladding": kaplama, "railing": korkuluk, "soffit": alti,
+            "riser_h": h, "derived_riser": turetildi, "valid": gecerli}
 
 
 def compute_all(elements: list[ElementData], p: QuantityParams) -> list[QuantityLine]:

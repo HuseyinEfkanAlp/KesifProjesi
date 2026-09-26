@@ -1930,6 +1930,16 @@ def roof_area(project: Project, session: Session, items: list[BoqItem] | None = 
             else:
                 total = tops[0]["area"]
                 detail = f"en büyük kat planı oturumu ({tops[0]['drawing']})"
+            # parapetli çatıda katmanlar parapetin içinde kalır: parapet bandı (genişlik × boy) oturumdan düşülür
+            # (altın bina 4: 128,96 m² oturum, parapet içi 120 m²)
+            bant = 0.0
+            for d in drawings:
+                for e in session.exec(select(Element).where(Element.drawing_id == d.id, Element.etype == "parapet",
+                                                            Element.included == True)).all():  # noqa: E712
+                    bant += float(e.b or 0.0) * float(e.length or 0.0) * (e.count or 1)
+            if 0 < bant < total:
+                total -= bant
+                detail += f"; parapet bandı {bant:,.1f} m² düşüldü (parapet içi)"
             out.update(area=round(total, 2), source="estimated", detail=detail + "; tahmin, elle düzeltilebilir")
     evidence = merge_materials([d.materials or {} for d in drawings])
     cands = [c for c in ROOF_SYSTEM_EVIDENCE if c in evidence]
@@ -2009,7 +2019,8 @@ def finish_area(project: Project, drawings: list[Drawing], params: dict | None =
             by_note = bool(note) or bool(r.get("screed_cm"))
             by_kw = any(k and k in name_n for k in kws_n)
             hit = by_kw or ((by_note or full) and not wet and not OTOPARK.search(name))
-            area = float(r.get("area_m2") or 0.0) * mult
+            # merdivenin kapladığı yer basamak kaplamasıdır (merdiven kaplaması kalemi), şap / döşeme kaplaması değil
+            area = max(float(r.get("area_m2") or 0.0) - stair_cut(d, r), 0.0) * mult
             row = {"drawing": d.label or d.filename, "name": r.get("name"), "area_m2": r.get("area_m2", 0.0), "included": hit,
                    "finish": note.get("code", ""), "finish_spec": note.get("spec", ""), "finish_text": note.get("text", ""),
                    "screed_cm": r.get("screed_cm") or 0.0}
@@ -2187,7 +2198,9 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
         odali = [d for d in drawings if d.rooms and d.discipline == "architectural" and not shell_floor(d)
                  and floor_key(d.block, d.label or "") in tam_katlar]
         if odali and len(odali) >= len(tam):
-            tam_alan = sum(sum(float(r.get("area_m2") or 0.0) for r in d.rooms) * max(1, d.storey_count or 1) for d in odali)
+            ust = top_arch_floor(drawings)
+            tam_alan = sum(sum(float(r.get("area_m2") or 0.0) for r in d.rooms) * max(1, d.storey_count or 1)
+                           - stair_cut(d) * (max(1, d.storey_count or 1) - (1 if d.id == ust else 0)) for d in odali)
         if ortak_alan + tam_alan > 0:
             add("TAVAN_SIVA_BOYA", "", ortak_alan + tam_alan,
                 "dükkânlar kaba teslim: dükkân katlarında yalnız ortak alanların (lobi / koridor / merdiven) "
@@ -2222,6 +2235,8 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
                 continue
             k = max(1, d.storey_count or 1)
             oda_alan += sum(float(r.get("area_m2") or 0.0) for r in d.rooms if not OTOPARK.search(str(r.get("name") or ""))) * k
+            # üstünde kat olan katta tavanda merdiven boşluğu vardır (en üst katın tavanı çatı döşemesidir, boşluksuz)
+            oda_alan -= stair_cut(d) * (k - (1 if d.id == top_arch_floor(drawings) else 0))
             if (_rank(d.label or "") or 0) < 0:
                 bodrum_dahil = True          # bodrum kat oturum sayısına girmez, mahalleri tavana girer
             else:
@@ -2237,6 +2252,30 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
         above = [f for f in fps_u if not f["basement"]]
         src = ", ".join(f"{fp['drawing']} {fp['area']:,.0f} m²" for fp in above[:4]) + ("…" if len(above) > 4 else "")
         add("TAVAN_SIVA_BOYA", "", floor, f"kat oturumu × kat sayısı ({src}); bodrum (otopark) hariç, asma tavanlı mahalleri düşün", "tavan")
+    # merdiven: basamak + rıht + sahanlık kaplaması, korkuluk, merdiven altı sıva-boya (kalıp planındaki geometriden)
+    from .quantity.engine import stair_geometry
+    sh_ = storey_heights(project, drawings)
+    kap = kork = alti = 0.0
+    n_mer = 0
+    for d in drawings:
+        els = session.exec(select(Element).where(Element.drawing_id == d.id, Element.etype == "stair",
+                                                 Element.included == True)).all()  # noqa: E712
+        for e in els:
+            sg = stair_geometry(e.meta or {}, storey_height_of(project, d, sh_))
+            if not sg["valid"]:
+                continue                      # ölçülemeyen merdiven (rıht 12–21 cm dışında): ince işi de yazılmaz
+            k = max(1, d.storey_count or 1) * (e.count or 1)
+            kap += sg["cladding"] * k
+            kork += sg["railing"] * k
+            alti += sg["soffit"] * k
+            n_mer += k
+    if n_mer:
+        kaynak = f"{n_mer} merdiven (kalıp planındaki kollar, sahanlık ve rıht notundan)"
+        if "merdiven_kaplama" not in kinds:
+            add("MERDIVEN_KAPLAMA", "", kap, f"basamak + rıht + sahanlık — {kaynak}", "merdiven", "drawing")
+        if "korekuyu" not in kinds:
+            add("KOREKUYU", "", kork, f"kolların eğik boyu + göz — {kaynak}", "merdiven", "drawing")
+        add("TAVAN_SIVA_BOYA", "merdiven altı", alti, f"eğik plak ve sahanlık altı — {kaynak}", "merdiven", "drawing")
     base_area = sum(fp["area"] * max(1, fp["storey_count"]) for fp in fps_u if fp["basement"])
     if base_area > 0 and "tavan_siva_boya" not in kinds and not bodrum_dahil:
         ask("tavan_bodrum", f"Bodrum katlarının tavanı ({base_area:,.0f} m²) sıva-boya listesine alınmadı (otopark / depo). Gerekiyorsa elle ekleyin.", "optional")
@@ -2621,6 +2660,43 @@ def _wet_room_doors(space: dict, doors, wet_h: float) -> float | None:
         toplam += float(e.b) * min(float(e.h or 2.1), wet_h)
         bulundu = True
     return toplam if bulundu else None
+
+
+def stair_cut(d: Drawing, room: dict | None = None) -> float:
+    """Paftadaki merdiven izinin (zones "merdiven_izi") mahallere düşen alanı (m², bir kat). room verilirse yalnız o
+    mahalin (yazı noktasını içeren ölçülmüş mahal) içindeki kısım; verilmezse bütün mahallerinki."""
+    from shapely.geometry import Point, Polygon
+    izler = []
+    for z in (d.zones or []):
+        if z.get("kind") == "merdiven_izi" and len(z.get("points") or []) >= 3:
+            try:
+                izler.append(Polygon(z["points"]).buffer(0))
+            except Exception:
+                continue
+    if not izler:
+        return 0.0
+    mahaller = []
+    for sp in (d.spaces or []):
+        if sp.get("kind") == "mahal" and len(sp.get("points") or []) >= 3:
+            try:
+                mahaller.append(Polygon(sp["points"]).buffer(0))
+            except Exception:
+                continue
+    if room is not None:
+        if room.get("x") is None:
+            return 0.0
+        pt = Point(float(room["x"]), float(room["y"]))
+        mahaller = [g for g in mahaller if g.contains(pt)][:1]
+    return sum(g.intersection(iz).area for g in mahaller for iz in izler)
+
+
+def top_arch_floor(drawings: list[Drawing]) -> int | None:
+    """En üst mimari kat planı (çatı planı hariç): tavanında merdiven boşluğu yoktur (üstünde kat yok)."""
+    from .parser.levels import floor_rank
+    kat = [(floor_rank(d.label or "") or 0) + max(1, d.storey_count or 1) - 1
+           for d in drawings if d.discipline == "architectural" and d.plan_type == "mim_kat_plani"]
+    ids = [d.id for d in drawings if d.discipline == "architectural" and d.plan_type == "mim_kat_plani"]
+    return ids[kat.index(max(kat))] if kat else None
 
 
 def full_finish_floor(d: Drawing, drawings: list[Drawing]) -> bool:
