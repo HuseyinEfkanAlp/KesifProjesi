@@ -113,3 +113,32 @@ def make_golden_steel(path: str | Path) -> Path:
     path = Path(path)
     doc.saveas(path)
     return path
+
+
+# ---------------------------------------------------------------- boya yüzeyi, bağlantı, işçilik doğruları
+# Boya yüzeyi: Euronorm tablolarındaki AL (m²/m) — programın 2h+4b formülü DEĞİL (formül bunlara ±%5 yakın olmalı)
+AL = {"HEB200": 1.151, "HEA200": 1.136, "IPE160": 0.623, "Ø76.1x5": math.pi * 0.0761, "100x50x3": 0.29}
+# Saha başlangıç normları (kullanıcı kararı 26 Eyl 2026): (imalat, montaj) saat/ton — kg/m ≤20 hafif, ≤60 orta, üstü ağır
+NORM = {"HEB200": (18, 14), "HEA200": (25, 20), "IPE160": (40, 35), "Ø76.1x5": (40, 35), "100x50x3": (40, 35)}
+
+
+def golden_connections() -> dict:
+    """Tipik detay: betona oturan kolona taban plakası (h+10)×(b+10) cm × 20 mm + 4 ankraj; I kiriş ucuna alın levhası
+    h × b × 10 mm + 4 bulon (h ≤ 200); boru çapraz ucuna guse (d+10)² × 8 mm + 2 bulon; kutu aşık uçları kaynaklı."""
+    t = golden_truth_steel()
+    n_kolon = t["kolon_adet"]
+    say = {}
+    for prof, *_ in members():
+        say[prof] = say.get(prof, 0) + 1
+    levha = n_kolon * 0.30 * 0.30 * 0.020 * 7850
+    levha += say["HEA200"] * 2 * 0.190 * 0.200 * 0.010 * 7850
+    levha += say["IPE160"] * 2 * 0.160 * 0.082 * 0.010 * 7850
+    levha += say["Ø76.1x5"] * 2 * (0.0761 + 0.10) ** 2 * 0.008 * 7850
+    bulon = (say["HEA200"] + say["IPE160"]) * 2 * 4 + say["Ø76.1x5"] * 2 * 2
+    kaynak = n_kolon * AL["HEB200"] + sum(n * 2 * AL[p] for p, n in say.items())
+    yuzey = {p: t["boy"][p] * AL[p] for p in t["boy"]}
+    imalat = sum(t["kg"][p] * NORM[p][0] for p in t["kg"]) / 1000 + levha * 0.04
+    montaj = sum(t["kg"][p] * NORM[p][1] for p in t["kg"]) / 1000 + bulon * 0.15
+    vinc = sum(t["kg"][p] * NORM[p][1] for p in t["kg"]) / 1000 * 0.2
+    return {"levha": levha, "bulon": bulon, "ankraj": 4 * n_kolon, "kaynak": kaynak, "yuzey": yuzey,
+            "imalat": imalat, "montaj": montaj, "vinc": vinc}

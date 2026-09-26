@@ -201,6 +201,13 @@ DEFAULT_ITEMS: list[CatalogItem] = [
     _i("ANTIPAS", "STA", "Antipas astar (çelik yüzey)", "area", "tip", "KSF-STA-ANTIPAS"),
     _i("CELIK_BOYA", "STA", "Çelik son kat boya", "area", "tip", "KSF-STA-CELIK_BOYA"),
     _i("CELIK_MONTAJ", "STA", "Çelik montaj işçiliği", "count", "", "KSF-STA-CELIK_MONTAJ", unit="saat"),
+    # çelik planından türetilen imalat / bağlantı kalemleri (quantity/boq.steel_items)
+    _i("CELIK_IMALAT", "STA", "Çelik atölye imalat işçiliği (kesim, delik, kaynak)", "count", "", "KSF-STA-CELIK_IMALAT",
+       unit="saat"),
+    _i("BAGLANTI_LEVHASI", "STA", "Bağlantı levhası / taban plakası / guse", "count", "", "KSF-STA-BAGLANTI_LEVHASI",
+       unit="kg", recipe=[_c("CELIK_IMALAT", 0.04)]),
+    _i("BULON", "STA", "Bulon takımı (8.8, somun + pul)", "count", "çap (M16)", "KSF-STA-BULON-M16",
+       recipe=[_c("CELIK_MONTAJ", 0.15)]),
     _i("VINC", "STA", "Vinç (mobil / kule)", "count", "kapasite (ton)", "KSF-STA-VINC", unit="saat"),
     _i("IS_ISKELESI", "STA", "İş iskelesi (cephe / dış)", "area", "tip (CELIK_BORU)", "KSF-STA-IS_ISKELESI", unit="m²", poz="15.185.1013"),
     # MIM

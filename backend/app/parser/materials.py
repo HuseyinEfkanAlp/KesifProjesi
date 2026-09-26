@@ -38,6 +38,9 @@ MATERIAL_RULES: list[tuple[str, str]] = [
     ("KAZI_CALISMA_PAYI", r"CALISMA\s*(PAYI|BOSLUGU|ARALIGI)"),   # kazıda temel kenarından bırakılan boşluk
     ("CATI_CAKIL", r"\bCAKIL\b|BALAST"),
     ("CELIK_PROFIL", r"CELIK\s*(KIRIS|PROFIL|KONSTR)"),
+    # çelik bağlantı detayları: "M16x175 ankraj", "M27x400 ANKRAJ", "M16 cıvata" (çap boq.steel_items'ta kanıttan okunur)
+    ("CELIK_ANKRAJ", r"\bM\d{2}\s*X\s*\d{2,4}\s*ANKRAJ|ANKRAJ\w*\s*M\d{2}"),
+    ("CELIK_CIVATA", r"\bM\d{2}\s*(X\s*\d{2,3}\s*)?(CIVATA|BULON)"),
     ("CATI_SANDVIC_PANEL", r"SANDVIC\s*PANEL|TRAPEZ\s*(SAC|PANEL|LEVHA)"),
     ("CATI_MEMBRAN", r"CATI\s*MEMBRAN|\bPVC\s*MEMBRAN|TPO"),
     # yalıtım

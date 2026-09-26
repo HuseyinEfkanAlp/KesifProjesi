@@ -576,6 +576,13 @@ def electrical_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqIt
     return list(acc.items.values())
 
 
+def _cap_sec(caplar: list[str] | None, sinif: str) -> str:
+    """Detayda yazan çaplar küçükten büyüğe: hafif profile en küçüğü, ağıra en büyüğü, ortaya ortancası."""
+    if not caplar:
+        return ""
+    return caplar[0] if sinif == "hafif" else (caplar[-1] if sinif == "ağır" else caplar[len(caplar) // 2])
+
+
 STEEL_META = ("Çelik konstrüksiyon (imalat + montaj)", "kg", "structural", DISCIPLINES.get("steel", "Çelik konstrüksiyon"))
 
 
@@ -584,15 +591,25 @@ def steel_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqItem]:
 
     Kiriş / aşık / çapraz: plandaki boy × kg/m. Kolon planda kesittir: boyu paftanın `steel_column_height`'ı
     (services: kotlardan) — yoksa kolon kg'a girmez, adedi bilgi satırında durur ve kontrol listesinde sorulur.
-    Profil yazısı bulunamayan elemanın boyu ayrı bilgi satırındadır (ağırlığı hesaplanamaz)."""
+    Profil yazısı bulunamayan elemanın boyu ayrı bilgi satırındadır (ağırlığı hesaplanamaz).
+
+    Her profil satırı boya yüzeyini (profil çevresi × boy) ve ağırlık sınıfının saha işçilik normunu taşır; reçete
+    (quantity/recipes) antipas / boya / atölye imalatı / montaj / vinci bunlardan açar. Bağlantılar eleman başına
+    tipik detayla (standard/steel.connection) sayılır: taban plakası + ankraj (betona oturan kolon), alın levhası +
+    bulon (I / H kiriş ucu), guse + bulon (boru çapraz), kaynak (kesit çevresi). Ankraj / cıvata çapı detay
+    paftasındaki yazıdan ("M16x175 ankraj"), yoksa profil boyundan."""
     from ..confidence import TAHMIN, TURETILDI, worse
+    from ..standard.steel import VINC_PER_MONTAJ, connection, labor_norm, parse_profile
     acc = _Acc()
+    bag = {"levha": 0.0, "kaynak": 0.0, "bulon": {}, "ankraj": {}, "not": {}}
     for d in drawings:
         mult = int(d.get("storey_count") or 1)
         acc.risk = ""
         acc.drawing = (d.get("id"), d.get("label") or "")
         H = d.get("steel_column_height")
         atla = d.get("steel_column_skip") or set()
+        betona = bool(d.get("steel_column_on_concrete", True))
+        fas = d.get("steel_fasteners") or {}
         for e in d["elements"]:
             if _g(e, "etype") != "steel_member":
                 continue
@@ -618,10 +635,49 @@ def steel_items(drawings: list[dict], params: dict[str, Any]) -> list[BoqItem]:
                 acc.add("celik_profilsiz", "*", "Çelik eleman — profili okunamadı", L * mult, count=mult,
                         meta=("Çelik eleman (profil yok)", "m", "structural", STEEL_META[3]), info=True, ev=TAHMIN)
                 continue
+            pr = parse_profile(prof) or {"kg_m": float(kgm), "family": m.get("family") or ""}
+            sinif, imalat, montaj = labor_norm(float(kgm))
             it = acc.add("celik_konstruksiyon", slug(prof), f"Çelik {prof}", L * float(kgm) * mult, count=mult,
-                         note=note, meta=STEEL_META, ev=ev, length_m=L * mult)
-            it.detail["kg_m"] = float(kgm)
-            it.detail["profile"] = prof
+                         note=note, meta=STEEL_META, ev=ev, length_m=L * mult,
+                         yuzey_m2=L * float(pr.get("yuzey") or 0.0) * mult)
+            it.detail.update(kg_m=float(kgm), profile=prof, sinif=sinif, imalat_sa_t=imalat, montaj_sa_t=montaj,
+                             vinc_orani=VINC_PER_MONTAJ, yuzey_m2_m=pr.get("yuzey"))
+            # bağlantı: kolonda taban, çubukta iki uç
+            c = connection(pr, kolon, betona)
+            bag["levha"] += c["levha_kg"] * mult
+            bag["kaynak"] += c["kaynak_m"] * mult
+            buyuk = float(pr.get("h") or 0.2) > 0.2
+            if c["bulon"]:
+                cap = _cap_sec(fas.get("civata"), sinif) or ("M20" if buyuk else "M16")
+                bag["bulon"][cap] = bag["bulon"].get(cap, 0) + c["bulon"] * mult
+            if c["ankraj"]:
+                cap = _cap_sec(fas.get("ankraj"), sinif) or ("M20" if buyuk else "M16")
+                bag["ankraj"][cap] = bag["ankraj"].get(cap, 0) + c["ankraj"] * mult
+            bag["not"][prof] = c["not"]
+    acc.drawing = None
+    notlar = "; ".join(f"{k}: {v}" for k, v in sorted(bag["not"].items()))[:600]
+    tipik = "Tipik detayla sayıldı (saha başlangıç normu) — bağlantı detayınızla karşılaştırın. " + notlar
+    if bag["levha"] > 0:
+        acc.add("baglanti_levhasi", "celik", "Bağlantı levhası / taban plakası / guse", bag["levha"],
+                meta=("Bağlantı levhası / taban plakası / guse", "kg", "structural", STEEL_META[3]), note=tipik, ev=TAHMIN)
+    if bag["kaynak"] > 0:
+        acc.add("kaynak", "celik", "Kaynak (çelik bağlantıları)", bag["kaynak"],
+                meta=("Kaynak (köşe / küt)", "m", "structural", STEEL_META[3]),
+                note="Eleman uçlarında ve kolon tabanında kesit çevresi boyunca köşe kaynağı", ev=TAHMIN)
+    for cap, n in sorted(bag["bulon"].items()):
+        acc.add("bulon", slug(cap), f"Bulon {cap} (8.8, somun + pul)", n, count=n,
+                meta=("Bulon takımı (8.8, somun + pul)", "adet", "structural", STEEL_META[3]),
+                note=("Çap detay paftasından" if any(cap in ((d.get("steel_fasteners") or {}).get("civata") or [])
+                                                      for d in drawings) else "Çap profil boyundan (detayda yazmıyor)"),
+                ev=TAHMIN)
+    for cap, n in sorted(bag["ankraj"].items()):
+        # detail["size"]: reçetedeki tij / somun / pul ankrajın kendi çapıyla açılır (quantity/recipes: $SIZE)
+        acc.add("ankraj_bulonu", slug(cap), f"Ankraj bulonu {cap}", n, count=n,
+                meta=("Ankraj bulonu / kimyasal ankraj", "adet", "structural", STEEL_META[3]),
+                note=("Çap detay paftasından" if any(cap in ((d.get("steel_fasteners") or {}).get("ankraj") or [])
+                                                      for d in drawings)
+                      else "Çap profil boyundan (detayda yazmıyor)") + "; betona oturan kolon başına 4 ankraj", ev=TAHMIN,
+                size=cap)
     return list(acc.items.values())
 
 

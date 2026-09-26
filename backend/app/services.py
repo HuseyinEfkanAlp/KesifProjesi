@@ -215,6 +215,27 @@ SLAB_TOP_TYPES = {"sta_kat_kalip", "sta_doseme_donati"}
 _KOT_RE = re.compile(r"(?<![\d.,])([+\-±]\d{1,3}[.,]\d{2,3})(?![\d])")
 
 
+_BAG_RE = re.compile(r"\bM(\d{2})(?:\s*[xX×*]\s*(\d{2,4}))?")
+
+
+def steel_fasteners(drawings: list[Drawing]) -> dict[str, list[str]]:
+    """Detay paftalarında yazan ankraj / cıvata çapları, küçükten büyüğe: {"ankraj": ["M16x175", "M27x330"], "civata": [...]}.
+    Aynı çapın birden çok boyu varsa en sık yazılanı alınır."""
+    from collections import Counter
+    from .parser.materials import merge_materials
+    ev = merge_materials([d.materials or {} for d in drawings])
+    out: dict[str, list[str]] = {}
+    for kod, anahtar in (("CELIK_ANKRAJ", "ankraj"), ("CELIK_CIVATA", "civata")):
+        sayac: dict[int, Counter] = {}
+        for yazi in (ev.get(kod) or {}).get("evidence") or []:
+            for m in _BAG_RE.finditer(yazi):
+                cap = int(m.group(1))
+                sayac.setdefault(cap, Counter())[f"M{cap}" + (f"x{m.group(2)}" if m.group(2) and anahtar == "ankraj" else "")] += 1
+        if sayac:
+            out[anahtar] = [sayac[c].most_common(1)[0][0] for c in sorted(sayac)]
+    return out
+
+
 def steel_column_heights(drawings: list[Drawing], kolon_profilleri: dict[int, set[str]] | None = None) -> dict[int, dict]:
     """Çelik kolon boyu pafta başına: {pafta: {"H", "source", "note", "skip"}}; skip = bu paftada sayılmayacak kolon profilleri.
 
@@ -237,7 +258,8 @@ def steel_column_heights(drawings: list[Drawing], kolon_profilleri: dict[int, se
         taban = bool(re.search(r"KOLON", ad) and re.search(r"YERLES|APLIKASYON", ad) and not re.search(r"KIRIS|CATI", ad))
         rows.append({"d": d, "file": (d.filename or "").split(" › ")[0], "lo": min(kotlar) if kotlar else None,
                      "hi": max(kotlar) if kotlar else None, "taban": taban})
-    out: dict[int, dict] = {r["d"].id: {"H": None, "source": "", "note": "", "skip": set()} for r in rows}
+    out: dict[int, dict] = {r["d"].id: {"H": None, "source": "", "note": "", "skip": set(), "concrete_base": True}
+                            for r in rows}
     for r in rows:
         o = out[r["d"].id]
         if r["lo"] is None:
@@ -262,6 +284,9 @@ def steel_column_heights(drawings: list[Drawing], kolon_profilleri: dict[int, se
             continue
         egimli = r["hi"] - r["lo"] > 0.01
         o["H"], o["source"] = H, ("tahmin" if egimli else "kot")
+        # kolonun alt ucu kolon yerleşim / aplikasyon paftasındaysa betona oturur (taban plakası + ankraj);
+        # alttaki bir çatı / kiriş paftasına oturuyorsa (üst konstrüksiyon dikmesi) çeliğe bulonlanır
+        o["concrete_base"] = bool(alt["taban"])
         o["note"] = f"{taban_kot:+.2f} → {ust_kot:+.2f}" + (" (eğimli çatı: iki kotun ortalaması)" if egimli else "")
         # aynı kolonların alt ucu alt paftada da kesit olarak görünür: orada sayılmaz
         out[alt["d"].id]["skip"] |= set(kolon_profilleri.get(r["d"].id) or ())
@@ -963,6 +988,7 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
                          "glazed": kind == "window" or (e.subtype or "") in poz_glazed}}
 
     arch, elec, std, steel = [], [], [], []
+    celik_bag = steel_fasteners(all_drawings)
     kolon_boy = steel_column_heights(drawings, {d.id: {(e.meta or {}).get("profile") for e in els_by_id.get(d.id, [])
                                                       if e.etype == "steel_member" and (e.meta or {}).get("column")}
                                                 for d in drawings})
@@ -1025,7 +1051,8 @@ def project_boq(project: Project, session: Session, summary: dict | None = None,
             # çelik planı bir kat planı değildir (çatı / tonoz taşıyıcısı): kat sayısı belirsizliği onu düşürmez
             steel.append({**entry, "storey_risk": False, "elements": [e for e in elements if e.etype == "steel_member"],
                           "steel_column_height": kb.get("H"), "steel_column_height_source": kb.get("source", ""),
-                          "steel_column_height_note": kb.get("note", ""), "steel_column_skip": kb.get("skip") or set()})
+                          "steel_column_height_note": kb.get("note", ""), "steel_column_skip": kb.get("skip") or set(),
+                          "steel_column_on_concrete": kb.get("concrete_base", True), "steel_fasteners": celik_bag})
         # katalog kodlu elemanlar: poz listesi (meta.ksf_code) ve sezgisel paftadaki KSF-… katmanları (her disiplinde standart kuralla ölçülür)
         ksf = [ksf_entry(e) for e in elements if (e.meta or {}).get("ksf_code") or parse_layer(e.layer or "", catalog)]
         if ksf:
@@ -2528,8 +2555,9 @@ def derived_items(project: Project, session: Session, catalog: Catalog, items: l
             "Elemanlar sayfasından profilini seçin.")
     if celik:
         ask("celik_kapsam", "Çelik ağırlığı plandaki eleman boyundan: eğimli çapraz / makas elemanında gerçek boy daha "
-            "uzundur; bağlantı levhası, taban plakası ve bulon planda ölçülmez (reçetedeki paylarla eklenir). "
-            "İmalatçı metrajı ya da statik tonajı varsa karşılaştırın.", "optional")
+            "uzundur. Bağlantı levhası, taban plakası, bulon, ankraj ve kaynak eleman başına TİPİK detayla sayıldı; "
+            "imalat / montaj saatleri profil ağırlık sınıfının saha başlangıç normundan (hafif 40+35, orta 25+20, "
+            "ağır 18+14 saat/ton). İmalatçı metrajı, statik tonajı ya da çelik hakedişi varsa karşılaştırın.", "optional")
     # 5) cephe
     fa = facade_area(project, session, items, drawings, params)
     facade_kinds = {"mantolama_sistem", "kompozit_panel", "giydirme_cephe", "cephe_tasi", "cephe_boya", "prekast_panel", "cephe_brut", "mantolama"}

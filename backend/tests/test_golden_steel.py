@@ -6,7 +6,7 @@
 """
 import pytest
 
-from tests.fixtures.golden_steel import golden_truth_steel, make_golden_steel
+from tests.fixtures.golden_steel import golden_connections, golden_truth_steel, make_golden_steel
 
 _SONUC: dict = {}
 
@@ -60,9 +60,38 @@ def test_kolon_bir_kez_ve_kottan(celik):
     assert not [i for i in _ana(celik) if i["kind"] in ("celik_kolon_boysuz", "celik_profilsiz")]
 
 
-def test_iscilik_ve_sarf_receteden(celik):
-    kinds = {i["kind"] for i in celik["items"] if (i.get("detail") or {}).get("recipe")}
-    assert {"celik_montaj", "kaynak", "antipas"} <= kinds, kinds
+def _top(c, kind, recipe=None):
+    return sum(i["quantity"] for i in c["items"] if i["kind"] == kind
+               and (recipe is None or bool((i.get("detail") or {}).get("recipe")) == recipe))
+
+
+def test_boya_yuzeyi_profil_cevresinden(celik):
+    """Boya alanı profil çevresi × boy: Euronorm AL tablosuna %5 içinde (sabit m²/ton oranı hafif profilde yarı eksikti)."""
+    g = golden_connections()
+    satir = {i["detail"]["profile"]: i for i in _ana(celik) if i["kind"] == "celik_konstruksiyon"}
+    for prof, m2 in g["yuzey"].items():
+        assert satir[prof]["detail"]["yuzey_m2"] == pytest.approx(m2, rel=0.05), prof
+    assert _top(celik, "antipas") == pytest.approx(sum(g["yuzey"].values()), rel=0.05)
+    assert _top(celik, "celik_boya") == pytest.approx(sum(g["yuzey"].values()), rel=0.05)
+
+
+def test_baglantilar_eleman_basina(celik):
+    g = golden_connections()
+    assert _top(celik, "baglanti_levhasi", recipe=False) == pytest.approx(g["levha"], rel=0.01)
+    assert _top(celik, "bulon", recipe=False) == g["bulon"]
+    assert _top(celik, "ankraj_bulonu", recipe=False) == g["ankraj"]
+    assert _top(celik, "kaynak", recipe=False) == pytest.approx(g["kaynak"], rel=0.05)
+    # tipik detay tahmindir: rozet "tahmin"
+    for kind in ("baglanti_levhasi", "bulon", "ankraj_bulonu", "kaynak"):
+        assert all(i["confidence"]["code"] == "tahmin" for i in _ana(celik) if i["kind"] == kind), kind
+
+
+def test_iscilik_imalat_ve_montaj_ayri(celik):
+    """Saha başlangıç normu: ağırlık sınıfına göre atölye imalatı + saha montajı (+ bulon sıkma), vinç montajın %20'si."""
+    g = golden_connections()
+    assert _top(celik, "celik_imalat") == pytest.approx(g["imalat"], rel=0.01)
+    assert _top(celik, "celik_montaj") == pytest.approx(g["montaj"], rel=0.01)
+    assert _top(celik, "vinc") == pytest.approx(g["vinc"], rel=0.01)
 
 
 def test_kontrol_listesi(celik):

@@ -64,6 +64,19 @@ def recipe_of(item: BoqItem, catalog: Catalog, params: dict | None = None) -> li
         return _rebar_recipe(item, params or {})
     if item.kind == "kalip":
         return _formwork_recipe(item, params or {})
+    if item.kind == "celik_konstruksiyon" and item.detail.get("imalat_sa_t") and item.quantity > 0:
+        # çelik planından ölçülen profil: boya yüzeyi profil çevresinden, işçilik ağırlık sınıfının saha normundan
+        # (standard/steel.labor_norm). Kaynak / ankraj / bulon ayrı kalemlerde bağlantı başına sayıldı (boq.steel_items).
+        m2_kg = float(item.detail.get("yuzey_m2") or 0.0) / item.quantity
+        montaj = float(item.detail["montaj_sa_t"]) / 1000.0
+        return [{"code": "ANTIPAS", "factor": m2_kg, "spec": "", "times": "", "when": ""},
+                {"code": "CELIK_BOYA", "factor": m2_kg, "spec": "", "times": "", "when": ""},
+                {"code": "CELIK_IMALAT", "factor": float(item.detail["imalat_sa_t"]) / 1000.0, "spec": "", "times": "", "when": ""},
+                {"code": "CELIK_MONTAJ", "factor": montaj, "spec": "", "times": "", "when": ""},
+                {"code": "VINC", "factor": montaj * float(item.detail.get("vinc_orani") or 0.2), "spec": "", "times": "", "when": ""}]
+    if item.kind == "ankraj_bulonu" and item.detail.get("size"):
+        # çelik kolon ankrajı: tij / somun / pul ankrajın kendi çapıyla (katalog varsayılanı M20)
+        return [{"code": c, "factor": f, "spec": "$SIZE", "times": "", "when": ""} for c, f in (("TIJ", 1.0), ("SOMUN", 2.0), ("PUL", 2.0))]
     cit = catalog.get(item.kind)
     if cit and cit.recipe:
         return list(cit.recipe)
